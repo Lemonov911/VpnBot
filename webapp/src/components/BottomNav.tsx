@@ -10,8 +10,13 @@ const TABS = [
   { path: '/referral',key: 'nav_ref'     as const, icon: FriendsIcon },
 ]
 
-function HomeIcon({ active }: { active: boolean }) {
-  const c = active ? '#fff' : 'rgba(255,255,255,0.55)'
+function iconColor(active: boolean, dark: boolean) {
+  if (dark) return active ? '#fff' : 'rgba(255,255,255,0.50)'
+  return active ? '#1c1c1e' : 'rgba(0,0,0,0.35)'
+}
+
+function HomeIcon({ active, dark }: { active: boolean; dark: boolean }) {
+  const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M3 12L12 3l9 9" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -22,8 +27,8 @@ function HomeIcon({ active }: { active: boolean }) {
   )
 }
 
-function ShieldIcon({ active }: { active: boolean }) {
-  const c = active ? '#fff' : 'rgba(255,255,255,0.55)'
+function ShieldIcon({ active, dark }: { active: boolean; dark: boolean }) {
+  const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
@@ -34,8 +39,8 @@ function ShieldIcon({ active }: { active: boolean }) {
   )
 }
 
-function SimIcon({ active }: { active: boolean }) {
-  const c = active ? '#fff' : 'rgba(255,255,255,0.55)'
+function SimIcon({ active, dark }: { active: boolean; dark: boolean }) {
+  const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <rect x="5" y="2" width="14" height="20" rx="2" stroke={c} strokeWidth="2"
@@ -45,8 +50,8 @@ function SimIcon({ active }: { active: boolean }) {
   )
 }
 
-function HelpIcon({ active }: { active: boolean }) {
-  const c = active ? '#fff' : 'rgba(255,255,255,0.55)'
+function HelpIcon({ active, dark }: { active: boolean; dark: boolean }) {
+  const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
@@ -57,8 +62,8 @@ function HelpIcon({ active }: { active: boolean }) {
   )
 }
 
-function FriendsIcon({ active }: { active: boolean }) {
-  const c = active ? '#fff' : 'rgba(255,255,255,0.55)'
+function FriendsIcon({ active, dark }: { active: boolean; dark: boolean }) {
+  const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <circle cx="9" cy="7" r="3.5" stroke={c} strokeWidth="2"
@@ -74,9 +79,29 @@ export default function BottomNav() {
   const location = useLocation()
   const nav      = useNavigate()
   const t        = useT()
+  const dark     = WebApp.colorScheme === 'dark'
 
   const active = (path: string) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
+
+  // Pill colors per theme
+  const pillBg     = dark ? 'rgba(40,40,46,0.72)'      : 'rgba(255,255,255,0.72)'
+  const pillBorder = dark ? 'rgba(255,255,255,0.14)'   : 'rgba(0,0,0,0.08)'
+  const sheenFrom  = dark ? 'rgba(255,255,255,0.07)'   : 'rgba(255,255,255,0.55)'
+  const shadow     = dark
+    ? 'inset 0 1px 0 rgba(255,255,255,0.10), inset 0 -1px 0 rgba(0,0,0,0.12), 0 8px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.18)'
+    : 'inset 0 1px 0 rgba(255,255,255,0.90), inset 0 -1px 0 rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)'
+
+  // Active bubble per theme
+  const bubbleBg     = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)'
+  const bubbleBorder = dark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.12)'
+  const bubbleShadow = dark
+    ? 'inset 0 1px 0 rgba(255,255,255,0.2), 0 2px 6px rgba(0,0,0,0.12)'
+    : 'inset 0 1px 0 rgba(255,255,255,0.8), 0 2px 6px rgba(0,0,0,0.06)'
+
+  // Label colors per theme
+  const labelActive   = dark ? '#fff'                  : '#1c1c1e'
+  const labelInactive = dark ? 'rgba(255,255,255,0.45)': 'rgba(0,0,0,0.35)'
 
   return (
     <div style={{
@@ -84,31 +109,23 @@ export default function BottomNav() {
       bottom: 0, left: 0, right: 0,
       zIndex: 100,
       paddingBottom: 'env(safe-area-inset-bottom)',
-      /* outer glow layer so blur bleeds correctly */
       background: 'transparent',
     }}>
       {/* Glass pill */}
       <div style={{
         margin: '0 12px 10px',
         borderRadius: 28,
-        /* Liquid glass layers */
-        background: 'rgba(120,120,128,0.18)',
-        backdropFilter: 'blur(40px) saturate(160%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(160%)',
-        /* Thin white top highlight + subtle outer ring */
-        border: '0.5px solid rgba(255,255,255,0.22)',
-        boxShadow: [
-          'inset 0 1px 0 rgba(255,255,255,0.18)',   /* top inner highlight */
-          'inset 0 -1px 0 rgba(0,0,0,0.08)',        /* bottom inner shadow */
-          '0 8px 32px rgba(0,0,0,0.22)',             /* drop shadow */
-          '0 2px 8px rgba(0,0,0,0.12)',              /* close shadow */
-        ].join(', '),
+        background: pillBg,
+        backdropFilter: 'blur(40px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+        border: `0.5px solid ${pillBorder}`,
+        boxShadow: shadow,
         overflow: 'hidden',
       }}>
-        {/* Subtle top sheen — pure CSS, no extra element */}
+        {/* Top sheen */}
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, height: '50%',
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, transparent 100%)',
+          background: `linear-gradient(180deg, ${sheenFrom} 0%, transparent 100%)`,
           borderRadius: '28px 28px 0 0',
           pointerEvents: 'none',
         }} />
@@ -133,29 +150,21 @@ export default function BottomNav() {
                   position: 'relative',
                 }}
               >
-                {/* Active icon glass bubble */}
+                {/* Active icon bubble */}
                 <div style={{
-                  width: 42, height: 30,
-                  borderRadius: 10,
+                  width: 42, height: 30, borderRadius: 10,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  /* Glass bubble for active, transparent for inactive */
-                  background: isActive
-                    ? 'rgba(255,255,255,0.14)'
-                    : 'transparent',
-                  border: isActive
-                    ? '0.5px solid rgba(255,255,255,0.28)'
-                    : '0.5px solid transparent',
-                  boxShadow: isActive
-                    ? 'inset 0 1px 0 rgba(255,255,255,0.2), 0 2px 6px rgba(0,0,0,0.12)'
-                    : 'none',
+                  background: isActive ? bubbleBg    : 'transparent',
+                  border:     isActive ? `0.5px solid ${bubbleBorder}` : '0.5px solid transparent',
+                  boxShadow:  isActive ? bubbleShadow : 'none',
                   transition: 'all 0.2s ease',
                 }}>
-                  <Icon active={isActive} />
+                  <Icon active={isActive} dark={dark} />
                 </div>
 
                 <span style={{
                   fontSize: 10, fontWeight: isActive ? 600 : 400,
-                  color: isActive ? '#fff' : 'rgba(255,255,255,0.45)',
+                  color: isActive ? labelActive : labelInactive,
                   lineHeight: 1,
                   transition: 'color 0.2s ease',
                 }}>
