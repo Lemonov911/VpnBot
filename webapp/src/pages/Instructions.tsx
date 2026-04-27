@@ -126,7 +126,7 @@ export default function Instructions() {
   }, [nav])
 
   return (
-    <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
+    <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
       <div className="px-1 pt-1.5 pb-0.5">
         <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('instr_title')}</div>
         <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('instr_sub')}</div>

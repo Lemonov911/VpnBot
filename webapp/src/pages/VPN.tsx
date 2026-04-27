@@ -58,7 +58,7 @@ function SlotDots({ active, total, color }: { active: number; total: number; col
 
 function SkeletonPage() {
   return (
-    <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)] gap-2.5">
+    <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
       <div className="h-4" />
       <div className="skeleton h-40 rounded-[18px]" />
       <div className="skeleton h-[60px] rounded-xl" />
@@ -141,7 +141,7 @@ export default function VPN() {
   if (sub === null) {
     return (
       <>
-        <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)] gap-2.5">
+        <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
           <div className="py-[6px] px-1 pb-[2px]">
             <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
@@ -247,7 +247,7 @@ export default function VPN() {
   const vlessActive = configs?.filter(c => c.protocol === 'vless' && c.status === 'active').length ?? 0
 
   return (
-    <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)] gap-2.5">
+    <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
       <div className="py-[6px] px-1 pb-[2px]">
         <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
