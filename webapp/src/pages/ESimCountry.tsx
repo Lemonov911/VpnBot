@@ -172,12 +172,17 @@ export default function ESimCountry() {
     <>
       <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
 
-        <div className="px-1 pt-1.5 pb-0.5">
-          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">
-            {countryName}
-          </div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
-            {ruCompatible ? t('esim_country_works_in_ru') : t('esim_country_travel')}
+        <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2">
+          <button onClick={() => nav('/esim')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <div>
+            <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{countryName}</div>
+            <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
+              {ruCompatible ? t('esim_country_works_in_ru') : t('esim_country_travel')}
+            </div>
           </div>
         </div>
 

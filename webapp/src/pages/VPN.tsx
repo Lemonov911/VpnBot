@@ -143,10 +143,19 @@ export default function VPN() {
       <>
         <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-          <div className="py-[6px] px-1 pb-[2px]">
-            <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸 {t('vpn_server_subtitle')}</div>
-          </div>
+          <div className="py-[6px] px-1 pb-[2px] flex items-center gap-2">
+        <button onClick={() => nav('/')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M3 12L12 3l9 9" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M5 10v11h14V10" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M9 21V13h6v8" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <div>
+          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">VPN</div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">WireGuard · VLESS</div>
+        </div>
+      </div>
 
           {status !== null && status.length > 0 && (
             <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-center gap-2 flex-wrap">
@@ -249,9 +258,18 @@ export default function VPN() {
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-      <div className="py-[6px] px-1 pb-[2px]">
-        <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
-        <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸</div>
+      <div className="py-[6px] px-1 pb-[2px] flex items-center gap-2">
+        <button onClick={() => nav('/')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M3 12L12 3l9 9" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M5 10v11h14V10" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M9 21V13h6v8" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <div>
+          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">VPN</div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">WireGuard · VLESS</div>
+        </div>
       </div>
 
       {isExpiring && (
