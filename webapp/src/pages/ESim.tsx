@@ -48,11 +48,11 @@ export default function ESim() {
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
 
-      <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2.5">
-        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] object-cover shrink-0" />
+      <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5">
+        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
         <div>
           <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">eSIM</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_sub')}</div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">{t('esim_sub')}</div>
         </div>
       </div>
 

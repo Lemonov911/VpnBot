@@ -50,11 +50,11 @@ export default function Referral() {
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2.5">
-        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] object-cover shrink-0" />
+      <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5">
+        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
         <div>
           <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('ref_title')}</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">
             {t('ref_sub')}{' '}
             <span className="text-[var(--tg-theme-text-color)] font-semibold">{t('ref_sub2')}</span>
           </div>
