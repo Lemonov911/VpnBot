@@ -48,7 +48,7 @@ function ExpiryBar({ daysLeft, t }: { daysLeft: number; t: ReturnType<typeof use
 function SlotDots({ active, total, color }: { active: number; total: number; color: string }) {
   const dotColor = color === '#27ae60' ? 'bg-success' : 'bg-purple'
   return (
-    <span className="inline-flex gap-1 items-start">
+    <span className="inline-flex gap-1 items-center">
       {Array.from({ length: total }).map((_, i) => (
         <span key={i} className={`w-2 h-2 rounded-full transition-colors duration-200 ${i < active ? dotColor : 'bg-gray-500/20'}`} />
       ))}
@@ -125,7 +125,7 @@ export default function VPN() {
     return (
       <div className="page">
         <div className="center">
-          <div className="w-[72px] h-[72px] rounded-[22px] mb-2 bg-success/12 flex items-start justify-center text-[36px]">✅</div>
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-2 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)] mb-1.5">{t('vpn_done_title')}</div>
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm mb-5">{t('vpn_done_sub')}</p>
           <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('vpn_to_configs')}</button>
@@ -143,19 +143,16 @@ export default function VPN() {
       <>
         <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-<div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
-          <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
-          <div>
-            <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">VPN</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">WireGuard · VLESS</div>
+          <div className="py-[6px] px-1 pb-[2px]">
+            <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
+            <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸 {t('vpn_server_subtitle')}</div>
           </div>
-        </div>
 
           {status !== null && status.length > 0 && (
-            <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-start gap-2 flex-wrap">
+            <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-center gap-2 flex-wrap">
               <span className="text-[11px] text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_servers')}</span>
               {status.map(s => (
-                <span key={s.id} className="flex items-start gap-1 text-xs">
+                <span key={s.id} className="flex items-center gap-1 text-xs">
                   <span className={`w-[7px] h-[7px] rounded-full ${s.ok ? 'bg-success' : 'bg-danger'}`} />
                   <span className="text-[var(--tg-theme-text-color,#000)]">{s.name}</span>
                 </span>
@@ -173,14 +170,14 @@ export default function VPN() {
             const isHit = plan.badge === 'hit'
             const deviceWord = p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
             return (
-              <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-start gap-3.5 ${
+              <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
                 isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
               }`}>
-                <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-start justify-center ${tw.bg} ${tw.shadow}`}>
+                <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-center justify-center ${tw.bg} ${tw.shadow}`}>
                   {pi.icon}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-start gap-[7px] mb-[3px] flex-wrap">
+                  <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
                     <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{PLAN_NAMES[plan.key] ?? t(plan.nameKey as never)}</span>
                     {isHit && (
                       <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
@@ -217,8 +214,8 @@ export default function VPN() {
               { num: '2', color: 'bg-success', title: t('vpn_how2'), sub: t('vpn_how2_sub') },
               { num: '3', color: 'bg-purple', title: t('vpn_how3'), sub: t('vpn_how3_sub') },
             ].map(({ num, color, title, sub }) => (
-              <div key={num} className="py-[13px] px-4 flex items-start gap-3.5">
-                <div className={`w-9 h-9 rounded-[10px] shrink-0 ${color} flex items-start justify-center font-extrabold text-base text-white`}>{num}</div>
+              <div key={num} className="py-[13px] px-4 flex items-center gap-3.5">
+                <div className={`w-9 h-9 rounded-[10px] shrink-0 ${color} flex items-center justify-center font-extrabold text-base text-white`}>{num}</div>
                 <div>
                   <div className="text-sm font-semibold text-[var(--tg-theme-text-color,#000)] leading-[1.3]">{title}</div>
                   <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-[1px]">{sub}</div>
@@ -252,16 +249,13 @@ export default function VPN() {
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-<div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
-          <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
-          <div>
-            <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">VPN</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">WireGuard · VLESS</div>
-          </div>
-        </div>
+      <div className="py-[6px] px-1 pb-[2px]">
+        <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸</div>
+      </div>
 
       {isExpiring && (
-        <div className={`fade-in rounded-xl py-[10px] px-3.5 flex justify-between items-start border ${
+        <div className={`fade-in rounded-xl py-[10px] px-3.5 flex justify-between items-center border ${
           sub.days_remaining <= 3 ? 'bg-danger/10 border-danger/30' : 'bg-warning/10 border-warning/30'
         }`}>
           <div>
@@ -279,12 +273,12 @@ export default function VPN() {
       )}
 
       {status !== null && (
-        <div className="fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-start gap-2 flex-wrap">
+        <div className="fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-center gap-2 flex-wrap">
           <span className="text-[11px] text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_servers')}</span>
           {status.length === 0
             ? <span className="text-xs text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_no_data')}</span>
             : status.map(s => (
-              <span key={s.id} className="flex items-start gap-1 text-xs">
+              <span key={s.id} className="flex items-center gap-1 text-xs">
                 <span className={`w-[7px] h-[7px] rounded-full ${s.ok ? 'bg-success' : 'bg-danger'}`} />
                 <span className="text-[var(--tg-theme-text-color,#000)]">{s.name}</span>
               </span>
@@ -325,7 +319,7 @@ export default function VPN() {
         <ExpiryBar daysLeft={sub.days_remaining} t={t} />
 
         {pendingName && (
-          <div className="mt-3 p-[8px_10px] rounded-lg bg-warning/10 flex items-start gap-2">
+          <div className="mt-3 p-[8px_10px] rounded-lg bg-warning/10 flex items-center gap-2">
             <span className="text-sm">⏳</span>
             <span className="text-xs text-warning">
               {t('vpn_pending_change')} <b>«{pendingName}»</b> {t('vpn_pending_next')}
@@ -353,8 +347,8 @@ export default function VPN() {
             action: () => { WebApp.HapticFeedback.impactOccurred('light'); nav('/instructions') },
           },
         ].map(({ color, icon, title, sub, action }) => (
-          <button key={title} onClick={action} className="w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-start gap-3.5">
-            <div className={`w-9 h-9 rounded-[10px] shrink-0 ${color} flex items-start justify-center`}>{icon}</div>
+          <button key={title} onClick={action} className="w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-3.5">
+            <div className={`w-9 h-9 rounded-[10px] shrink-0 ${color} flex items-center justify-center`}>{icon}</div>
             <div className="flex-1 text-left">
               <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color,#000)]">{title}</div>
               <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-[1px]">{sub}</div>

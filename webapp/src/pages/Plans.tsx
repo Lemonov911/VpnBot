@@ -93,14 +93,14 @@ function PlanCard({
 
   return (
     <div
-      className={`fade-in${animDelay ? ` fade-in-${animDelay}` : ''} rounded-2xl ${borderClass} ${bgClass} p-[14px_16px] flex items-start gap-3.5`}
+      className={`fade-in${animDelay ? ` fade-in-${animDelay}` : ''} rounded-2xl ${borderClass} ${bgClass} p-[14px_16px] flex items-center gap-3.5`}
     >
-      <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-start justify-center ${tw.bg} ${tw.shadow}`}>
+      <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-center justify-center ${tw.bg} ${tw.shadow}`}>
         {planIcon.icon}
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-start gap-[7px] mb-[3px] flex-wrap">
+        <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
           <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{t(PLAN_NAME_KEY[plan.key])}</span>
           {isHit && (
             <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
@@ -212,7 +212,7 @@ export default function Plans() {
     return (
       <div className="page">
         <div className="center">
-          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-start justify-center text-[36px]">✅</div>
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)]">{t('plans_done')}</div>
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm">{t('plans_done_sub')}</p>
           <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
@@ -230,12 +230,9 @@ export default function Plans() {
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
-        <div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
-          <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
-          <div>
-            <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('plans_title')}</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">{t('plans_sub')}</div>
-          </div>
+        <div className="py-[6px] px-1 pb-[2px]">
+          <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">{t('plans_title')}</div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">{t('plans_sub')}</div>
         </div>
 
         {sub === null ? (

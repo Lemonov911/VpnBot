@@ -24,9 +24,9 @@ function FAQGroup() {
         <div key={i}>
           <button
             onClick={() => { setOpen(open === i ? null : i); WebApp.HapticFeedback.selectionChanged() }}
-            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-start gap-[14px] ${(open === i || i < FAQ.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
+            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-[14px] ${(open === i || i < FAQ.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div className="w-9 h-9 rounded-[10px] shrink-0 bg-primary/12 flex items-start justify-center">
+            <div className="w-9 h-9 rounded-[10px] shrink-0 bg-primary/12 flex items-center justify-center">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z" stroke="var(--tg-theme-button-color,#2481cc)" strokeWidth="2"/>
                 <path d="M12 8c0-1.1.9-2 2-2s2 .9 2 2c0 1.5-2 2-2 3" stroke="var(--tg-theme-button-color,#2481cc)" strokeWidth="2" strokeLinecap="round"/>
@@ -62,16 +62,9 @@ export default function ESimFAQ() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
-      <div className="px-1 pt-1.5 pb-0.5 flex items-start gap-2">
-        <button onClick={() => nav('/esim')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-start justify-center shrink-0 cursor-pointer">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        <div>
-          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">FAQ</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_faq_sub')}</div>
-        </div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">FAQ</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_faq_sub')}</div>
       </div>
       <FAQGroup />
     </div>

@@ -78,14 +78,14 @@ function PaymentSheet({
         </div>
 
         <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-5">
-          <div className="py-[13px] px-4 flex items-start gap-[14px] bg-primary/5">
+          <div className="py-[13px] px-4 flex items-center gap-[14px] bg-primary/5">
             <span className="text-[22px] w-8 text-center shrink-0">⭐</span>
             <div className="flex-1">
               <div className="text-[15px] text-[var(--tg-theme-text-color)] font-medium">Telegram Stars</div>
               <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">≈ {priceToRub(pkg.price)} {t('esim_rubles')}</div>
             </div>
             <span className="text-[13px] text-[var(--tg-theme-button-color,#2481cc)] font-semibold">{pkg.stars} ⭐</span>
-            <div className="w-5 h-5 rounded-full shrink-0 border-2 border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)] flex items-start justify-center">
+            <div className="w-5 h-5 rounded-full shrink-0 border-2 border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)] flex items-center justify-center">
               <div className="w-2 h-2 rounded-full bg-white" />
             </div>
           </div>
@@ -155,7 +155,7 @@ export default function ESimCountry() {
     return (
       <div className="page">
         <div className="center">
-          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-[rgba(39,174,96,0.12)] flex items-start justify-center text-4xl">✅</div>
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-[rgba(39,174,96,0.12)] flex items-center justify-center text-4xl">✅</div>
           <div className="text-[22px] font-extrabold text-[var(--tg-theme-text-color)]">{t('esim_paid_success')}</div>
           <p className="text-[var(--tg-theme-hint-color)] text-sm leading-relaxed">
             {t('esim_paid_qr_note')}
@@ -172,17 +172,12 @@ export default function ESimCountry() {
     <>
       <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
 
-        <div className="px-1 pt-1.5 pb-0.5 flex items-start gap-2">
-          <button onClick={() => nav('/esim')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-start justify-center shrink-0 cursor-pointer">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-          <div>
-            <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{countryName}</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
-              {ruCompatible ? t('esim_country_works_in_ru') : t('esim_country_travel')}
-            </div>
+        <div className="px-1 pt-1.5 pb-0.5">
+          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">
+            {countryName}
+          </div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
+            {ruCompatible ? t('esim_country_works_in_ru') : t('esim_country_travel')}
           </div>
         </div>
 
@@ -207,8 +202,8 @@ export default function ESimCountry() {
                 ? `${pkg.dataLabel}${t('esim_pkg_day')}`
                 : `${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit.toLowerCase().startsWith('day') ? t('esim_pkg_days') : t('esim_pkg_mos')}`
               return (
-                <div key={pkg.packageCode} className={`py-[13px] px-4 flex items-start gap-[14px] ${isPopular ? 'bg-primary/5' : ''} ${i < packages.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
-                  <div className={`w-10 h-10 rounded-[11px] shrink-0 flex items-start justify-center ${isPopular ? 'bg-[var(--tg-theme-button-color,#2481cc)]' : 'bg-[rgba(128,128,128,0.12)]'}`}>
+                <div key={pkg.packageCode} className={`py-[13px] px-4 flex items-center gap-[14px] ${isPopular ? 'bg-primary/5' : ''} ${i < packages.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+                  <div className={`w-10 h-10 rounded-[11px] shrink-0 flex items-center justify-center ${isPopular ? 'bg-[var(--tg-theme-button-color,#2481cc)]' : 'bg-[rgba(128,128,128,0.12)]'}`}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                       <path d="M21 15.5a9 9 0 1 0-18 0" stroke={isPopular ? '#fff' : 'var(--tg-theme-hint-color,#888)'} strokeWidth="2" strokeLinecap="round"/>
                       <path d="M12 6v6l4 2" stroke={isPopular ? '#fff' : 'var(--tg-theme-hint-color,#888)'} strokeWidth="2" strokeLinecap="round"/>
@@ -216,7 +211,7 @@ export default function ESimCountry() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start gap-[7px] mb-[2px]">
+                    <div className="flex items-center gap-[7px] mb-[2px]">
                       <span className="font-bold text-[15px] text-[var(--tg-theme-text-color)]">{isDaily ? `${pkg.dataLabel}${t('esim_pkg_day')}` : pkg.dataLabel}</span>
                       {isPopular && (
                         <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold py-[2px] px-[7px] rounded-[20px]">{t('esim_pkg_hit')}</span>

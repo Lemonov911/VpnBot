@@ -108,7 +108,7 @@ function ServerPicker({
               <button
                 key={srv.id}
                 onClick={() => onSelect(srv.id)}
-                className={`w-full py-[13px] px-4 border-none bg-transparent text-[var(--tg-theme-text-color)] text-[15px] cursor-pointer text-left flex items-start gap-3 ${i < servers.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
+                className={`w-full py-[13px] px-4 border-none bg-transparent text-[var(--tg-theme-text-color)] text-[15px] cursor-pointer text-left flex items-center gap-3 ${i < servers.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
               >
                 <span className="text-[22px] shrink-0">{srv.location}</span>
                 <span className="flex-1 font-medium">{srv.name}</span>
@@ -216,8 +216,8 @@ function SlotCard({
   return (
     <>
       <div className={isLast ? '' : 'border-b border-solid border-[var(--card-border)]'}>
-        <div className="py-[13px] px-4 flex items-start gap-[14px]">
-          <div className={`w-10 h-10 rounded-xl shrink-0 flex items-start justify-center relative ${isEmpty ? bgDim : bg}`}>
+        <div className="py-[13px] px-4 flex items-center gap-[14px]">
+          <div className={`w-10 h-10 rounded-xl shrink-0 flex items-center justify-center relative ${isEmpty ? bgDim : bg}`}>
             <ProtoIcon protocol={slot.protocol} />
             {!isEmpty && (
               <span className="absolute -bottom-[3px] -right-[3px] w-3 h-3 rounded-full bg-success border-2 border-[var(--tg-theme-bg-color,#fff)]" />
@@ -251,7 +251,7 @@ function SlotCard({
             <div className="flex gap-2 shrink-0">
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setShowQr(true) }}
-                className={`${bg} text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none flex items-start gap-[5px]`}
+                className={`${bg} text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none flex items-center gap-[5px]`}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="3" width="7" height="7" rx="1" stroke="#fff" strokeWidth="2"/>
@@ -263,7 +263,7 @@ function SlotCard({
               </button>
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); window.open(getConfigDownloadUrl(slot.id), '_blank') }}
-                className={`w-9 h-9 rounded-[10px] border-none ${bgDim} flex items-start justify-center cursor-pointer shrink-0`}
+                className={`w-9 h-9 rounded-[10px] border-none ${bgDim} flex items-center justify-center cursor-pointer shrink-0`}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -271,7 +271,7 @@ function SlotCard({
               </button>
               <button
                 onClick={handleRevoke}
-                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-start justify-center cursor-pointer shrink-0"
+                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -317,7 +317,7 @@ function SubscriptionGroup({
 
   return (
     <div className="mb-2">
-      <div className="flex justify-between items-start px-1 pb-2">
+      <div className="flex justify-between items-center px-1 pb-2">
         <span className="text-[13px] font-bold text-[var(--tg-theme-text-color)]">
           {PLAN_KEY[first.plan] ? t(PLAN_KEY[first.plan] as TKey) : first.plan}
         </span>
@@ -401,18 +401,11 @@ export default function Configs() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
-      <div className="px-1 pt-1.5 pb-0.5 flex items-start gap-2">
-        <button onClick={() => nav('/vpn')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-start justify-center shrink-0 cursor-pointer">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        <div>
-          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('configs_title')}</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)] flex gap-3">
-            <span className="text-success">{t('configs_legend_vpn')}</span>
-            <span className="text-purple">{t('configs_legend_tv')}</span>
-          </div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('configs_title')}</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)] flex gap-3">
+          <span className="text-success">{t('configs_legend_vpn')}</span>
+          <span className="text-purple">{t('configs_legend_tv')}</span>
         </div>
       </div>
 
@@ -426,7 +419,7 @@ export default function Configs() {
 
       {!loading && slots.length === 0 && !errMsg && (
         <div className="text-center py-10">
-          <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-start justify-center text-[30px]">🔒</div>
+          <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-center justify-center text-[30px]">🔒</div>
           <div className="font-semibold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">{t('configs_no_sub')}</div>
           <p className="text-[var(--tg-theme-hint-color)] text-[13px] mb-6">{t('configs_no_sub_sub')}</p>
           <button className="btn py-[11px] px-8" onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>

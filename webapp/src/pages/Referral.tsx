@@ -50,14 +50,11 @@ export default function Referral() {
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
-        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
-        <div>
-          <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('ref_title')}</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">
-            {t('ref_sub')}{' '}
-            <span className="text-[var(--tg-theme-text-color)] font-semibold">{t('ref_sub2')}</span>
-          </div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('ref_title')}</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
+          {t('ref_sub')}{' '}
+          <span className="text-[var(--tg-theme-text-color)] font-semibold">{t('ref_sub2')}</span>
         </div>
       </div>
 
@@ -65,8 +62,8 @@ export default function Referral() {
       <span className="section-title">{t('ref_how_title')}</span>
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         {STEPS.map(({ num, color, title, sub }, i) => (
-          <div key={i} className={`py-[13px] px-4 flex items-start gap-[14px] ${i < STEPS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
-            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-start justify-center font-extrabold text-base text-white" style={{ background: color }}>
+          <div key={i} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < STEPS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center font-extrabold text-base text-white" style={{ background: color }}>
               {num}
             </div>
             <div>
@@ -87,7 +84,7 @@ export default function Referral() {
         </div>
       ) : stats ? (
         <>
-          <div className="bg-[var(--tg-theme-section-bg-color)] rounded-[14px] py-3 px-[14px] flex items-start gap-[10px]">
+          <div className="bg-[var(--tg-theme-section-bg-color)] rounded-[14px] py-3 px-[14px] flex items-center gap-[10px]">
             <span className="flex-1 text-[13px] text-[var(--tg-theme-hint-color)] overflow-hidden text-ellipsis whitespace-nowrap">
               {stats.ref_link}
             </span>
@@ -98,7 +95,7 @@ export default function Referral() {
 
           <button
             onClick={handleShare}
-            className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-start justify-center gap-2"
+            className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-center justify-center gap-2"
             style={{ background: 'var(--tg-theme-button-color, #2481cc)', color: 'var(--tg-theme-button-text-color, #fff)' }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -133,8 +130,8 @@ export default function Referral() {
                     value: `+${stats.bonus_days}`,
                   },
                 ].map(({ color, icon, label, value }, i, arr) => (
-                  <div key={label} className={`py-[13px] px-4 flex items-start gap-[14px] ${i < arr.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
-                    <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-start justify-center" style={{ background: color }}>
+                  <div key={label} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < arr.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+                    <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: color }}>
                       {icon}
                     </div>
                     <span className="flex-1 text-[15px] font-medium text-[var(--tg-theme-text-color)]">{label}</span>
