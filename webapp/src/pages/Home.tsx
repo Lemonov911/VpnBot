@@ -72,7 +72,7 @@ export default function Home() {
         {/* ── Header ── */}
         <div className="flex items-center gap-3 pt-1.5 pb-0.5">
           <img
-            src={import.meta.env.BASE_URL + 'logo.png'}
+            src={import.meta.env.BASE_URL + 'logo.webp'}
             alt="MAX"
             className="w-10 h-10 rounded-[11px] shrink-0 object-cover"
           />

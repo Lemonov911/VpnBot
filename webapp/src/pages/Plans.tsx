@@ -230,12 +230,8 @@ export default function Plans() {
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
-        <div className="py-[6px] px-1 pb-[2px] flex items-center gap-2">
-          <button onClick={() => nav('/vpn')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
+        <div className="py-[6px] px-1 pb-[2px] flex items-center gap-2.5">
+          <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] object-cover shrink-0" />
           <div>
             <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color)]">{t('plans_title')}</div>
             <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('plans_sub')}</div>

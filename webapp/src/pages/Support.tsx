@@ -121,12 +121,8 @@ export default function Support() {
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2">
-        <button onClick={() => nav('/')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
+      <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2.5">
+        <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] object-cover shrink-0" />
         <div>
           <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('support_title')}</div>
           <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('support_sub')}</div>
