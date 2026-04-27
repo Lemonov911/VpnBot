@@ -20,6 +20,12 @@ export default function App() {
   useEffect(() => {
     WebApp.ready()
     WebApp.expand()
+    const syncDark = () => {
+      document.documentElement.classList.toggle('dark', WebApp.colorScheme === 'dark')
+    }
+    syncDark()
+    WebApp.onEvent('themeChanged', syncDark)
+    return () => WebApp.offEvent('themeChanged', syncDark)
   }, [])
 
   return (
