@@ -6,11 +6,11 @@ import {
   activateSlot, revokeConfig,
   type VpnConfig, type VpnServer,
 } from '../api'
-import { useT, usePlural, type TKey } from '../i18n'
+import { useT, useLang, type TKey } from '../i18n'
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, lang: string): string {
   try {
-    return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    return new Date(iso).toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
   } catch { return iso }
 }
 
@@ -81,7 +81,6 @@ function ServerPicker({
   activating: boolean
 }) {
   const t = useT()
-  const p = usePlural()
   const color = PROTO_TEXT[protocol] ?? 'text-[#888]'
   const label = PROTO_LABEL[protocol] ?? protocol.toUpperCase()
 
@@ -159,7 +158,6 @@ function SlotCard({
   onRevoke:   (id: number) => Promise<void>
 }) {
   const t = useT()
-  const p = usePlural()
   const bg      = PROTO_BG[slot.protocol] ?? 'bg-[#888]'
   const bgDim   = PROTO_BG_DIM[slot.protocol] ?? 'bg-[#8888]/20'
   const label    = PROTO_LABEL[slot.protocol] ?? slot.protocol.toUpperCase()
@@ -306,12 +304,13 @@ function SlotCard({
 }
 
 function SubscriptionGroup({
-  slots, onActivate, onRevoke,
+  slots, onActivate, onRevoke, lang,
 }: {
   subscriptionId: number
   slots: (VpnConfig & { slot_num: number; subscription_id: number })[]
   onActivate: (id: number, serverId: number) => Promise<void>
   onRevoke:   (id: number) => Promise<void>
+  lang: string
 }) {
   const t = useT()
   const first = slots[0]
@@ -323,7 +322,7 @@ function SubscriptionGroup({
           {PLAN_KEY[first.plan] ? t(PLAN_KEY[first.plan] as TKey) : first.plan}
         </span>
         <span className="text-xs text-[var(--tg-theme-hint-color)]">
-          {t('configs_until')} {formatDate(first.expires_at)}
+          {t('configs_until')} {formatDate(first.expires_at, lang)}
         </span>
       </div>
 
@@ -346,7 +345,7 @@ type RawSlot = VpnConfig & { slot_num: number; subscription_id: number }
 
 export default function Configs() {
   const t = useT()
-  const p = usePlural()
+  const { lang } = useLang()
   const nav = useNavigate()
 
   const [slots,    setSlots]    = useState<RawSlot[]>([])
@@ -355,8 +354,9 @@ export default function Configs() {
 
   useEffect(() => {
     WebApp.BackButton.show()
-    WebApp.BackButton.onClick(() => nav('/vpn'))
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(() => nav('/vpn')) }
+    const goBack = () => nav('/vpn')
+    WebApp.BackButton.onClick(goBack)
+    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   const load = () => {
@@ -433,6 +433,7 @@ export default function Configs() {
           slots={subSlots}
           onActivate={handleActivate}
           onRevoke={handleRevoke}
+          lang={lang}
         />
       ))}
 

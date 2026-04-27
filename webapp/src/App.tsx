@@ -32,9 +32,7 @@ export default function App() {
     <LanguageProvider>
       <BrowserRouter>
         {/* Global language switcher — top-right on every page */}
-        <div style={{
-          position: 'fixed', top: 12, right: 16, zIndex: 200,
-        }}>
+        <div className="fixed top-3 right-4 z-[150]">
           <LangSwitch />
         </div>
 

@@ -40,7 +40,7 @@ export default function PaymentSheet({
             {t('pay_buy')} «{t(plan.nameKey as never)}»
           </div>
           <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
-            {plan.rub} ₽ {t('pay_per_month')} · {p(plan.awg, { ru: (t('plans_devices' as never) as string).split('|') as [string, string, string], en: plan.awg === 1 ? 'device' : 'devices' })}
+            {plan.rub} ₽ {t('pay_per_month')} · {p(plan.awg, { ru: (t('plans_devices' as never) as string).split('|') as [string, string, string], en: ['device', 'devices'] })}
             {plan.vless > 0 ? ' · TV' : ''}
           </div>
         </div>

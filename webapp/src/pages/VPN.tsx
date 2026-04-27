@@ -168,7 +168,7 @@ export default function VPN() {
             const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_start
             const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_start
             const isHit = plan.badge === 'hit'
-            const deviceWord = p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: plan.awg === 1 ? 'device' : 'devices' })
+            const deviceWord = p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
             return (
               <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
                 isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
@@ -263,7 +263,7 @@ export default function VPN() {
               {sub.days_remaining <= 3 ? t('vpn_expiry_banner_1') : t('vpn_expiry_banner_3')}
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">
-              {t('vpn_days_left')} {sub.days_remaining} {p(sub.days_remaining, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: t('vpn_day_left_2') })}
+              {t('vpn_days_left')} {sub.days_remaining} {p(sub.days_remaining, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: ['day', 'days'] })}
             </div>
           </div>
           <button onClick={() => nav('/vpn/plans')} className={`px-3.5 py-1.5 rounded-lg border-none text-white text-xs font-semibold cursor-pointer shrink-0 ${sub.days_remaining <= 3 ? 'bg-danger' : 'bg-warning'}`}>

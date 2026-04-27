@@ -112,7 +112,7 @@ function PlanCard({
         <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">
           <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
           <span className="opacity-40 mx-1">·</span>
-          <span className="text-xs">📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: 'devices' })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
+          <span className="text-xs">📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
         </div>
       </div>
 
@@ -126,7 +126,7 @@ function SkeletonPage() {
     <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)] gap-3">
       <div className="h-2" />
       {[140, 80, 80, 80, 80].map((h, i) => (
-        <div key={i} className={`skeleton h-[${h}px]`} />
+        <div key={i} className="skeleton rounded-xl" style={{ height: h }} />
       ))}
     </div>
   )

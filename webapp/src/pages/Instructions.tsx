@@ -120,11 +120,9 @@ export default function Instructions() {
 
   useEffect(() => {
     WebApp.BackButton.show()
-    WebApp.BackButton.onClick(() => nav('/vpn'))
-    return () => {
-      WebApp.BackButton.hide()
-      WebApp.HapticFeedback && WebApp.BackButton.offClick(() => nav('/vpn'))
-    }
+    const goBack = () => nav('/vpn')
+    WebApp.BackButton.onClick(goBack)
+    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   return (

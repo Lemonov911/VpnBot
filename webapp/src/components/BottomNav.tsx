@@ -15,13 +15,18 @@ function iconColor(active: boolean, dark: boolean) {
   return active ? '#1c1c1e' : 'rgba(0,0,0,0.35)'
 }
 
+function iconFill(active: boolean, dark: boolean) {
+  if (!active) return 'none'
+  return dark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.07)'
+}
+
 function HomeIcon({ active, dark }: { active: boolean; dark: boolean }) {
   const c = iconColor(active, dark)
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M3 12L12 3l9 9" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
       <path d="M5 10v11h14V10" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-        fill={active ? 'rgba(255,255,255,0.15)' : 'none'}/>
+        fill={iconFill(active, dark)}/>
       <path d="M9 21V13h6v8" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )
@@ -33,7 +38,7 @@ function ShieldIcon({ active, dark }: { active: boolean; dark: boolean }) {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
         stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-        fill={active ? 'rgba(255,255,255,0.15)' : 'none'}/>
+        fill={iconFill(active, dark)}/>
       <path d="M9 12l2 2 4-4" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )
@@ -44,7 +49,7 @@ function SimIcon({ active, dark }: { active: boolean; dark: boolean }) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <rect x="5" y="2" width="14" height="20" rx="2" stroke={c} strokeWidth="2"
-        fill={active ? 'rgba(255,255,255,0.15)' : 'none'}/>
+        fill={iconFill(active, dark)}/>
       <path d="M9 8h6M9 12h6M9 16h4" stroke={c} strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   )
@@ -56,7 +61,7 @@ function HelpIcon({ active, dark }: { active: boolean; dark: boolean }) {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
         stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-        fill={active ? 'rgba(255,255,255,0.15)' : 'none'}/>
+        fill={iconFill(active, dark)}/>
       <path d="M12 8v1m0 4h.01" stroke={c} strokeWidth="2" strokeLinecap="round"/>
     </svg>
   )
@@ -67,7 +72,7 @@ function FriendsIcon({ active, dark }: { active: boolean; dark: boolean }) {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <circle cx="9" cy="7" r="3.5" stroke={c} strokeWidth="2"
-        fill={active ? 'rgba(255,255,255,0.15)' : 'none'}/>
+        fill={iconFill(active, dark)}/>
       <path d="M2 20c0-3.314 3.134-6 7-6s7 2.686 7 6" stroke={c} strokeWidth="2" strokeLinecap="round"/>
       <path d="M19 11c1.657 0 3 1.343 3 3" stroke={c} strokeWidth="1.8" strokeLinecap="round" opacity="0.7"/>
       <circle cx="17" cy="7.5" r="2.5" stroke={c} strokeWidth="1.8" fill="none" opacity="0.7"/>

@@ -21,8 +21,9 @@ export default function ESim() {
 
   useEffect(() => {
     WebApp.BackButton.show()
-    WebApp.BackButton.onClick(() => nav('/'))
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(() => nav('/')) }
+    const goBack = () => nav('/')
+    WebApp.BackButton.onClick(goBack)
+    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export default function ESim() {
                 <span className="text-[28px] w-9 text-center shrink-0">🇷🇺</span>
                 <div className="flex-1">
                   <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{t('esim_russia')}</div>
-                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(ruEntry.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })} · {t('esim_russia_ip')}</div>
+                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(ruEntry.count, { ru: ['пакет', 'пакета', 'пакетов'], en: ['package', 'packages'] })} · {t('esim_russia_ip')}</div>
                 </div>
                 <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
                   <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
@@ -158,7 +159,7 @@ export default function ESim() {
                 <span className="text-[30px] w-9 text-center shrink-0">{flagEmoji(c.code)}</span>
                 <div className="flex-1">
                   <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{c.name}</div>
-                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(c.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })}</div>
+                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(c.count, { ru: ['пакет', 'пакета', 'пакетов'], en: ['package', 'packages'] })}</div>
                 </div>
                 <svg width="7" height="12" viewBox="0 0 7 12" fill="none"><path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </div>

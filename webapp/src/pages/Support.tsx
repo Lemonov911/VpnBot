@@ -24,38 +24,23 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
     { q: t('faq_q5'), a: t('faq_a5') },
   ]
   return (
-    <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+    <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
       {faqItems.map(({ q, a }, i) => (
         <div key={i}>
-          <div
+          <button
             onClick={() => { setOpen(open === i ? null : i); WebApp.HapticFeedback.selectionChanged() }}
-            style={{
-              padding: '14px 16px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 12,
-              borderBottom: (open === i || i < faqItems.length - 1) ? '1px solid rgba(128,128,128,0.1)' : 'none',
-            }}
+            className={`w-full border-none bg-transparent py-[14px] px-4 cursor-pointer flex items-center gap-3 ${(open === i || i < faqItems.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-              background: FAQ_META[i].color,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: FAQ_META[i].color }}>
               {FAQ_META[i].icon}
             </div>
-            <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: tp.text_color, textAlign: 'left' }}>{q}</span>
-            <svg width="7" height="12" viewBox="0 0 7 12" fill="none" style={{
-              transform: open === i ? 'rotate(90deg)' : 'none',
-              transition: 'transform 0.2s', flexShrink: 0,
-            }}>
+            <span className="flex-1 text-[14px] font-semibold text-[var(--tg-theme-text-color)] text-left">{q}</span>
+            <svg width="7" height="12" viewBox="0 0 7 12" fill="none" className={`shrink-0 transition-transform duration-200 ${open === i ? 'rotate-90' : ''}`}>
               <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-          </div>
+          </button>
           {open === i && (
-            <div style={{
-              padding: '12px 16px 16px 60px',
-              fontSize: 13, color: tp.hint_color, lineHeight: 1.6,
-              borderBottom: i < faqItems.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-            }}>
+            <div className={`py-3 px-4 pl-[60px] text-[13px] text-[var(--tg-theme-hint-color)] leading-[1.6] ${i < faqItems.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
               {a}
             </div>
           )}
@@ -114,20 +99,15 @@ export default function Support() {
     return (
       <div className="page">
         <div className="center">
-          <div style={{
-            width: 72, height: 72, borderRadius: 22,
-            background: 'rgba(39,174,96,0.12)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 36, marginBottom: 4,
-          }}>✅</div>
-          <div style={{ fontWeight: 700, fontSize: 22, color: tp.text_color }}>{t('support_done')}</div>
-          <p style={{ color: tp.hint_color, fontSize: 14, lineHeight: 1.6 }}>
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
+          <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color)]">{t('support_done')}</div>
+          <p className="text-[var(--tg-theme-hint-color)] text-sm leading-relaxed max-w-[280px]">
             {t('support_ticket')} #{ticketId} {t('support_ticket_accepted')}.<br />{t('support_done_sub')}
           </p>
-          <button className="btn" onClick={() => { setMessage(''); setState('form') }} style={{ width: '100%', marginBottom: 10 }}>
+          <button className="btn w-full mb-2.5" onClick={() => { setMessage(''); setState('form') }}>
             {t('support_write_more')}
           </button>
-          <button className="btn" style={{ width: '100%', background: 'var(--section-bg)', color: tp.text_color }} onClick={() => nav('/')}>
+          <button className="btn w-full !bg-[var(--tg-theme-section-bg-color)] !text-[var(--tg-theme-text-color)]" onClick={() => nav('/')}>
             {t('support_home')}
           </button>
         </div>
@@ -141,9 +121,9 @@ export default function Support() {
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('support_title')}</div>
-        <div style={{ fontSize: 13, color: tp.hint_color }}>{t('support_sub')}</div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('support_title')}</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('support_sub')}</div>
       </div>
 
       {/* FAQ */}
@@ -152,25 +132,17 @@ export default function Support() {
 
       {/* Тема обращения */}
       <span className="section-title">{t('support_form')}</span>
-      <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         {CATS.map((c, i) => (
           <button
             key={c.key}
             onClick={() => { setCategory(c.key); WebApp.HapticFeedback.selectionChanged() }}
-            style={{
-              width: '100%', border: 'none', background: 'transparent',
-              padding: '13px 16px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 14,
-              borderBottom: i < CATS.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-            }}
+            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-[14px] ${i < CATS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-              background: c.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: c.color }}>
               {c.icon}
             </div>
-            <span style={{ flex: 1, fontSize: 15, fontWeight: 500, color: tp.text_color, textAlign: 'left' }}>
+            <span className="flex-1 text-[15px] font-medium text-[var(--tg-theme-text-color)] text-left">
               {c.label}
             </span>
             {category === c.key ? (
@@ -179,23 +151,19 @@ export default function Support() {
                 <path d="M8 12l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             ) : (
-              <div style={{ width: 18, height: 18, borderRadius: '50%', border: '2px solid rgba(128,128,128,0.3)' }} />
+              <div className="w-[18px] h-[18px] rounded-full border-2 border-[rgba(128,128,128,0.3)]" />
             )}
           </button>
         ))}
       </div>
 
       {/* Поле сообщения */}
-      <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden', padding: '4px 0' }}>
-        <div style={{ padding: '10px 16px 6px', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-            background: selectedCat.color,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
+      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden py-1">
+        <div className="py-[10px] px-4 pb-[6px] flex items-center gap-[10px]">
+          <div className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center" style={{ background: selectedCat.color }}>
             {selectedCat.icon}
           </div>
-          <span style={{ fontSize: 13, fontWeight: 600, color: tp.text_color }}>{selectedCat.label}</span>
+          <span className="text-[13px] font-semibold text-[var(--tg-theme-text-color)]">{selectedCat.label}</span>
         </div>
         <textarea
           ref={textRef}
@@ -203,12 +171,8 @@ export default function Support() {
           onChange={e => setMessage(e.target.value)}
           placeholder={t('support_placeholder')}
           rows={5}
-          style={{
-            width: '100%', padding: '8px 16px 16px',
-            border: 'none', background: 'transparent', color: tp.text_color,
-            fontSize: 14, lineHeight: 1.6, resize: 'none', outline: 'none',
-            fontFamily: 'inherit', boxSizing: 'border-box',
-          }}
+          aria-label={t('support_placeholder')}
+          className="w-full py-2 px-4 pb-4 border-none bg-transparent text-[var(--tg-theme-text-color)] text-sm leading-[1.6] resize-none outline-none font-sans box-border"
         />
       </div>
 

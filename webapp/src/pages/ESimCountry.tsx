@@ -120,8 +120,9 @@ export default function ESimCountry() {
 
   useEffect(() => {
     WebApp.BackButton.show()
-    WebApp.BackButton.onClick(() => nav('/esim'))
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(() => nav('/esim')) }
+    const goBack = () => nav('/esim')
+    WebApp.BackButton.onClick(goBack)
+    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   useEffect(() => {

@@ -5,11 +5,9 @@ import { getReferralStats, type ReferralStats } from '../api'
 import { useT, useLang } from '../i18n'
 
 export default function Referral() {
-const nav    = useNavigate()
-  const tp     = WebApp.themeParams
+  const nav    = useNavigate()
   const t      = useT()
   const lang   = useLang().lang
-  const accent = 'var(--tg-theme-button-color, #2481cc)'
 
   const STEPS = [
     { num: '1', color: '#2481cc', title: t('ref_how1_title'), sub: t('ref_how1_sub') },
@@ -52,38 +50,25 @@ const nav    = useNavigate()
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('ref_title')}</div>
-        <div style={{ fontSize: 13, color: tp.hint_color }}>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('ref_title')}</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
           {t('ref_sub')}{' '}
-          <span style={{ color: tp.text_color, fontWeight: 600 }}>{t('ref_sub2')}</span>
+          <span className="text-[var(--tg-theme-text-color)] font-semibold">{t('ref_sub2')}</span>
         </div>
       </div>
 
       {/* How it works */}
       <span className="section-title">{t('ref_how_title')}</span>
-      <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
-        {[
-          { num: '1', color: '#2481cc', title: t('ref_how1_title'), sub: t('ref_how1_sub') },
-          { num: '2', color: '#27ae60', title: t('ref_how2_title'), sub: t('ref_how2_sub') },
-          { num: '3', color: '#e67e22', title: t('ref_how3_title'), sub: t('ref_how3_sub') },
-        ].map(({ num, color, title, sub }, i, arr) => (
-          <div key={i} style={{
-            padding: '13px 16px',
-            display: 'flex', alignItems: 'center', gap: 14,
-            borderBottom: i < arr.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-          }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-              background: color,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 800, fontSize: 16, color: '#fff',
-            }}>
+      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+        {STEPS.map(({ num, color, title, sub }, i) => (
+          <div key={i} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < STEPS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center font-extrabold text-base text-white" style={{ background: color }}>
               {num}
             </div>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: tp.text_color, lineHeight: 1.3 }}>{title}</div>
-              <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 2 }}>{sub}</div>
+              <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] leading-[1.3]">{title}</div>
+              <div className="text-xs text-[var(--tg-theme-hint-color)] mt-0.5">{sub}</div>
             </div>
           </div>
         ))}
@@ -92,47 +77,26 @@ const nav    = useNavigate()
       {/* Ссылка */}
       <span className="section-title">{t('ref_link_title')}</span>
       {loading ? (
-        <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 14, padding: '12px 14px' }}>
-          <div style={{ height: 4, borderRadius: 4, background: 'rgba(128,128,128,0.12)', overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', borderRadius: 4,
-              background: `linear-gradient(90deg, transparent 0%, ${accent} 40%, transparent 100%)`,
-              animation: 'progress-slide 1.4s ease-in-out infinite',
-              width: '50%',
-            }} />
+        <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] py-3 px-[14px]">
+          <div className="h-1 rounded bg-[rgba(128,128,128,0.12)] overflow-hidden">
+            <div className="h-full rounded bg-gradient-to-r from-transparent via-[var(--tg-theme-button-color,#2481cc)] to-transparent animate-[progress-slide_1.4s_ease-in-out_infinite] w-1/2" />
           </div>
         </div>
       ) : stats ? (
         <>
-          <div style={{
-            background: 'var(--section-bg)', borderRadius: 14,
-            padding: '12px 14px',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <span style={{
-              flex: 1, fontSize: 13, color: tp.hint_color,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
+          <div className="bg-[var(--tg-theme-section-bg-color)] rounded-[14px] py-3 px-[14px] flex items-center gap-[10px]">
+            <span className="flex-1 text-[13px] text-[var(--tg-theme-hint-color)] overflow-hidden text-ellipsis whitespace-nowrap">
               {stats.ref_link}
             </span>
-            <button onClick={handleCopy} style={{
-              padding: '7px 14px', borderRadius: 10, border: 'none',
-              background: copied ? '#27ae60' : accent,
-              color: '#fff', fontSize: 12, fontWeight: 600,
-              cursor: 'pointer', flexShrink: 0, transition: 'background 0.2s',
-            }}>
+            <button onClick={handleCopy} className={`py-[7px] px-[14px] rounded-[10px] border-none text-white text-xs font-semibold cursor-pointer shrink-0 transition-colors ${copied ? 'bg-success' : 'bg-[var(--tg-theme-button-color,#2481cc)]'}`}>
               {copied ? t('ref_copied') : t('ref_copy')}
             </button>
           </div>
 
           <button
             onClick={handleShare}
-            style={{
-              width: '100%', padding: '13px 0', borderRadius: 14, border: 'none',
-              background: accent, color: tp.button_text_color ?? '#fff',
-              fontSize: 15, fontWeight: 600, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}
+            className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-center justify-center gap-2"
+            style={{ background: 'var(--tg-theme-button-color, #2481cc)', color: 'var(--tg-theme-button-text-color, #fff)' }}
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M22 2L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
@@ -145,7 +109,7 @@ const nav    = useNavigate()
           {(stats.invited > 0 || stats.converted > 0 || stats.bonus_days > 0) && (
             <>
               <span className="section-title">{t('ref_stats')}</span>
-              <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+              <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
                 {[
                   {
                     color: '#2481cc',
@@ -166,15 +130,12 @@ const nav    = useNavigate()
                     value: `+${stats.bonus_days}`,
                   },
                 ].map(({ color, icon, label, value }, i, arr) => (
-                  <div key={label} style={{
-                    padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14,
-                    borderBottom: i < arr.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-                  }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div key={label} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < arr.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+                    <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: color }}>
                       {icon}
                     </div>
-                    <span style={{ flex: 1, fontSize: 15, fontWeight: 500, color: tp.text_color }}>{label}</span>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: tp.text_color }}>{value}</span>
+                    <span className="flex-1 text-[15px] font-medium text-[var(--tg-theme-text-color)]">{label}</span>
+                    <span className="text-lg font-bold text-[var(--tg-theme-text-color)]">{value}</span>
                   </div>
                 ))}
               </div>
@@ -182,7 +143,7 @@ const nav    = useNavigate()
           )}
         </>
       ) : (
-        <p style={{ color: 'var(--tg-theme-destructive-text-color,#ff3b30)', textAlign: 'center', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
+        <p className="text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-center break-words">
           {t('ref_error')}
         </p>
       )}

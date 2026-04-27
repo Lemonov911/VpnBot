@@ -763,8 +763,8 @@ export function useT() {
 
 export function usePlural() {
   const { lang } = useContext(LangCtx)
-  return (n: number, forms: { ru: [string, string, string]; en: string }) => {
-    if (lang === 'en') return `${n} ${forms.en}`
+  return (n: number, forms: { ru: [string, string, string]; en: [string, string] }) => {
+    if (lang === 'en') return `${n} ${n === 1 ? forms.en[0] : forms.en[1]}`
     const abs = Math.abs(n)
     const mod10 = abs % 10
     const mod100 = abs % 100

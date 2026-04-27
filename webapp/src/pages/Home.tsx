@@ -78,7 +78,7 @@ export default function Home() {
           />
           <div>
             <div className="font-extrabold text-[20px] text-[var(--tg-theme-text-color)] tracking-[-0.3px] leading-[1.2]">
-              MAX VPN & eSIM
+              {t('home_hero_title')}
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {t('home_hero_sub').split('\n')[0]}
@@ -120,7 +120,7 @@ export default function Home() {
                       {planLabel(sub.plan)}
                     </div>
                     <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
-                      {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: t('home_active_days') })}
+                      {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
                     </div>
                     <div className="flex-1 min-h-[20px]" />
                     <button

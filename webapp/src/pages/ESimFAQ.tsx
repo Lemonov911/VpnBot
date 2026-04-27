@@ -19,41 +19,27 @@ function FAQGroup() {
   ]
 
   return (
-    <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+    <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
       {FAQ.map(({ q, a }, i) => (
         <div key={i}>
-          <div
+          <button
             onClick={() => { setOpen(open === i ? null : i); WebApp.HapticFeedback.selectionChanged() }}
-            style={{
-              padding: '13px 16px', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 14,
-              borderBottom: (open === i || i < FAQ.length - 1) ? '1px solid rgba(128,128,128,0.1)' : 'none',
-            }}
+            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-[14px] ${(open === i || i < FAQ.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-              background: 'rgba(36,129,204,0.12)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 bg-primary/12 flex items-center justify-center">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z" stroke="var(--tg-theme-button-color,#2481cc)" strokeWidth="2"/>
                 <path d="M12 8c0-1.1.9-2 2-2s2 .9 2 2c0 1.5-2 2-2 3" stroke="var(--tg-theme-button-color,#2481cc)" strokeWidth="2" strokeLinecap="round"/>
                 <circle cx="12" cy="17" r="1" fill="var(--tg-theme-button-color,#2481cc)"/>
               </svg>
             </div>
-            <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{q}</span>
-            <svg width="7" height="12" viewBox="0 0 7 12" fill="none" style={{
-              transform: open === i ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0,
-            }}>
+            <span className="flex-1 text-sm font-semibold text-[var(--tg-theme-text-color)] text-left">{q}</span>
+            <svg width="7" height="12" viewBox="0 0 7 12" fill="none" className={`shrink-0 transition-transform duration-200 ${open === i ? 'rotate-90' : ''}`}>
               <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-          </div>
+          </button>
           {open === i && (
-            <div style={{
-              padding: '12px 16px 16px 66px',
-              fontSize: 13, color: 'var(--hint)', lineHeight: 1.6, whiteSpace: 'pre-line',
-              borderBottom: i < FAQ.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-            }}>
+            <div className={`py-3 px-4 pl-[66px] text-[13px] text-[var(--tg-theme-hint-color)] leading-[1.6] whitespace-pre-line ${i < FAQ.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
               {a}
             </div>
           )}
@@ -69,15 +55,16 @@ export default function ESimFAQ() {
 
   useEffect(() => {
     WebApp.BackButton.show()
-    WebApp.BackButton.onClick(() => nav('/esim'))
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(() => nav('/esim')) }
+    const goBack = () => nav('/esim')
+    WebApp.BackButton.onClick(goBack)
+    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--text)', marginBottom: 4 }}>FAQ</div>
-        <div style={{ fontSize: 13, color: 'var(--hint)' }}>{t('esim_faq_sub')}</div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">FAQ</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_faq_sub')}</div>
       </div>
       <FAQGroup />
     </div>
