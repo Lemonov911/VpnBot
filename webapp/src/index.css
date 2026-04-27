@@ -1,182 +1,124 @@
-/* Telegram theme tokens with sensible light-mode fallbacks */
+@import "tailwindcss";
+
+/* ── Custom theme ──────────────────────────────────── */
+@theme {
+  --color-primary: #2481cc;
+  --color-primary-light: #2481cc18;
+  --color-success: #27ae60;
+  --color-warning: #e67e22;
+  --color-danger: #ff3b30;
+  --color-purple: #8e44ad;
+  --color-info: #5ac8fa;
+  --color-dark: #1c1c1e;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ── Telegram theme tokens ────────────────────────── */
 :root {
-  --bg:          var(--tg-theme-bg-color,           #ffffff);
-  --text:        var(--tg-theme-text-color,          #000000);
-  --hint:        var(--tg-theme-hint-color,          #707579);
-  --link:        var(--tg-theme-link-color,          #2481cc);
-  --btn:         var(--tg-theme-button-color,        #2481cc);
-  --btn-text:    var(--tg-theme-button-text-color,   #ffffff);
-  --section-bg:  var(--tg-theme-section-bg-color,    #f1f1f1);
-  --section-sep: var(--tg-theme-section-separator-color, #e0e0e0);
   --card-border: rgba(128,128,128,0.12);
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ── Base ──────────────────────────────────────────── */
+* { box-sizing: border-box; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100dvh;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
+/* Gradient glow at top — subtle branding */
 body::before {
   content: '';
   position: fixed;
-  top: 0; left: 0; right: 0;
+  inset: 0 0 50% 0;
   height: 50vh;
   background: radial-gradient(ellipse 100% 60% at 50% -5%, rgba(36,129,204,0.11) 0%, transparent 100%);
   pointer-events: none;
   z-index: 0;
 }
 
-/* ── Layout ───────────────────────────────────── */
+/* ── Page layout ───────────────────────────────────── */
 .page {
-  position: relative;
-  z-index: 1;
-  padding: 12px;
+  @apply relative z-1 flex flex-col gap-2 min-h-dvh px-3 pt-0;
   padding-bottom: calc(env(safe-area-inset-bottom) + 88px);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 100dvh;
 }
 
-/* ── Hero ─────────────────────────────────────── */
-.hero {
-  padding: 24px 0 8px;
-  text-align: center;
-}
-.hero h1 { font-size: 26px; font-weight: 700; }
-.hero p  { font-size: 14px; color: var(--hint); margin-top: 4px; }
-
-/* ── Cards ────────────────────────────────────── */
-.cards { display: flex; flex-direction: column; gap: 10px; }
-
-.card {
-  background: var(--section-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 14px;
-  padding: 18px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  cursor: pointer;
-  transition: opacity .15s;
-  user-select: none;
-}
-.card:active { opacity: .7; }
-
-.card-icon { font-size: 32px; flex-shrink: 0; }
-
-.card-content { flex: 1; }
-.card-content h3 { font-size: 17px; font-weight: 600; }
-.card-content p  { font-size: 13px; color: var(--hint); margin-top: 2px; line-height: 1.4; }
-
-.card-arrow { font-size: 22px; color: var(--hint); }
-
-/* ── Plan cards ───────────────────────────────── */
-.plans { display: flex; flex-direction: column; gap: 10px; }
-
-.plan-card {
-  background: var(--section-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 14px;
-  padding: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+/* ── Section title ─────────────────────────────────── */
+.section-title {
+  @apply text-xs font-semibold uppercase tracking-wide px-0.5 pt-0.5;
+  color: var(--tg-theme-hint-color, #707579);
 }
 
-.plan-info h3  { font-size: 17px; font-weight: 600; }
-.plan-info p   { font-size: 13px; color: var(--hint); margin-top: 2px; }
-
-.plan-card .badge {
-  font-size: 11px;
-  background: var(--btn);
-  color: var(--btn-text);
-  padding: 2px 8px;
-  border-radius: 20px;
-  margin-top: 4px;
-  display: inline-block;
-}
-
-/* ── Button ───────────────────────────────────── */
+/* ── Button ────────────────────────────────────────── */
 .btn {
-  background: var(--btn);
-  color: var(--btn-text);
-  border: none;
-  border-radius: 12px;
+  @apply rounded-xl font-semibold cursor-pointer transition-opacity whitespace-nowrap shrink-0;
+  @apply active:opacity-80 disabled:opacity-45 disabled:cursor-default;
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #fff);
   padding: 12px 20px;
   font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity .15s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.btn:active   { opacity: .8; }
-.btn:disabled { opacity: .45; cursor: default; }
-.btn.full     { width: 100%; margin-top: 4px; }
-
-/* ── Section header ───────────────────────────── */
-.section-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--hint);
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  padding: 2px 2px 0;
+  border: none;
 }
 
-/* ── Success / info screens ───────────────────── */
+/* ── Center layout (success/info) ──────────────────── */
 .center {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  gap: 12px;
-  padding: 32px 0;
+  @apply flex-1 flex flex-col items-center justify-center text-center gap-3 py-8;
 }
-.center .big-icon { font-size: 64px; }
-.center h2        { font-size: 22px; font-weight: 700; }
-.center p         { font-size: 15px; color: var(--hint); line-height: 1.5; max-width: 280px; }
+.center h2 {
+  @apply text-[22px] font-extrabold;
+  color: var(--tg-theme-text-color);
+}
+.center p {
+  @apply text-[15px] leading-relaxed max-w-[280px];
+  color: var(--tg-theme-hint-color);
+}
 
-/* ── List group (iOS-style sections) ─────────────── */
-.list-group {
-  background: var(--section-bg);
+/* ── Card ──────────────────────────────────────────── */
+.card {
+  @apply flex items-center gap-3.5 py-[18px] px-[18px] rounded-2xl cursor-pointer select-none transition-opacity active:opacity-70;
+  background: var(--tg-theme-section-bg-color, #f1f1f1);
   border: 1px solid var(--card-border);
-  border-radius: 16px;
-  overflow: hidden;
 }
+.card-icon { @apply text-3xl shrink-0; }
+.card-content { @apply flex-1 min-w-0; }
+.card-content h3 { @apply text-[17px] font-semibold; }
+.card-content p  { @apply text-[13px] mt-0.5 leading-snug; color: var(--tg-theme-hint-color); }
+.card-arrow { @apply text-[22px]; color: var(--tg-theme-hint-color); }
 
-/* ── Skeleton loading ─────────────────────────────── */
+/* ── Skeleton loading ──────────────────────────────── */
 @keyframes skeleton-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.35; }
 }
 .skeleton {
-  background: var(--section-bg);
-  border-radius: 12px;
+  @apply rounded-xl;
+  background: var(--tg-theme-section-bg-color, #f1f1f1);
   animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
-/* ── Progress bar animation ───────────────────────── */
+/* ── Progress bar animation ─────────────────────────── */
 @keyframes progress-slide {
   0%   { transform: translateX(-200%); }
   100% { transform: translateX(400%); }
 }
 
-/* ── Fade-in for cards ────────────────────────────── */
+/* ── Revoke progress bar (was inline JS) ───────────── */
+@keyframes revoke-progress {
+  0%   { width: 0%;   margin-left: 0; }
+  50%  { width: 70%;  margin-left: 15%; }
+  100% { width: 0%;   margin-left: 100%; }
+}
+.animate-revoke-progress {
+  animation: revoke-progress 1.4s ease-in-out infinite;
+}
+
+/* ── Fade-in animation ──────────────────────────────── */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.fade-in { animation: fade-in 0.22s ease-out both; }
+.fade-in   { animation: fade-in 0.22s ease-out both; }
 .fade-in-1 { animation-delay: 0.04s; }
 .fade-in-2 { animation-delay: 0.08s; }
 .fade-in-3 { animation-delay: 0.12s; }
@@ -184,3 +126,12 @@ body::before {
 .fade-in-5 { animation-delay: 0.20s; }
 .fade-in-6 { animation-delay: 0.24s; }
 .fade-in-7 { animation-delay: 0.28s; }
+
+/* ── Utility: Telegram theme color tokens ──────────── */
+.tg-bg     { background: var(--tg-theme-bg-color, #ffffff); }
+.tg-text   { color: var(--tg-theme-text-color, #000000); }
+.tg-hint   { color: var(--tg-theme-hint-color, #707579); }
+.tg-link   { color: var(--tg-theme-link-color, #2481cc); }
+.tg-btn    { background: var(--tg-theme-button-color, #2481cc); }
+.tg-btn-text { color: var(--tg-theme-button-text-color, #fff); }
+.tg-section { background: var(--tg-theme-section-bg-color, #f1f1f1); }

@@ -9,7 +9,6 @@ const OPTIONS: { value: Lang; label: string; flag: string }[] = [
 
 export default function LangSwitch() {
   const { lang, setLang } = useLang()
-  const tp = WebApp.themeParams
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -24,47 +23,27 @@ export default function LangSwitch() {
   const current = OPTIONS.find(o => o.value === lang)!
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          padding: '5px 10px', borderRadius: 20, border: 'none',
-          background: 'var(--section-bg)',
-          color: tp.text_color, fontSize: 12, fontWeight: 600,
-          cursor: 'pointer',
-        }}
+        className="flex items-center gap-1 px-2.5 py-[5px] rounded-full border-none tg-section text-xs font-semibold cursor-pointer text-[var(--tg-theme-text-color)]"
       >
         <span>{current.flag}</span>
         <span>{current.label}</span>
-        <span style={{
-          fontSize: 9, opacity: 0.45,
-          transform: open ? 'rotate(180deg)' : 'none',
-          transition: 'transform 0.15s', display: 'inline-block',
-        }}>▼</span>
+        <span className={`inline-block text-[9px] opacity-45 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}>▼</span>
       </button>
 
       {open && (
-        <div style={{
-          position: 'absolute', top: '110%', right: 0,
-          background: tp.bg_color ?? '#1c1c1e',
-          borderRadius: 12, overflow: 'hidden',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
-          border: '1px solid rgba(128,128,128,0.15)',
-          minWidth: 110, zIndex: 50,
-        }}>
+        <div className="absolute top-[110%] right-0 rounded-xl overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.25)] border border-[rgba(128,128,128,0.15)] min-w-[110px] z-50 bg-[var(--tg-theme-bg-color,#1c1c1e)]">
           {OPTIONS.map(opt => (
             <button
               key={opt.value}
               onClick={() => { setLang(opt.value); setOpen(false); WebApp.HapticFeedback.selectionChanged() }}
-              style={{
-                width: '100%', padding: '11px 14px', border: 'none',
-                background: opt.value === lang ? 'rgba(36,129,204,0.12)' : 'transparent',
-                color: opt.value === lang ? 'var(--tg-theme-button-color,#2481cc)' : tp.text_color,
-                fontSize: 13, fontWeight: opt.value === lang ? 700 : 400,
-                cursor: 'pointer', textAlign: 'left',
-                display: 'flex', alignItems: 'center', gap: 8,
-              }}
+              className={`w-full px-3.5 py-[11px] border-none text-left cursor-pointer flex items-center gap-2 text-[13px] ${
+                opt.value === lang
+                  ? 'bg-[rgba(36,129,204,0.12)] text-[var(--tg-theme-button-color,#2481cc)] font-bold'
+                  : 'bg-transparent text-[var(--tg-theme-text-color)] font-normal'
+              }`}
             >
               <span>{opt.flag}</span>
               <span>{opt.value === 'ru' ? 'Русский' : 'English'}</span>

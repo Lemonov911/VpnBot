@@ -20,14 +20,19 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
   vpn_family:  { bg: '#ff2d55', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="7" r="3" stroke="#fff" strokeWidth="2"/><path d="M3 19c0-3 2.686-5 6-5s6 2 6 5" stroke="#fff" strokeWidth="2" strokeLinecap="round"/><circle cx="17" cy="7" r="2.5" stroke="#fff" strokeWidth="1.8"/><path d="M21 19c0-2.5-1.8-4-4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
 }
 
+const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
+  vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
+  vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
+  vpn_pro:     { bg: 'bg-[#5856d6]',   shadow: 'shadow-[0_4px_12px_rgba(88,86,214,0.55)]' },
+  vpn_family:  { bg: 'bg-[#ff2d55]',   shadow: 'shadow-[0_4px_12px_rgba(255,45,85,0.55)]' },
+}
+
 const PLAN_NAME_KEY: Record<string, TKey> = {
   vpn_start: 'vpn_plan_start',
   vpn_popular: 'vpn_plan_popular',
   vpn_pro: 'vpn_plan_pro',
   vpn_family: 'vpn_plan_family',
 }
-
-// ── Plan card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({
   plan, mode, upgradePrice, loading, isPending, onClick, animDelay,
@@ -38,85 +43,76 @@ function PlanCard({
 }) {
   const t = useT()
   const p = usePlural()
-  const tp     = WebApp.themeParams
-  const accent = 'var(--tg-theme-button-color, #2481cc)'
-  const isHit  = plan.badge === 'hit' && mode === 'buy'
+  const isHit = plan.badge === 'hit' && mode === 'buy'
   const isCurrent = mode === 'current'
   const planIcon = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_start
+  const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_start
+
+  const borderClass = isCurrent
+    ? 'border-2 border-[var(--tg-theme-button-color,#2481cc)]'
+    : isPending
+      ? 'border-2 border-warning/45'
+      : isHit
+        ? 'border-2 border-primary/50'
+        : 'border-2 border-transparent'
+
+  const bgClass = isCurrent
+    ? 'bg-primary/[0.04]'
+    : isHit
+      ? 'bg-primary/[0.03]'
+      : 'bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
 
   let btn: React.ReactNode = null
   if (mode === 'buy') {
     btn = (
-      <button className="btn" disabled={loading} onClick={onClick} style={{ minWidth: 84, fontSize: 13 }}>
+      <button className="btn !min-w-[84px] !text-[13px]" disabled={loading} onClick={onClick}>
         {loading ? '…' : `${plan.rub} ₽`}
       </button>
     )
   } else if (mode === 'current') {
     btn = (
-      <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: `${accent}18`, color: accent }}>
+      <span className="text-xs font-bold px-3 py-[5px] rounded-[20px] bg-primary/10 text-[var(--tg-theme-button-color,#2481cc)]">
         {t('plans_yours')}
       </span>
     )
   } else if (mode === 'upgrade') {
-    btn = <button className="btn" disabled={loading} onClick={onClick} style={{ minWidth: 84, fontSize: 13 }}>{loading ? '…' : `+${upgradePrice} ₽`}</button>
+    btn = <button className="btn !min-w-[84px] !text-[13px]" disabled={loading} onClick={onClick}>{loading ? '…' : `+${upgradePrice} ₽`}</button>
   } else if (mode === 'pending') {
     btn = (
-      <button disabled={loading} onClick={onClick} style={{
-        padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
-        background: 'rgba(230,126,34,0.15)', color: '#e67e22', fontSize: 13, fontWeight: 600,
-      }}>{loading ? '…' : t('plans_cancel')}</button>
+      <button disabled={loading} onClick={onClick} className="px-3.5 py-[7px] rounded-[10px] border-none cursor-pointer bg-warning/15 text-warning text-[13px] font-semibold">
+        {loading ? '…' : t('plans_cancel')}
+      </button>
     )
   } else {
     btn = (
-      <button disabled={loading} onClick={onClick} style={{
-        padding: '7px 14px', borderRadius: 10,
-        border: '1.5px solid rgba(128,128,128,0.2)',
-        background: 'transparent', color: tp.hint_color,
-        fontSize: 13, fontWeight: 500, cursor: 'pointer',
-      }}>{loading ? '…' : t('plans_downgrade')}</button>
+      <button disabled={loading} onClick={onClick} className="px-3.5 py-[7px] rounded-[10px] border-[1.5px] border-gray-500/20 bg-transparent text-[var(--tg-theme-hint-color,#707579)] text-[13px] font-medium cursor-pointer">
+        {loading ? '…' : t('plans_downgrade')}
+      </button>
     )
   }
 
   return (
     <div
-      className={`fade-in${animDelay ? ` fade-in-${animDelay}` : ''}`}
-      style={{
-        borderRadius: 16,
-        border: isCurrent
-          ? `2px solid ${accent}`
-          : isPending
-            ? '2px solid rgba(230,126,34,0.45)'
-            : isHit
-              ? `2px solid ${accent}88`
-              : '2px solid transparent',
-        background: isCurrent ? `${accent}0a` : isHit ? `${accent}06` : 'var(--section-bg)',
-        padding: '14px 16px',
-        display: 'flex', alignItems: 'center', gap: 14,
-      }}
+      className={`fade-in${animDelay ? ` fade-in-${animDelay}` : ''} rounded-2xl ${borderClass} ${bgClass} p-[14px_16px] flex items-center gap-3.5`}
     >
-      <div style={{
-        width: 44, height: 44, borderRadius: 13, flexShrink: 0,
-        background: planIcon.bg,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: `0 4px 12px ${planIcon.bg}55`,
-      }}>
+      <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-center justify-center ${tw.bg} ${tw.shadow}`}>
         {planIcon.icon}
       </div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 700, fontSize: 16, color: tp.text_color }}>{t(PLAN_NAME_KEY[plan.key])}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
+          <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{t(PLAN_NAME_KEY[plan.key])}</span>
           {isHit && (
-            <span style={{ background: accent, color: tp.button_text_color ?? '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>{t('plans_hit')}</span>
+            <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
           )}
           {isPending && (
-            <span style={{ background: 'rgba(230,126,34,0.15)', color: '#e67e22', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>{t('plans_next_month')}</span>
+            <span className="bg-warning/15 text-warning text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_next_month')}</span>
           )}
         </div>
-        <div style={{ fontSize: 13, color: tp.hint_color }}>
-          <span style={{ fontWeight: 600, color: tp.text_color }}>{plan.rub} ₽</span>
-          <span style={{ opacity: 0.4, margin: '0 4px' }}>·</span>
-          <span style={{ fontSize: 12 }}>📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: 'devices' })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">
+          <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
+          <span className="opacity-40 mx-1">·</span>
+          <span className="text-xs">📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: 'devices' })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
         </div>
       </div>
 
@@ -125,27 +121,22 @@ function PlanCard({
   )
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
-
 function SkeletonPage() {
   return (
-    <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)', gap: 12 }}>
-      <div style={{ height: 8 }} />
+    <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)] gap-3">
+      <div className="h-2" />
       {[140, 80, 80, 80, 80].map((h, i) => (
-        <div key={i} className="skeleton" style={{ height: h }} />
+        <div key={i} className={`skeleton h-[${h}px]`} />
       ))}
     </div>
   )
 }
-
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 type PageStatus = 'idle' | 'paid' | 'error'
 
 export default function Plans() {
   const nav      = useNavigate()
   const location = useLocation()
-  const tp       = WebApp.themeParams
   const t        = useT()
 
   const [sub,        setSub]        = useState<Subscription | null | undefined>(undefined)
@@ -221,15 +212,11 @@ export default function Plans() {
     return (
       <div className="page">
         <div className="center">
-          <div style={{
-            width: 72, height: 72, borderRadius: 22, marginBottom: 4,
-            background: 'rgba(39,174,96,0.12)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36,
-          }}>✅</div>
-          <div style={{ fontWeight: 800, fontSize: 22, color: tp.text_color }}>{t('plans_done')}</div>
-          <p style={{ color: tp.hint_color, fontSize: 14 }}>{t('plans_done_sub')}</p>
-          <button className="btn" style={{ width: '100%', marginBottom: 10 }} onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
-          <button className="btn" style={{ width: '100%', background: 'var(--section-bg)', color: tp.text_color }}
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
+          <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)]">{t('plans_done')}</div>
+          <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm">{t('plans_done_sub')}</p>
+          <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
+          <button className="btn w-full !bg-[var(--tg-theme-section-bg-color,#f1f1f1)] !text-[var(--tg-theme-text-color,#000)]"
             onClick={() => { setPageStatus('idle'); getActiveSubscription().then(setSub) }}>
             {t('plans_back')}
           </button>
@@ -242,10 +229,10 @@ export default function Plans() {
 
   return (
     <>
-      <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
-        <div style={{ padding: '6px 4px 2px' }}>
-          <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('plans_title')}</div>
-          <div style={{ fontSize: 13, color: tp.hint_color }}>{t('plans_sub')}</div>
+      <div className="page pb-[calc(env(safe-area-inset-bottom)+90px)]">
+        <div className="py-[6px] px-1 pb-[2px]">
+          <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">{t('plans_title')}</div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">{t('plans_sub')}</div>
         </div>
 
         {sub === null ? (
@@ -277,7 +264,7 @@ export default function Plans() {
         )}
 
         {pageStatus === 'error' && (
-          <p style={{ color: 'var(--tg-theme-destructive-text-color, #ff3b30)', textAlign: 'center', fontSize: 14 }}>{errMsg}</p>
+          <p className="text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-center text-sm">{errMsg}</p>
         )}
         <Legend />
       </div>
@@ -295,15 +282,10 @@ export default function Plans() {
 
 function Legend() {
   const t = useT()
-  const tp = WebApp.themeParams
   return (
-    <div style={{
-      background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 12,
-      padding: '12px 16px', marginTop: 8, fontSize: 12,
-      color: tp.hint_color, lineHeight: 1.7,
-    }}>
-      <span style={{ color: '#27ae60', fontWeight: 600 }}>{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}<br />
-      <span style={{ color: '#8e44ad', fontWeight: 600 }}>{t('plans_legend_tv')}</span> {t('plans_legend_tv_s')}
+    <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-3 px-4 mt-2 text-xs text-[var(--tg-theme-hint-color,#707579)] leading-[1.7]">
+      <span className="text-success font-semibold">{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}<br />
+      <span className="text-purple font-semibold">{t('plans_legend_tv')}</span> {t('plans_legend_tv_s')}
     </div>
   )
 }

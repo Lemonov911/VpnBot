@@ -9,7 +9,6 @@ import { useT, usePlural } from '../i18n'
 
 export default function Home() {
   const nav    = useNavigate()
-  const tp     = WebApp.themeParams
   const t      = useT()
   const p      = usePlural()
 
@@ -32,49 +31,72 @@ export default function Home() {
 
   const hasStats = stats && (stats.stars_spent > 0 || stats.bonus_days > 0 || stats.invited > 0)
 
+  const quickActions = [
+    {
+      iconBg: 'bg-success',
+      shadow: 'shadow-[0_4px_10px_rgba(39,174,96,0.27)]',
+      label: t('home_configs'),
+      action: () => nav('/configs'),
+      icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+        <rect x="9" y="3" width="6" height="4" rx="1" stroke="#fff" strokeWidth="2"/>
+        <path d="M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>,
+    },
+    {
+      iconBg: 'bg-purple',
+      shadow: 'shadow-[0_4px_10px_rgba(142,68,173,0.27)]',
+      label: t('home_guide'),
+      action: () => nav('/instructions'),
+      icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="2"/>
+        <path d="M12 8v4l3 3" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+      </svg>,
+    },
+    {
+      iconBg: 'bg-warning',
+      shadow: 'shadow-[0_4px_10px_rgba(230,126,34,0.27)]',
+      label: t('home_support'),
+      action: () => nav('/support'),
+      icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+          stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>,
+    },
+  ]
+
   return (
     <>
-      <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)', gap: 12 }}>
+      <div className="page gap-3">
 
         {/* ── Header ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0 2px' }}>
+        <div className="flex items-center gap-3 pt-1.5 pb-0.5">
           <img
             src={import.meta.env.BASE_URL + 'logo.png'}
             alt="MAX"
-            style={{ width: 40, height: 40, borderRadius: 11, flexShrink: 0, objectFit: 'cover' }}
+            className="w-10 h-10 rounded-[11px] shrink-0 object-cover"
           />
           <div>
-            <div style={{ fontWeight: 800, fontSize: 20, color: tp.text_color, letterSpacing: -0.3, lineHeight: 1.2 }}>
+            <div className="font-extrabold text-[20px] text-[var(--tg-theme-text-color)] tracking-[-0.3px] leading-[1.2]">
               MAX VPN & eSIM
             </div>
-            <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>
+            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {t('home_hero_sub').split('\n')[0]}
             </div>
           </div>
         </div>
 
         {/* ── Service cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div className="grid grid-cols-2 gap-2.5">
 
           {/* VPN card */}
           {sub === undefined ? (
-            <div className="skeleton" style={{ height: 178, borderRadius: 20 }} />
+            <div className="skeleton h-[178px] rounded-[20px]" />
           ) : (
-            <div className="fade-in" style={{
-              borderRadius: 20, overflow: 'hidden',
-              background: 'var(--section-bg)',
-              border: '1px solid var(--card-border)',
-              display: 'flex', flexDirection: 'column',
-            }}>
-              <div style={{ height: 3, background: 'linear-gradient(90deg, #2481cc, #5856d6)', flexShrink: 0 }} />
-              <div style={{ padding: '14px 14px 16px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 158 }}>
-                <div style={{
-                  width: 42, height: 42, borderRadius: 13,
-                  background: 'linear-gradient(135deg, #2481cc, #5856d6)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  marginBottom: 11, flexShrink: 0,
-                  boxShadow: '0 4px 14px rgba(36,129,204,0.4)',
-                }}>
+            <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
+              <div className="h-[3px] bg-gradient-to-r from-primary to-[#5856d6] shrink-0" />
+              <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
+                <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-primary to-[#5856d6] flex items-center justify-center mb-[11px] shrink-0 shadow-[0_4px_14px_rgba(36,129,204,0.4)]">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
                       stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -82,55 +104,47 @@ export default function Home() {
                   </svg>
                 </div>
 
-                <div style={{ fontSize: 10, fontWeight: 700, color: tp.hint_color, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>
+                <div className="text-[10px] font-bold uppercase tracking-[0.7px] mb-1.5 text-[var(--tg-theme-hint-color)]">
                   VPN
                 </div>
 
                 {sub ? (
                   <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#27ae60', display: 'block', flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#27ae60' }}>
+                    <div className="flex items-center gap-[5px] mb-[3px]">
+                      <span className="w-[7px] h-[7px] rounded-full bg-success shrink-0 block" />
+                      <span className="text-xs font-bold text-success">
                         {t('home_active')}
                       </span>
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: tp.text_color, marginBottom: 2 }}>
+                    <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
                       {planLabel(sub.plan)}
                     </div>
-                    <div style={{ fontSize: 11, color: tp.hint_color }}>
+                    <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
                       {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: t('home_active_days') })}
                     </div>
-                    <div style={{ flex: 1, minHeight: 20 }} />
+                    <div className="flex-1 min-h-[20px]" />
                     <button
                       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
-                      style={{
-                        width: '100%', padding: '8px 0', borderRadius: 10, border: 'none',
-                        background: 'rgba(36,129,204,0.13)', color: '#2481cc',
-                        fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                      }}
+                      className="w-full py-2 rounded-[10px] border-none bg-primary/[0.13] text-primary text-xs font-bold cursor-pointer"
                     >
                       {t('home_manage')} →
                     </button>
                   </>
                 ) : (
                   <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'rgba(128,128,128,0.35)', display: 'block', flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, fontWeight: 600, color: tp.hint_color }}>
+                    <div className="flex items-center gap-[5px] mb-[3px]">
+                      <span className="w-[7px] h-[7px] rounded-full bg-gray-500/35 shrink-0 block" />
+                      <span className="text-xs font-semibold text-[var(--tg-theme-hint-color)]">
                         {t('home_no_sub')}
                       </span>
                     </div>
-                    <div style={{ fontSize: 11, color: tp.hint_color }}>
+                    <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
                       {t('home_sub_from')}
                     </div>
-                    <div style={{ flex: 1, minHeight: 20 }} />
+                    <div className="flex-1 min-h-[20px]" />
                     <button
                       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
-                      style={{
-                        width: '100%', padding: '8px 0', borderRadius: 10, border: 'none',
-                        background: 'linear-gradient(135deg, #2481cc, #5856d6)',
-                        color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                      }}
+                      className="w-full py-2 rounded-[10px] border-none bg-gradient-to-br from-primary to-[#5856d6] text-white text-xs font-bold cursor-pointer"
                     >
                       {t('home_buy_vpn')}
                     </button>
@@ -141,46 +155,31 @@ export default function Home() {
           )}
 
           {/* eSIM card */}
-          <div className="fade-in" style={{
-            borderRadius: 20, overflow: 'hidden',
-            background: 'var(--section-bg)',
-            border: '1px solid var(--card-border)',
-            display: 'flex', flexDirection: 'column',
-          }}>
-            <div style={{ height: 3, background: 'linear-gradient(90deg, #27ae60, #00b4d8)', flexShrink: 0 }} />
-            <div style={{ padding: '14px 14px 16px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 158 }}>
-              <div style={{
-                width: 42, height: 42, borderRadius: 13,
-                background: 'linear-gradient(135deg, #27ae60, #00b4d8)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                marginBottom: 11,
-                boxShadow: '0 4px 14px rgba(39,174,96,0.4)',
-              }}>
+          <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
+            <div className="h-[3px] bg-gradient-to-r from-success to-[#00b4d8] shrink-0" />
+            <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
+              <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-success to-[#00b4d8] flex items-center justify-center mb-[11px] shadow-[0_4px_14px_rgba(39,174,96,0.4)]">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <rect x="5" y="2" width="14" height="20" rx="3" stroke="#fff" strokeWidth="2"/>
                   <path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"/>
                 </svg>
               </div>
 
-              <div style={{ fontSize: 10, fontWeight: 700, color: tp.hint_color, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>
+              <div className="text-[10px] font-bold uppercase tracking-[0.7px] mb-1.5 text-[var(--tg-theme-hint-color)]">
                 eSIM
               </div>
 
-              <div style={{ fontSize: 14, fontWeight: 700, color: tp.text_color, marginBottom: 2 }}>
+              <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
                 {t('home_esim_title')}
               </div>
-              <div style={{ fontSize: 11, color: tp.hint_color }}>
+              <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
                 {t('home_esim_sub')}
               </div>
 
-              <div style={{ flex: 1, minHeight: 20 }} />
+              <div className="flex-1 min-h-[20px]" />
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/esim') }}
-                style={{
-                  width: '100%', padding: '8px 0', borderRadius: 10, border: 'none',
-                  background: 'linear-gradient(135deg, #27ae60, #00b4d8)',
-                  color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                }}
+                className="w-full py-2 rounded-[10px] border-none bg-gradient-to-br from-success to-[#00b4d8] text-white text-xs font-bold cursor-pointer"
               >
                 {t('home_esim_browse')}
               </button>
@@ -189,52 +188,17 @@ export default function Home() {
         </div>
 
         {/* ── Quick actions ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-          {[
-            {
-              color: '#27ae60', label: t('home_configs'),
-              action: () => nav('/configs'),
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-                <rect x="9" y="3" width="6" height="4" rx="1" stroke="#fff" strokeWidth="2"/>
-                <path d="M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/>
-              </svg>,
-            },
-            {
-              color: '#8e44ad', label: t('home_guide'),
-              action: () => nav('/instructions'),
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="2"/>
-                <path d="M12 8v4l3 3" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-              </svg>,
-            },
-            {
-              color: '#e67e22', label: t('home_support'),
-              action: () => nav('/support'),
-              icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                  stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>,
-            },
-          ].map(({ color, label, action, icon }) => (
+        <div className="grid grid-cols-3 gap-2">
+          {quickActions.map(({ iconBg, shadow, label, action, icon }) => (
             <button
               key={label}
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); action() }}
-              style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-                padding: '14px 6px 12px',
-                background: 'var(--section-bg)', border: '1px solid var(--card-border)',
-                borderRadius: 16, cursor: 'pointer',
-              }}
+              className="flex flex-col items-center gap-2 pt-[14px] px-1.5 pb-3 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl cursor-pointer"
             >
-              <div style={{
-                width: 44, height: 44, borderRadius: 13, background: color,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: `0 4px 10px ${color}44`,
-              }}>
+              <div className={`w-11 h-11 rounded-[13px] ${iconBg} flex items-center justify-center ${shadow}`}>
                 {icon}
               </div>
-              <span style={{ fontSize: 12, fontWeight: 600, color: tp.text_color, lineHeight: 1.2 }}>{label}</span>
+              <span className="text-xs font-semibold text-[var(--tg-theme-text-color)] leading-[1.2]">{label}</span>
             </button>
           ))}
         </div>
@@ -242,20 +206,9 @@ export default function Home() {
         {/* ── Referral banner ── */}
         <div
           onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/referral') }}
-          style={{
-            background: 'var(--section-bg)', borderRadius: 16,
-            padding: '14px 16px',
-            display: 'flex', alignItems: 'center', gap: 14,
-            cursor: 'pointer',
-            border: '1.5px solid rgba(230,126,34,0.2)',
-          }}
+          className="bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-center gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
         >
-          <div style={{
-            width: 44, height: 44, borderRadius: 13, flexShrink: 0,
-            background: '#e67e22',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(230,126,34,0.35)',
-          }}>
+          <div className="w-11 h-11 rounded-[13px] shrink-0 bg-warning flex items-center justify-center shadow-[0_4px_12px_rgba(230,126,34,0.35)]">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <path d="M20 12v10H4V12" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M22 7H2v5h20V7z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -264,11 +217,11 @@ export default function Home() {
               <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: tp.text_color, marginBottom: 2 }}>
+          <div className="flex-1">
+            <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
               {t('home_invite')}
             </div>
-            <div style={{ fontSize: 12, color: tp.hint_color }}>
+            <div className="text-xs text-[var(--tg-theme-hint-color)]">
               {t('home_invite_sub')}
             </div>
           </div>
@@ -279,18 +232,15 @@ export default function Home() {
 
         {/* ── Stats ── */}
         {hasStats && (
-          <div className="fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+          <div className="fade-in grid grid-cols-3 gap-2">
             {[
               { value: `${stats!.stars_spent} ⭐`, label: t('home_stars_spent_label'), show: stats!.stars_spent > 0 },
               { value: `+${stats!.bonus_days}${t('day')}`,     label: t('home_bonus_label'),        show: stats!.bonus_days > 0  },
               { value: String(stats!.invited),       label: t('home_invited_label'),      show: stats!.invited > 0     },
             ].filter(x => x.show).map(({ value, label }) => (
-              <div key={label} style={{
-                background: 'var(--section-bg)', border: '1px solid var(--card-border)',
-                borderRadius: 14, padding: '12px 8px', textAlign: 'center',
-              }}>
-                <div style={{ fontSize: 16, fontWeight: 800, color: tp.text_color }}>{value}</div>
-                <div style={{ fontSize: 10, color: tp.hint_color, marginTop: 3, lineHeight: 1.3 }}>{label}</div>
+              <div key={label} className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] px-2 py-3 text-center">
+                <div className="text-base font-extrabold text-[var(--tg-theme-text-color)]">{value}</div>
+                <div className="text-[10px] text-[var(--tg-theme-hint-color)] mt-[3px] leading-[1.3]">{label}</div>
               </div>
             ))}
           </div>

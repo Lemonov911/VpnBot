@@ -20,3 +20,9 @@ webapp/node_modules/
 .idea/
 .DS_Store
 *.log
+
+# Server credentials
+.servers/
+server-*
+*.server.json
+.claude/

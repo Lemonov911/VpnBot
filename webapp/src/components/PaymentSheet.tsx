@@ -23,47 +23,31 @@ export default function PaymentSheet({
   onClose: () => void
   onPay: (method: PayMethod) => void
 }) {
-  const tp     = WebApp.themeParams
   const t      = useT()
   const p      = usePlural()
-  const accent = 'var(--tg-theme-button-color, #2481cc)'
   const [method, setMethod] = useState<PayMethod>('stars')
 
   return (
     <>
       <div
         onClick={onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.45)' }}
+        className="fixed inset-0 z-[100] bg-black/45"
       />
-      <div style={{
-        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 101,
-        background: tp.bg_color ?? '#fff',
-        borderRadius: '20px 20px 0 0',
-        padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
-        boxShadow: '0 -4px 30px rgba(0,0,0,0.18)',
-      }}>
-        <div style={{
-          width: 36, height: 4, borderRadius: 2,
-          background: 'rgba(128,128,128,0.3)',
-          margin: '-8px auto 18px',
-        }} />
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 18, color: tp.text_color }}>
-            {t('pay_buy')} «{t(plan.nameKey as any)}»
+      <div className="fixed inset-x-0 bottom-0 z-[101] bg-[var(--tg-theme-bg-color,#fff)] rounded-t-[20px] p-5 pb-[calc(env(safe-area-inset-bottom)+24px)] shadow-[0_-4px_30px_rgba(0,0,0,0.18)]">
+        <div className="w-9 h-1 rounded-sm bg-gray-500/30 -mt-2 mx-auto mb-[18px]" />
+        <div className="mb-[18px]">
+          <div className="font-bold text-lg text-[var(--tg-theme-text-color,#000)]">
+            {t('pay_buy')} «{t(plan.nameKey as never)}»
           </div>
-          <div style={{ fontSize: 13, color: tp.hint_color, marginTop: 3 }}>
-            {plan.rub} ₽ {t('pay_per_month')} · {p(plan.awg, { ru: (t('plans_devices' as any) as string).split('|') as [string, string, string], en: plan.awg === 1 ? 'device' : 'devices' })}
+          <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
+            {plan.rub} ₽ {t('pay_per_month')} · {p(plan.awg, { ru: (t('plans_devices' as never) as string).split('|') as [string, string, string], en: plan.awg === 1 ? 'device' : 'devices' })}
             {plan.vless > 0 ? ' · TV' : ''}
           </div>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 600, color: tp.hint_color, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+        <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">
           {t('pay_method')}
         </div>
-        <div style={{
-          background: 'var(--section-bg)',
-          border: '1px solid var(--card-border)',
-          borderRadius: 14, overflow: 'hidden', marginBottom: 20,
-        }}>
+        <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-5">
           {([
             ['stars',  '⭐', t('pay_method_stars'),    `${plan.stars} ⭐`] as [PayMethod, string, string, string],
             ['crypto', '💎', t('pay_method_crypto'),   `${plan.rub} ₽`] as [PayMethod, string, string, string],
@@ -71,31 +55,23 @@ export default function PaymentSheet({
             <div
               key={val}
               onClick={() => setMethod(val)}
-              style={{
-                padding: '13px 16px',
-                display: 'flex', alignItems: 'center', gap: 14,
-                cursor: 'pointer',
-                borderBottom: i === 0 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-                background: method === val ? `${accent}10` : 'transparent',
-              }}
+              className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i === 0 ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
             >
-              <span style={{ fontSize: 22, width: 32, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
-              <span style={{ flex: 1, fontSize: 15, color: tp.text_color, fontWeight: 500 }}>{label}</span>
-              <span style={{ fontSize: 13, color: method === val ? accent : tp.hint_color, fontWeight: 600 }}>{price}</span>
-              <div style={{
-                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                border: `2px solid ${method === val ? accent : 'rgba(128,128,128,0.35)'}`,
-                background: method === val ? accent : 'transparent',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {method === val && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />}
+              <span className="text-[22px] w-8 text-center shrink-0">{icon}</span>
+              <span className="flex-1 text-[15px] text-[var(--tg-theme-text-color,#000)] font-medium">{label}</span>
+              <span className={`text-[13px] font-semibold ${method === val ? 'text-[var(--tg-theme-button-color,#2481cc)]' : 'text-[var(--tg-theme-hint-color,#707579)]'}`}>{price}</span>
+              <div className={`w-5 h-5 rounded-full shrink-0 border-2 flex items-center justify-center ${
+                method === val
+                  ? 'border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)]'
+                  : 'border-gray-500/35 bg-transparent'
+              }`}>
+                {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
               </div>
             </div>
           ))}
         </div>
         <button
-          className="btn"
-          style={{ width: '100%', fontSize: 16, padding: '14px 0' }}
+          className="btn !w-full !text-base !py-3.5"
           onClick={() => onPay(method)}
         >
           {method === 'stars' ? `${t('pay_pay_btn')} ${plan.stars} ⭐` : `${t('pay_pay_btn')} ${plan.rub} ₽`}

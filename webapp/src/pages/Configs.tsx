@@ -1,4 +1,4 @@
-import { useEffect, useState, useLayoutEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -7,24 +7,6 @@ import {
   type VpnConfig, type VpnServer,
 } from '../api'
 import { useT, usePlural, type TKey } from '../i18n'
-
-const REVOKE_STYLE = `
-@keyframes revoke-progress {
-  0%   { width: 0%;   margin-left: 0; }
-  50%  { width: 70%;  margin-left: 15%; }
-  100% { width: 0%;   margin-left: 100%; }
-}
-`
-
-function RevokeStyle() {
-  useLayoutEffect(() => {
-    const el = document.createElement('style')
-    el.textContent = REVOKE_STYLE
-    document.head.appendChild(el)
-    return () => { document.head.removeChild(el) }
-  }, [])
-  return null
-}
 
 function formatDate(iso: string): string {
   try {
@@ -42,9 +24,17 @@ const PLAN_KEY: Record<string, string> = {
   vpn_1y:      'configs_plan_1y',
 }
 
-const PROTO_COLOR: Record<string, string> = {
-  awg:   '#27ae60',
-  vless: '#8e44ad',
+const PROTO_BG: Record<string, string> = {
+  awg:   'bg-success',
+  vless: 'bg-purple',
+}
+const PROTO_BG_DIM: Record<string, string> = {
+  awg:   'bg-success/20',
+  vless: 'bg-purple/20',
+}
+const PROTO_TEXT: Record<string, string> = {
+  awg:   'text-success',
+  vless: 'text-purple',
 }
 const PROTO_LABEL: Record<string, string> = {
   awg:   'VPN',
@@ -53,48 +43,23 @@ const PROTO_LABEL: Record<string, string> = {
 
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
   const t = useT()
-  const p = usePlural()
-  const tp = WebApp.themeParams
   return (
     <>
-      <div onClick={onClose} style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 200,
-      }} />
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        background: tp.bg_color ?? '#1c1c1e',
-        borderRadius: '20px 20px 0 0',
-        padding: '20px 24px 40px',
-        zIndex: 201, textAlign: 'center',
-      }}>
-        <div style={{
-          width: 36, height: 4, borderRadius: 2,
-          background: tp.hint_color ?? '#888', opacity: 0.4,
-          margin: '0 auto 20px',
-        }} />
-        <div style={{ fontWeight: 700, fontSize: 17, color: tp.text_color, marginBottom: 6 }}>
+      <div onClick={onClose} className="fixed inset-0 bg-black/65 z-[200]" />
+      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] px-6 pt-5 pb-10 z-[201] text-center">
+        <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
+        <div className="font-bold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">
           {t('configs_qr_title')}
         </div>
-        <div style={{ fontSize: 13, color: tp.hint_color, marginBottom: 20 }}>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)] mb-5">
           {t('configs_qr_sub')}
         </div>
         <img
           src={url}
           alt={t('configs_qr_title')}
-          style={{
-            width: 220, height: 220,
-            borderRadius: 12,
-            background: '#fff',
-            padding: 8,
-            display: 'block',
-            margin: '0 auto 20px',
-          }}
+          className="w-[220px] h-[220px] rounded-xl bg-white p-2 block mx-auto mb-5"
         />
-        <button onClick={onClose} style={{
-          width: '100%', padding: '12px 0', borderRadius: 14, border: 'none',
-          background: 'var(--section-bg)', color: tp.text_color,
-          fontSize: 15, cursor: 'pointer',
-        }}>
+        <button onClick={onClose} className="w-full py-3 rounded-[14px] border-none bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-text-color)] text-[15px] cursor-pointer">
           {t('configs_close')}
         </button>
       </div>
@@ -117,63 +82,38 @@ function ServerPicker({
 }) {
   const t = useT()
   const p = usePlural()
-  const tp    = WebApp.themeParams
-  const color = PROTO_COLOR[protocol] ?? '#888'
+  const color = PROTO_TEXT[protocol] ?? 'text-[#888]'
   const label = PROTO_LABEL[protocol] ?? protocol.toUpperCase()
 
   return (
     <>
-      <div
-        onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          zIndex: 200,
-        }}
-      />
+      <div onClick={onClose} className="fixed inset-0 bg-black/50 z-[200]" />
 
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        background: tp.bg_color ?? '#1c1c1e',
-        borderRadius: '20px 20px 0 0',
-        padding: '20px 16px 36px',
-        zIndex: 201,
-      }}>
-        <div style={{
-          width: 36, height: 4, borderRadius: 2,
-          background: tp.hint_color ?? '#888',
-          opacity: 0.4, margin: '0 auto 20px',
-        }} />
+      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] pt-5 px-4 pb-9 z-[201]">
+        <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
 
-        <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600, color: tp.text_color }}>
+        <h3 className="m-0 mb-1.5 text-[17px] font-semibold text-[var(--tg-theme-text-color)]">
           {t('configs_pick_server')}
         </h3>
-        <p style={{ margin: '0 0 16px', fontSize: 13, color: tp.hint_color }}>
-          {t('configs_proto')} <span style={{ color, fontWeight: 600 }}>{label}</span>
+        <p className="m-0 mb-4 text-[13px] text-[var(--tg-theme-hint-color)]">
+          {t('configs_proto')} <span className={`${color} font-semibold`}>{label}</span>
         </p>
 
         {activating ? (
-          <div style={{ textAlign: 'center', padding: '24px 0', color: tp.hint_color, fontSize: 14 }}>
+          <div className="text-center py-6 text-[var(--tg-theme-hint-color)] text-sm">
             {t('configs_activating')}
           </div>
         ) : (
-          <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 14, overflow: 'hidden', marginBottom: 8 }}>
+          <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-2">
             {servers.map((srv, i) => (
               <button
                 key={srv.id}
                 onClick={() => onSelect(srv.id)}
-                style={{
-                  width: '100%', padding: '13px 16px',
-                  border: 'none', background: 'transparent',
-                  color: tp.text_color, fontSize: 15,
-                  cursor: 'pointer', textAlign: 'left',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  borderBottom: i < servers.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-                }}
+                className={`w-full py-[13px] px-4 border-none bg-transparent text-[var(--tg-theme-text-color)] text-[15px] cursor-pointer text-left flex items-center gap-3 ${i < servers.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
               >
-                <span style={{ fontSize: 22, flexShrink: 0 }}>{srv.location}</span>
-                <span style={{ flex: 1, fontWeight: 500 }}>{srv.name}</span>
-                <svg width="7" height="12" viewBox="0 0 7 12" fill="none" style={{ flexShrink: 0 }}>
+                <span className="text-[22px] shrink-0">{srv.location}</span>
+                <span className="flex-1 font-medium">{srv.name}</span>
+                <svg width="7" height="12" viewBox="0 0 7 12" fill="none" className="shrink-0">
                   <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </button>
@@ -184,11 +124,7 @@ function ServerPicker({
         {!activating && (
           <button
             onClick={onClose}
-            style={{
-              width: '100%', padding: '12px 0', borderRadius: 14,
-              border: 'none', background: 'transparent',
-              color: tp.hint_color, fontSize: 15, cursor: 'pointer', marginTop: 4,
-            }}
+            className="w-full py-3 rounded-[14px] border-none bg-transparent text-[var(--tg-theme-hint-color)] text-[15px] cursor-pointer mt-1"
           >
             {t('configs_cancel')}
           </button>
@@ -224,10 +160,10 @@ function SlotCard({
 }) {
   const t = useT()
   const p = usePlural()
-  const tp      = WebApp.themeParams
-  const color   = PROTO_COLOR[slot.protocol] ?? '#888'
-  const label   = PROTO_LABEL[slot.protocol] ?? slot.protocol.toUpperCase()
-  const isEmpty = slot.status === 'empty'
+  const bg      = PROTO_BG[slot.protocol] ?? 'bg-[#888]'
+  const bgDim   = PROTO_BG_DIM[slot.protocol] ?? 'bg-[#8888]/20'
+  const label    = PROTO_LABEL[slot.protocol] ?? slot.protocol.toUpperCase()
+  const isEmpty  = slot.status === 'empty'
 
   const [activating,     setActivating]     = useState(false)
   const [revoking,       setRevoking]       = useState(false)
@@ -279,36 +215,22 @@ function SlotCard({
     )
   }
 
-  const borderBottom = !isLast ? '1px solid rgba(128,128,128,0.1)' : 'none'
-
   return (
     <>
-      <div style={{ borderBottom }}>
-        <div style={{
-          padding: '13px 16px',
-          display: 'flex', alignItems: 'center', gap: 14,
-        }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-            background: isEmpty ? `${color}33` : color,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            position: 'relative',
-          }}>
+      <div className={isLast ? '' : 'border-b border-solid border-[var(--card-border)]'}>
+        <div className="py-[13px] px-4 flex items-center gap-[14px]">
+          <div className={`w-10 h-10 rounded-xl shrink-0 flex items-center justify-center relative ${isEmpty ? bgDim : bg}`}>
             <ProtoIcon protocol={slot.protocol} />
             {!isEmpty && (
-              <span style={{
-                position: 'absolute', bottom: -3, right: -3,
-                width: 12, height: 12, borderRadius: '50%',
-                background: '#27ae60', border: '2px solid var(--bg, #fff)',
-              }} />
+              <span className="absolute -bottom-[3px] -right-[3px] w-3 h-3 rounded-full bg-success border-2 border-[var(--tg-theme-bg-color,#fff)]" />
             )}
           </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: tp.text_color }}>
+          <div className="flex-1 min-w-0">
+            <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">
               {label} · #{slot.slot_num}
             </div>
-            <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>
+            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {isEmpty
                 ? (slot.protocol === 'vless' ? `🚧 ${t('configs_soon')}` : t('configs_not_activated'))
                 : (slot.peer_name ?? `config_${slot.id}`)}
@@ -316,32 +238,22 @@ function SlotCard({
           </div>
 
           {slot.protocol === 'vless' && isEmpty ? (
-            <span style={{ fontSize: 11, color: tp.hint_color, fontWeight: 500 }}>{t('configs_soon')}</span>
+            <span className="text-[11px] text-[var(--tg-theme-hint-color)] font-medium">{t('configs_soon')}</span>
           ) : isEmpty ? (
             <button
               onClick={handleAddClick}
               disabled={loadingServers}
-              style={{
-                padding: '7px 14px', borderRadius: 10, border: 'none',
-                background: color, color: '#fff',
-                fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                opacity: loadingServers ? 0.6 : 1, flexShrink: 0,
-              }}
+              className={`${bg} text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none shrink-0 ${loadingServers ? 'opacity-60' : ''}`}
             >
               {loadingServers ? '...' : t('configs_add_btn')}
             </button>
           ) : revoking ? (
-            <span style={{ fontSize: 12, color: tp.hint_color }}>{t('configs_revoking')}</span>
+            <span className="text-xs text-[var(--tg-theme-hint-color)]">{t('configs_revoking')}</span>
           ) : (
-            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <div className="flex gap-2 shrink-0">
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setShowQr(true) }}
-                style={{
-                  padding: '7px 14px', borderRadius: 10, border: 'none',
-                  background: color, color: '#fff',
-                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 5,
-                }}
+                className={`${bg} text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none flex items-center gap-[5px]`}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                   <rect x="3" y="3" width="7" height="7" rx="1" stroke="#fff" strokeWidth="2"/>
@@ -353,12 +265,7 @@ function SlotCard({
               </button>
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); window.open(getConfigDownloadUrl(slot.id), '_blank') }}
-                style={{
-                  width: 36, height: 36, borderRadius: 10, border: 'none',
-                  background: `${color}18`, color,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', flexShrink: 0,
-                }}
+                className={`w-9 h-9 rounded-[10px] border-none ${bgDim} flex items-center justify-center cursor-pointer shrink-0`}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -366,13 +273,7 @@ function SlotCard({
               </button>
               <button
                 onClick={handleRevoke}
-                style={{
-                  width: 36, height: 36, borderRadius: 10, border: 'none',
-                  background: 'rgba(255,59,48,0.1)',
-                  color: 'var(--tg-theme-destructive-text-color,#ff3b30)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', flexShrink: 0,
-                }}
+                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -383,9 +284,9 @@ function SlotCard({
         </div>
 
         {revoking && (
-          <div style={{ padding: '0 16px 12px 70px' }}>
-            <div style={{ height: 3, borderRadius: 2, background: `${color}22`, overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: color, borderRadius: 2, animation: 'revoke-progress 1.4s ease-in-out infinite' }} />
+          <div className="pl-[70px] pr-4 pb-3">
+            <div className="h-[3px] rounded-sm bg-success/10 overflow-hidden">
+              <div className="h-full rounded-sm bg-success animate-revoke-progress" />
             </div>
           </div>
         )}
@@ -413,22 +314,20 @@ function SubscriptionGroup({
   onRevoke:   (id: number) => Promise<void>
 }) {
   const t = useT()
-  const p = usePlural()
-  const tp    = WebApp.themeParams
   const first = slots[0]
 
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px 8px' }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: tp.text_color }}>
+    <div className="mb-2">
+      <div className="flex justify-between items-center px-1 pb-2">
+        <span className="text-[13px] font-bold text-[var(--tg-theme-text-color)]">
           {PLAN_KEY[first.plan] ? t(PLAN_KEY[first.plan] as TKey) : first.plan}
         </span>
-        <span style={{ fontSize: 12, color: tp.hint_color }}>
+        <span className="text-xs text-[var(--tg-theme-hint-color)]">
           {t('configs_until')} {formatDate(first.expires_at)}
         </span>
       </div>
 
-      <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
         {slots.map((slot, i) => (
           <SlotCard
             key={slot.id}
@@ -449,7 +348,6 @@ export default function Configs() {
   const t = useT()
   const p = usePlural()
   const nav = useNavigate()
-  const tp  = WebApp.themeParams
 
   const [slots,    setSlots]    = useState<RawSlot[]>([])
   const [loading,  setLoading]  = useState(true)
@@ -503,33 +401,28 @@ export default function Configs() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
-      <RevokeStyle />
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('configs_title')}</div>
-        <div style={{ fontSize: 13, color: tp.hint_color, display: 'flex', gap: 12 }}>
-          <span style={{ color: '#27ae60' }}>{t('configs_legend_vpn')}</span>
-          <span style={{ color: '#8e44ad' }}>{t('configs_legend_tv')}</span>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('configs_title')}</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)] flex gap-3">
+          <span className="text-success">{t('configs_legend_vpn')}</span>
+          <span className="text-purple">{t('configs_legend_tv')}</span>
         </div>
       </div>
 
       {loading && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="flex flex-col gap-[10px]">
           {[1,2,3].map(i => (
-            <div key={i} className="skeleton" style={{ height: 90, borderRadius: 14 }} />
+            <div key={i} className="skeleton h-[90px] rounded-[14px]" />
           ))}
         </div>
       )}
 
       {!loading && slots.length === 0 && !errMsg && (
-        <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 20, margin: '0 auto 16px',
-            background: 'var(--section-bg)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30,
-          }}>🔒</div>
-          <div style={{ fontWeight: 600, fontSize: 17, color: tp.text_color, marginBottom: 6 }}>{t('configs_no_sub')}</div>
-          <p style={{ color: tp.hint_color, fontSize: 13, marginBottom: 24 }}>{t('configs_no_sub_sub')}</p>
-          <button className="btn" style={{ padding: '11px 32px' }} onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>
+        <div className="text-center py-10">
+          <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-center justify-center text-[30px]">🔒</div>
+          <div className="font-semibold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">{t('configs_no_sub')}</div>
+          <p className="text-[var(--tg-theme-hint-color)] text-[13px] mb-6">{t('configs_no_sub_sub')}</p>
+          <button className="btn py-[11px] px-8" onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>
         </div>
       )}
 
@@ -544,10 +437,7 @@ export default function Configs() {
       ))}
 
       {errMsg && (
-        <p style={{
-          color: 'var(--tg-theme-destructive-text-color, #ff3b30)',
-          textAlign: 'center', fontSize: 14, marginTop: 12,
-        }}>
+        <p className="text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-center text-sm mt-3">
           {errMsg}
         </p>
       )}

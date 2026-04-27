@@ -47,71 +47,64 @@ export default function ESim() {
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
 
-      {/* Header */}
-      <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: 'var(--text)', marginBottom: 4 }}>eSIM</div>
-        <div style={{ fontSize: 13, color: 'var(--hint)' }}>{t('esim_sub')}</div>
+      <div className="px-1 pt-1.5 pb-0.5">
+        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">eSIM</div>
+        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_sub')}</div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="flex gap-2">
         <button
           onClick={() => setTab('ru')}
-          style={{
-            flex: 1, padding: '10px 0', borderRadius: 12, border: 'none',
-            background: tab === 'ru' ? 'var(--btn)' : 'var(--section-bg)',
-            color: tab === 'ru' ? 'var(--btn-text)' : 'var(--text)',
-            fontWeight: 600, fontSize: 14, cursor: 'pointer',
-          }}
+          className={`flex-1 py-2.5 rounded-xl border-none font-semibold text-sm cursor-pointer ${
+            tab === 'ru'
+              ? 'bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)]'
+              : 'bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-text-color)]'
+          }`}
         >
           {t('esim_tab_ru')}
         </button>
         <button
           onClick={() => setTab('travel')}
-          style={{
-            flex: 1, padding: '10px 0', borderRadius: 12, border: 'none',
-            background: tab === 'travel' ? 'var(--btn)' : 'var(--section-bg)',
-            color: tab === 'travel' ? 'var(--btn-text)' : 'var(--text)',
-            fontWeight: 600, fontSize: 14, cursor: 'pointer',
-          }}
+          className={`flex-1 py-2.5 rounded-xl border-none font-semibold text-sm cursor-pointer ${
+            tab === 'travel'
+              ? 'bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)]'
+              : 'bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-text-color)]'
+          }`}
         >
           {t('esim_tab_travel')}
         </button>
       </div>
 
-      {/* ── TAB: Russia ─────────────────────────────────── */}
       {tab === 'ru' && (
         <>
-          {/* How it works */}
-          <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+          <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
             {[
-              { color: '#2481cc', title: t('esim_insert'), sub: t('esim_insert_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg> },
-              { color: '#27ae60', title: t('esim_traffic'), sub: t('esim_traffic_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="2"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke="#fff" strokeWidth="2"/></svg> },
-              { color: '#8e44ad', title: t('esim_calls'), sub: t('esim_calls_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" stroke="#fff" strokeWidth="2"/></svg> },
+              { color: 'bg-primary', title: t('esim_insert'), sub: t('esim_insert_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg> },
+              { color: 'bg-success', title: t('esim_traffic'), sub: t('esim_traffic_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="2"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke="#fff" strokeWidth="2"/></svg> },
+              { color: 'bg-purple', title: t('esim_calls'), sub: t('esim_calls_sub'), icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" stroke="#fff" strokeWidth="2"/></svg> },
             ].map(({ color, title, sub, icon }, i, arr) => (
-              <div key={i} style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14, borderBottom: i < arr.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none' }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</div>
+              <div key={i} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < arr.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
+                <div className={`w-9 h-9 rounded-[10px] shrink-0 ${color} flex items-center justify-center`}>{icon}</div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3 }}>{title}</div>
-                  <div style={{ fontSize: 12, color: 'var(--hint)', marginTop: 2 }}>{sub}</div>
+                  <div className="text-sm font-semibold text-[var(--tg-theme-text-color)] leading-snug">{title}</div>
+                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-0.5">{sub}</div>
                 </div>
               </div>
             ))}
           </div>
 
-          {loading && <p style={{ color: 'var(--hint)', textAlign: 'center', padding: 24 }}>{t('esim_loading')}</p>}
+          {loading && <p className="text-[var(--tg-theme-hint-color)] text-center py-6">{t('esim_loading')}</p>}
 
-          {/* Russia entry */}
           {ruEntry && (
-            <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+            <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
               <div
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); goToCountry('RU', t('esim_russia'), true) }}
-                style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
+                className="py-[13px] px-4 flex items-center gap-[14px] cursor-pointer"
               >
-                <span style={{ fontSize: 28, width: 36, textAlign: 'center', flexShrink: 0 }}>🇷🇺</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{t('esim_russia')}</div>
-                  <div style={{ fontSize: 12, color: 'var(--hint)', marginTop: 1 }}>{plural(ruEntry.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })} · {t('esim_russia_ip')}</div>
+                <span className="text-[28px] w-9 text-center shrink-0">🇷🇺</span>
+                <div className="flex-1">
+                  <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{t('esim_russia')}</div>
+                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(ruEntry.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })} · {t('esim_russia_ip')}</div>
                 </div>
                 <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
                   <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
@@ -120,22 +113,21 @@ export default function ESim() {
             </div>
           )}
 
-          {/* FAQ */}
           <div
             onClick={() => nav('/esim/faq')}
-            style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden', cursor: 'pointer' }}
+            className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden cursor-pointer"
           >
-            <div style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="py-[13px] px-4 flex items-center gap-[14px]">
+              <div className="w-9 h-9 rounded-[10px] shrink-0 bg-warning flex items-center justify-center">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                   <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z" stroke="#fff" strokeWidth="2"/>
                   <path d="M12 8c0-1.1.9-2 2-2s2 .9 2 2c0 1.5-2 2-2 3" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
                   <circle cx="12" cy="17" r="1" fill="#fff"/>
                 </svg>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{t('esim_faq_title')}</div>
-                <div style={{ fontSize: 12, color: 'var(--hint)', marginTop: 1 }}>{t('esim_faq_sub')}</div>
+              <div className="flex-1">
+                <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{t('esim_faq_title')}</div>
+                <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{t('esim_faq_sub')}</div>
               </div>
               <svg width="7" height="12" viewBox="0 0 7 12" fill="none"><path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </div>
@@ -143,7 +135,6 @@ export default function ESim() {
         </>
       )}
 
-      {/* ── TAB: Travel ─────────────────────────────────── */}
       {tab === 'travel' && (
         <>
           <input
@@ -151,30 +142,23 @@ export default function ESim() {
             placeholder={t('esim_search')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 12, border: 'none',
-              background: 'var(--section-bg)', color: 'var(--text)', fontSize: 15, outline: 'none',
-            }}
+            className="w-full py-3 px-[14px] rounded-xl border-none bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-text-color)] text-[15px] outline-none"
           />
 
-          {loading && <p style={{ color: 'var(--hint)', textAlign: 'center', padding: 24 }}>{t('esim_loading')}</p>}
-          {error   && <p style={{ color: 'var(--tg-theme-destructive-text-color,#ff3b30)', textAlign: 'center' }}>{error}</p>}
+          {loading && <p className="text-[var(--tg-theme-hint-color)] text-center py-6">{t('esim_loading')}</p>}
+          {error   && <p className="text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-center">{error}</p>}
 
-          <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
+          <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
             {travelCountries.map((c, i) => (
               <div
                 key={c.code}
                 onClick={() => goToCountry(c.code, c.name)}
-                style={{
-                  padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14,
-                  cursor: 'pointer',
-                  borderBottom: i < travelCountries.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-                }}
+                className={`py-[13px] px-4 flex items-center gap-[14px] cursor-pointer ${i < travelCountries.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
               >
-                <span style={{ fontSize: 30, width: 36, textAlign: 'center', flexShrink: 0 }}>{flagEmoji(c.code)}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{c.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--hint)', marginTop: 1 }}>{plural(c.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })}</div>
+                <span className="text-[30px] w-9 text-center shrink-0">{flagEmoji(c.code)}</span>
+                <div className="flex-1">
+                  <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{c.name}</div>
+                  <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(c.count, { ru: ['пакет', 'пакета', 'пакетов'], en: 'packages' })}</div>
                 </div>
                 <svg width="7" height="12" viewBox="0 0 7 12" fill="none"><path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </div>
@@ -182,7 +166,7 @@ export default function ESim() {
           </div>
 
           {!loading && !error && travelCountries.length === 0 && (
-            <p style={{ color: 'var(--hint)', textAlign: 'center', padding: 24 }}>{t('esim_no_results')}</p>
+            <p className="text-[var(--tg-theme-hint-color)] text-center py-6">{t('esim_no_results')}</p>
           )}
         </>
       )}

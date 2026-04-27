@@ -84,53 +84,14 @@ export default function BottomNav() {
   const active = (path: string) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path)
 
-  // Pill colors per theme
-  const pillBg     = dark ? 'rgba(40,40,46,0.72)'      : 'rgba(255,255,255,0.72)'
-  const pillBorder = dark ? 'rgba(255,255,255,0.14)'   : 'rgba(0,0,0,0.08)'
-  const sheenFrom  = dark ? 'rgba(255,255,255,0.07)'   : 'rgba(255,255,255,0.55)'
-  const shadow     = dark
-    ? 'inset 0 1px 0 rgba(255,255,255,0.10), inset 0 -1px 0 rgba(0,0,0,0.12), 0 8px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.18)'
-    : 'inset 0 1px 0 rgba(255,255,255,0.90), inset 0 -1px 0 rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)'
-
-  // Active bubble per theme
-  const bubbleBg     = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)'
-  const bubbleBorder = dark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.12)'
-  const bubbleShadow = dark
-    ? 'inset 0 1px 0 rgba(255,255,255,0.2), 0 2px 6px rgba(0,0,0,0.12)'
-    : 'inset 0 1px 0 rgba(255,255,255,0.8), 0 2px 6px rgba(0,0,0,0.06)'
-
-  // Label colors per theme
-  const labelActive   = dark ? '#fff'                  : '#1c1c1e'
-  const labelInactive = dark ? 'rgba(255,255,255,0.45)': 'rgba(0,0,0,0.35)'
-
   return (
-    <div style={{
-      position: 'fixed',
-      bottom: 0, left: 0, right: 0,
-      zIndex: 100,
-      paddingBottom: 'env(safe-area-inset-bottom)',
-      background: 'transparent',
-    }}>
+    <div className="fixed bottom-0 left-0 right-0 z-[100] pb-[env(safe-area-inset-bottom)] bg-transparent">
       {/* Glass pill */}
-      <div style={{
-        margin: '0 12px 10px',
-        borderRadius: 28,
-        background: pillBg,
-        backdropFilter: 'blur(40px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
-        border: `0.5px solid ${pillBorder}`,
-        boxShadow: shadow,
-        overflow: 'hidden',
-      }}>
+      <div className="mx-3 mb-2.5 rounded-[28px] bg-white/[0.72] dark:bg-[rgba(40,40,46,0.72)] backdrop-blur-[40px] saturate-[180%] border-[0.5px] border-black/[0.08] dark:border-white/[0.14] shadow-[inset_0_1px_0_rgba(255,255,255,0.90),_inset_0_-1px_0_rgba(0,0,0,0.04),_0_8px_32px_rgba(0,0,0,0.10),_0_2px_8px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.10),_inset_0_-1px_0_rgba(0,0,0,0.12),_0_8px_32px_rgba(0,0,0,0.35),_0_2px_8px_rgba(0,0,0,0.18)] overflow-hidden">
         {/* Top sheen */}
-        <div style={{
-          position: 'absolute', top: 0, left: 0, right: 0, height: '50%',
-          background: `linear-gradient(180deg, ${sheenFrom} 0%, transparent 100%)`,
-          borderRadius: '28px 28px 0 0',
-          pointerEvents: 'none',
-        }} />
+        <div className="absolute top-0 left-0 right-0 h-1/2 bg-gradient-to-b from-white/55 to-transparent dark:from-white/[0.07] rounded-t-[28px] pointer-events-none" />
 
-        <div style={{ display: 'flex', height: 62, position: 'relative' }}>
+        <div className="flex h-[62px] relative">
           {TABS.map(({ path, key, icon: Icon }) => {
             const isActive = active(path)
             return (
@@ -142,32 +103,14 @@ export default function BottomNav() {
                     nav(path)
                   }
                 }}
-                style={{
-                  flex: 1, border: 'none', background: 'transparent',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  gap: 4, cursor: 'pointer', padding: '6px 0',
-                  position: 'relative',
-                }}
+                className="flex-1 border-none bg-transparent flex flex-col items-center justify-center gap-1 cursor-pointer py-1.5 relative"
               >
                 {/* Active icon bubble */}
-                <div style={{
-                  width: 42, height: 30, borderRadius: 10,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: isActive ? bubbleBg    : 'transparent',
-                  border:     isActive ? `0.5px solid ${bubbleBorder}` : '0.5px solid transparent',
-                  boxShadow:  isActive ? bubbleShadow : 'none',
-                  transition: 'all 0.2s ease',
-                }}>
+                <div className={`w-[42px] h-[30px] rounded-[10px] flex items-center justify-center transition-all duration-200 ${isActive ? 'bg-black/[0.07] dark:bg-white/[0.14] border-[0.5px] border-black/[0.12] dark:border-white/[0.28] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),_0_2px_6px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.2),_0_2px_6px_rgba(0,0,0,0.12)]' : 'bg-transparent border-[0.5px] border-transparent shadow-none'}`}>
                   <Icon active={isActive} dark={dark} />
                 </div>
 
-                <span style={{
-                  fontSize: 10, fontWeight: isActive ? 600 : 400,
-                  color: isActive ? labelActive : labelInactive,
-                  lineHeight: 1,
-                  transition: 'color 0.2s ease',
-                }}>
+                <span className={`text-[10px] leading-none transition-colors duration-200 ${isActive ? 'font-semibold text-[#1c1c1e] dark:text-white' : 'font-normal text-black/35 dark:text-white/45'}`}>
                   {t(key)}
                 </span>
               </button>
