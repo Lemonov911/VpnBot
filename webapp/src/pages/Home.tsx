@@ -6,6 +6,7 @@ import {
   type Subscription, type UserStats,
 } from '../api'
 import { useT, usePlural } from '../i18n'
+import { PageHeader } from '../components/PageHeader'
 
 export default function Home() {
   const nav    = useNavigate()
@@ -70,17 +71,17 @@ export default function Home() {
       <div className="page gap-3">
 
         {/* ── Header ── */}
-        <div className="flex items-center gap-3 pt-1.5 pb-0.5">
+        <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5">
           <img
             src={import.meta.env.BASE_URL + 'logo.webp'}
             alt="MAX"
-            className="w-10 h-10 rounded-[11px] shrink-0 object-cover"
+            className="w-9 h-9 rounded-[10px] shrink-0 object-cover"
           />
           <div>
-            <div className="font-extrabold text-[20px] text-[var(--tg-theme-text-color)] tracking-[-0.3px] leading-[1.2]">
+            <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color)] leading-[1.2]">
               {t('home_hero_title')}
             </div>
-            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
+            <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-px">
               {t('home_hero_sub').split('\n')[0]}
             </div>
           </div>
