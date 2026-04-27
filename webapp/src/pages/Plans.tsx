@@ -1,24 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
   createVpnInvoice, createVpnInvoiceCrypto, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
-
-type PayMethod = 'stars' | 'crypto'
-
-interface Plan {
-  key: string; name: string; stars: number; rub: number; usd: number
-  awg: number; vless: number; badge?: string
-}
-
-const PLANS: Plan[] = [
-  { key: 'vpn_start',   name: 'Старт',      stars: 128, rub: 180, usd: 2,  awg: 1, vless: 0 },
-  { key: 'vpn_popular', name: 'Популярный', stars: 214, rub: 270, usd: 3,  awg: 2, vless: 0, badge: 'Хит' },
-  { key: 'vpn_pro',     name: 'Про',        stars: 342, rub: 450, usd: 5,  awg: 3, vless: 1 },
-  { key: 'vpn_family',  name: 'Семейный',   stars: 513, rub: 640, usd: 7,  awg: 7, vless: 1 },
-]
+import PaymentSheet, { PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import { useT, usePlural } from '../i18n'
+import type { TKey } from '../i18n'
 
 function calcUpgradePrice(curRub: number, newRub: number, daysLeft: number): number {
   return Math.max(1, Math.round((newRub - curRub) * daysLeft / 30))
@@ -31,109 +20,11 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
   vpn_family:  { bg: '#ff2d55', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="7" r="3" stroke="#fff" strokeWidth="2"/><path d="M3 19c0-3 2.686-5 6-5s6 2 6 5" stroke="#fff" strokeWidth="2" strokeLinecap="round"/><circle cx="17" cy="7" r="2.5" stroke="#fff" strokeWidth="1.8"/><path d="M21 19c0-2.5-1.8-4-4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
 }
 
-// ── Payment bottom sheet ──────────────────────────────────────────────────────
-
-function PaymentSheet({
-  plan, onClose, onPay,
-}: {
-  plan: Plan
-  onClose: () => void
-  onPay: (method: PayMethod) => void
-}) {
-  const tp     = WebApp.themeParams
-  const accent = 'var(--tg-theme-button-color, #2481cc)'
-  const [method, setMethod] = useState<PayMethod>('stars')
-
-  return (
-    <>
-      {/* Backdrop */}
-      <div
-        onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, zIndex: 100,
-          background: 'rgba(0,0,0,0.45)',
-        }}
-      />
-
-      {/* Sheet */}
-      <div style={{
-        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 101,
-        background: tp.bg_color ?? '#fff',
-        borderRadius: '20px 20px 0 0',
-        padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
-        boxShadow: '0 -4px 30px rgba(0,0,0,0.18)',
-      }}>
-        {/* Drag handle */}
-        <div style={{
-          width: 36, height: 4, borderRadius: 2,
-          background: 'rgba(128,128,128,0.3)',
-          margin: '-8px auto 18px',
-        }} />
-
-        {/* Title */}
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 18, color: tp.text_color }}>
-            Купить «{plan.name}»
-          </div>
-          <div style={{ fontSize: 13, color: tp.hint_color, marginTop: 3 }}>
-            {plan.rub} ₽ / месяц · {plan.awg} {plan.awg === 1 ? 'устройство' : plan.awg < 5 ? 'устройства' : 'устройств'}
-            {plan.vless > 0 ? ' · TV' : ''}
-          </div>
-        </div>
-
-        {/* Method label */}
-        <div style={{ fontSize: 12, fontWeight: 600, color: tp.hint_color, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-          Способ оплаты
-        </div>
-
-        {/* Method rows */}
-        <div style={{
-          background: 'var(--section-bg)',
-          border: '1px solid var(--card-border)',
-          borderRadius: 14, overflow: 'hidden', marginBottom: 20,
-        }}>
-          {([
-            ['stars',  '⭐', 'Telegram Stars',       `${plan.stars} ⭐`],
-            ['crypto', '💎', 'CryptoBot (₽ / USDT)', `${plan.rub} ₽`],
-          ] as [PayMethod, string, string, string][]).map(([val, icon, label, price], i) => (
-            <div
-              key={val}
-              onClick={() => setMethod(val)}
-              style={{
-                padding: '13px 16px',
-                display: 'flex', alignItems: 'center', gap: 14,
-                cursor: 'pointer',
-                borderBottom: i === 0 ? '1px solid rgba(128,128,128,0.1)' : 'none',
-                background: method === val ? `${accent}10` : 'transparent',
-              }}
-            >
-              <span style={{ fontSize: 22, width: 32, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
-              <span style={{ flex: 1, fontSize: 15, color: tp.text_color, fontWeight: 500 }}>{label}</span>
-              <span style={{ fontSize: 13, color: method === val ? accent : tp.hint_color, fontWeight: 600 }}>{price}</span>
-              {/* Radio */}
-              <div style={{
-                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                border: `2px solid ${method === val ? accent : 'rgba(128,128,128,0.35)'}`,
-                background: method === val ? accent : 'transparent',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                {method === val && <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Pay button */}
-        <button
-          className="btn"
-          style={{ width: '100%', fontSize: 16, padding: '14px 0' }}
-          onClick={() => onPay(method)}
-        >
-          {method === 'stars' ? `Оплатить ${plan.stars} ⭐` : `Оплатить ${plan.rub} ₽`}
-        </button>
-      </div>
-    </>
-  )
+const PLAN_NAME_KEY: Record<string, TKey> = {
+  vpn_start: 'vpn_plan_start',
+  vpn_popular: 'vpn_plan_popular',
+  vpn_pro: 'vpn_plan_pro',
+  vpn_family: 'vpn_plan_family',
 }
 
 // ── Plan card ─────────────────────────────────────────────────────────────────
@@ -145,13 +36,13 @@ function PlanCard({
   upgradePrice: number; loading: boolean; isPending: boolean
   onClick: () => void; animDelay?: number
 }) {
+  const t = useT()
+  const p = usePlural()
   const tp     = WebApp.themeParams
   const accent = 'var(--tg-theme-button-color, #2481cc)'
-  const isHit  = plan.badge === 'Хит' && mode === 'buy'
+  const isHit  = plan.badge === 'hit' && mode === 'buy'
   const isCurrent = mode === 'current'
   const planIcon = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_start
-
-  const deviceWord = plan.awg === 1 ? 'устройство' : plan.awg < 5 ? 'устройства' : 'устройств'
 
   let btn: React.ReactNode = null
   if (mode === 'buy') {
@@ -163,7 +54,7 @@ function PlanCard({
   } else if (mode === 'current') {
     btn = (
       <span style={{ fontSize: 12, fontWeight: 700, padding: '5px 12px', borderRadius: 20, background: `${accent}18`, color: accent }}>
-        ✓ Ваш
+        {t('plans_yours')}
       </span>
     )
   } else if (mode === 'upgrade') {
@@ -173,7 +64,7 @@ function PlanCard({
       <button disabled={loading} onClick={onClick} style={{
         padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
         background: 'rgba(230,126,34,0.15)', color: '#e67e22', fontSize: 13, fontWeight: 600,
-      }}>{loading ? '…' : 'Отменить'}</button>
+      }}>{loading ? '…' : t('plans_cancel')}</button>
     )
   } else {
     btn = (
@@ -182,7 +73,7 @@ function PlanCard({
         border: '1.5px solid rgba(128,128,128,0.2)',
         background: 'transparent', color: tp.hint_color,
         fontSize: 13, fontWeight: 500, cursor: 'pointer',
-      }}>{loading ? '…' : 'Понизить'}</button>
+      }}>{loading ? '…' : t('plans_downgrade')}</button>
     )
   }
 
@@ -214,18 +105,18 @@ function PlanCard({
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3, flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 700, fontSize: 16, color: tp.text_color }}>{plan.name}</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: tp.text_color }}>{t(PLAN_NAME_KEY[plan.key])}</span>
           {isHit && (
-            <span style={{ background: accent, color: tp.button_text_color ?? '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>Хит</span>
+            <span style={{ background: accent, color: tp.button_text_color ?? '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>{t('plans_hit')}</span>
           )}
           {isPending && (
-            <span style={{ background: 'rgba(230,126,34,0.15)', color: '#e67e22', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>Со след. месяца</span>
+            <span style={{ background: 'rgba(230,126,34,0.15)', color: '#e67e22', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20 }}>{t('plans_next_month')}</span>
           )}
         </div>
         <div style={{ fontSize: 13, color: tp.hint_color }}>
           <span style={{ fontWeight: 600, color: tp.text_color }}>{plan.rub} ₽</span>
           <span style={{ opacity: 0.4, margin: '0 4px' }}>·</span>
-          <span style={{ fontSize: 12 }}>📱 {plan.awg} {deviceWord}{plan.vless > 0 ? ' · 📺 TV' : ''}</span>
+          <span style={{ fontSize: 12 }}>📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: 'devices' })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
         </div>
       </div>
 
@@ -252,8 +143,10 @@ function SkeletonPage() {
 type PageStatus = 'idle' | 'paid' | 'error'
 
 export default function Plans() {
-  const nav = useNavigate()
-  const tp  = WebApp.themeParams
+  const nav      = useNavigate()
+  const location = useLocation()
+  const tp       = WebApp.themeParams
+  const t        = useT()
 
   const [sub,        setSub]        = useState<Subscription | null | undefined>(undefined)
   const [loading,    setLoading]    = useState<string | null>(null)
@@ -265,9 +158,16 @@ export default function Plans() {
     WebApp.BackButton.show()
     const goBack = () => nav('/vpn')
     WebApp.BackButton.onClick(goBack)
-    getActiveSubscription().then(setSub).catch(() => setSub(null))
+    getActiveSubscription().then(sub => {
+      setSub(sub)
+      const preselect = (location.state as { planKey?: string } | null)?.planKey
+      if (preselect && !sub) {
+        const plan = PLANS.find(p => p.key === preselect)
+        if (plan) setSheetPlan(plan)
+      }
+    }).catch(() => setSub(null))
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
-  }, [nav])
+  }, [nav, location.state])
 
   const handleBuy = async (plan: Plan, method: PayMethod) => {
     setSheetPlan(null)
@@ -280,7 +180,7 @@ export default function Plans() {
         WebApp.openInvoice(invoice_url, (s) => {
           setLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
-          else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg('Платёж не прошёл.') }
+          else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
         })
       } else {
         const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
@@ -289,7 +189,7 @@ export default function Plans() {
       }
     } catch (e) {
       setLoading(null); setPageStatus('error')
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка сервера')
+      setErrMsg(e instanceof Error ? e.message : t('plans_error_server'))
     }
   }
 
@@ -313,7 +213,7 @@ export default function Plans() {
       } else { setLoading(null) }
     } catch (e) {
       setLoading(null); setPageStatus('error')
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка сервера')
+      setErrMsg(e instanceof Error ? e.message : t('plans_error_server'))
     }
   }
 
@@ -326,12 +226,12 @@ export default function Plans() {
             background: 'rgba(39,174,96,0.12)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36,
           }}>✅</div>
-          <div style={{ fontWeight: 800, fontSize: 22, color: tp.text_color }}>Готово!</div>
-          <p style={{ color: tp.hint_color, fontSize: 14 }}>Конфиги уже ждут тебя.</p>
-          <button className="btn" style={{ width: '100%', marginBottom: 10 }} onClick={() => nav('/configs')}>Мои конфиги</button>
+          <div style={{ fontWeight: 800, fontSize: 22, color: tp.text_color }}>{t('plans_done')}</div>
+          <p style={{ color: tp.hint_color, fontSize: 14 }}>{t('plans_done_sub')}</p>
+          <button className="btn" style={{ width: '100%', marginBottom: 10 }} onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
           <button className="btn" style={{ width: '100%', background: 'var(--section-bg)', color: tp.text_color }}
             onClick={() => { setPageStatus('idle'); getActiveSubscription().then(setSub) }}>
-            К тарифам
+            {t('plans_back')}
           </button>
         </div>
       </div>
@@ -344,8 +244,8 @@ export default function Plans() {
     <>
       <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
         <div style={{ padding: '6px 4px 2px' }}>
-          <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>Тарифы VPN</div>
-          <div style={{ fontSize: 13, color: tp.hint_color }}>Amnezia WireGuard · 🇺🇸 США · до 300 Мбит/с</div>
+          <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('plans_title')}</div>
+          <div style={{ fontSize: 13, color: tp.hint_color }}>{t('plans_sub')}</div>
         </div>
 
         {sub === null ? (
@@ -394,6 +294,7 @@ export default function Plans() {
 }
 
 function Legend() {
+  const t = useT()
   const tp = WebApp.themeParams
   return (
     <div style={{
@@ -401,8 +302,8 @@ function Legend() {
       padding: '12px 16px', marginTop: 8, fontSize: 12,
       color: tp.hint_color, lineHeight: 1.7,
     }}>
-      <span style={{ color: '#27ae60', fontWeight: 600 }}>📱 Устройства</span> — сколько телефонов/ноутбуков можно подключить<br />
-      <span style={{ color: '#8e44ad', fontWeight: 600 }}>📺 Smart TV</span> — дополнительный конфиг для телевизора
+      <span style={{ color: '#27ae60', fontWeight: 600 }}>{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}<br />
+      <span style={{ color: '#8e44ad', fontWeight: 600 }}>{t('plans_legend_tv')}</span> {t('plans_legend_tv_s')}
     </div>
   )
 }

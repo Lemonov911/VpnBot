@@ -67,7 +67,7 @@ export default function LangSwitch() {
               }}
             >
               <span>{opt.flag}</span>
-              <span>{opt.label === 'RU' ? 'Русский' : 'English'}</span>
+              <span>{opt.value === 'ru' ? 'Русский' : 'English'}</span>
             </button>
           ))}
         </div>

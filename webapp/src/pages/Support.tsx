@@ -4,31 +4,13 @@ import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, type SupportCategory } from '../api'
 import { useT } from '../i18n'
 
-const CATEGORIES: { key: SupportCategory; label: string; color: string; icon: JSX.Element }[] = [
-  {
-    key: 'vpn', label: 'Проблема с VPN', color: '#27ae60',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg>,
-  },
-  {
-    key: 'esim', label: 'Проблема с eSIM', color: '#2481cc',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg>,
-  },
-  {
-    key: 'payment', label: 'Вопрос по оплате', color: '#e67e22',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2"/><path d="M2 10h20" stroke="#fff" strokeWidth="2"/><path d="M6 15h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg>,
-  },
-  {
-    key: 'other', label: 'Другое', color: '#8e44ad',
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  },
-]
 
-const FAQ: { q: string; a: string }[] = [
-  { q: 'VPN не подключается', a: 'Убедись, что скачал конфиг в разделе «Мои конфиги» и импортировал его в приложение Amnezia. Если конфиг ещё не активирован — нажми «Подключиться» в разделе конфигов.' },
-  { q: 'Где скачать приложение для VPN?', a: 'Используй приложение Amnezia VPN — есть на iOS, Android, Windows и macOS. После установки открой раздел «Мои конфиги» в боте и скачай свой файл.' },
-  { q: 'Как установить eSIM?', a: 'После оплаты QR-код придёт в чат. Открой Настройки → SIM-карта → Добавить тарифный план → Другой. Отсканируй QR-код. Основная SIM остаётся, звонки работают как обычно.' },
-  { q: 'eSIM не активируется', a: 'Убедись, что телефон поддерживает eSIM (большинство iPhone с XS, Android-флагманы с 2019 года). QR можно отсканировать только один раз — если что-то пошло не так, напиши нам.' },
-  { q: 'Не прошёл платёж', a: 'Попробуй ещё раз через несколько минут. Если звёзды списались, но подписка не появилась — напиши нам, разберёмся в течение нескольких часов.' },
+const FAQ_META = [
+  { color: '#27ae60', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg> },
+  { color: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 16v-8M8 12l4 4 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><rect x="3" y="3" width="18" height="18" rx="3" stroke="#fff" strokeWidth="2"/></svg> },
+  { color: '#e67e22', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg> },
+  { color: '#ff3b30', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 12h6M12 9v6" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
+  { color: '#8e44ad', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2"/><path d="M2 10h20" stroke="#fff" strokeWidth="2"/><path d="M6 15h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
 ]
 
 function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
@@ -54,15 +36,11 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
             }}
           >
             <div style={{
-              width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-              background: '#2481cc',
+              width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+              background: FAQ_META[i].color,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z" stroke="#fff" strokeWidth="2"/>
-                <path d="M12 8c0-1.1.9-2 2-2s2 .9 2 2c0 1.5-2 2-2 3" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-                <circle cx="12" cy="17" r="1" fill="#fff"/>
-              </svg>
+              {FAQ_META[i].icon}
             </div>
             <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: tp.text_color, textAlign: 'left' }}>{q}</span>
             <svg width="7" height="12" viewBox="0 0 7 12" fill="none" style={{
@@ -120,7 +98,7 @@ export default function Support() {
       WebApp.HapticFeedback.notificationOccurred('success')
       setState('done')
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка сервера')
+      setErrMsg(e instanceof Error ? e.message : t('server_error'))
       setState('error')
     }
   }
@@ -144,7 +122,7 @@ export default function Support() {
           }}>✅</div>
           <div style={{ fontWeight: 700, fontSize: 22, color: tp.text_color }}>{t('support_done')}</div>
           <p style={{ color: tp.hint_color, fontSize: 14, lineHeight: 1.6 }}>
-            {t('support_ticket')} #{ticketId} принят.<br />{t('support_done_sub')}
+            {t('support_ticket')} #{ticketId} {t('support_ticket_accepted')}.<br />{t('support_done_sub')}
           </p>
           <button className="btn" onClick={() => { setMessage(''); setState('form') }} style={{ width: '100%', marginBottom: 10 }}>
             {t('support_write_more')}
@@ -183,7 +161,7 @@ export default function Support() {
               width: '100%', border: 'none', background: 'transparent',
               padding: '13px 16px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 14,
-              borderBottom: i < CATEGORIES.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
+              borderBottom: i < CATS.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
             }}
           >
             <div style={{

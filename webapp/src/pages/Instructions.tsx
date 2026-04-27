@@ -1,77 +1,28 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
-
-// ── Типы ─────────────────────────────────────────────────────────────────────
+import { useT } from '../i18n'
 
 interface Instruction {
-  id:    string
-  title: string
-  steps: string[]
-  link?: { label: string; url: string }
+  id:       string
+  titleKey: string
+  stepKeys: string[]
+  link?:    { label: string; url: string }
 }
 
-// ── AWG-инструкции ────────────────────────────────────────────────────────────
-
 const AWG_INSTRUCTIONS: Instruction[] = [
-  { id: 'ios',     title: 'iPhone / iPad',     steps: [
-    'Скачай Amnezia VPN из App Store',
-    'Открой бота и скачай .conf файл',
-    'Нажми «Поделиться» → «Открыть в Amnezia VPN»',
-    'Нажми «Подключиться» — готово!',
-  ], link: { label: 'App Store', url: 'https://apps.apple.com/app/amneziavpn/id1600529126' } },
-  { id: 'android', title: 'Android',            steps: [
-    'Скачай Amnezia VPN из Google Play или GitHub',
-    'Открой бота и скачай .conf файл',
-    'В приложении нажми «+» → «Добавить файл»',
-    'Выбери скачанный .conf файл',
-    'Нажми «Подключиться»',
-  ], link: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=org.amnezia.vpn' } },
-  { id: 'windows', title: 'Windows',            steps: [
-    'Скачай Amnezia VPN с GitHub (файл AmneziaVPN_x.x.x_windows.exe)',
-    'Установи и запусти приложение',
-    'Нажми «+» → «Добавить конфигурацию из файла»',
-    'Выбери .conf файл из Telegram',
-    'Нажми «Подключиться»',
-  ], link: { label: 'GitHub Releases', url: 'https://github.com/amnezia-vpn/amnezia-client/releases' } },
-  { id: 'macos',   title: 'macOS',             steps: [
-    'Скачай Amnezia VPN из App Store или GitHub',
-    'Открой приложение',
-    'Нажми «+» → «Добавить из файла»',
-    'Выбери .conf файл',
-    'Нажми «Подключиться»',
-  ], link: { label: 'App Store', url: 'https://apps.apple.com/app/amneziavpn/id1600529126' } },
-  { id: 'androidtv', title: 'Android TV',      steps: [
-    'Установи Amnezia VPN через ADB или файловый менеджер',
-    'Загрузи .conf на USB-флешку или в облако',
-    'В приложении нажми «Добавить из файла»',
-    'Выбери конфиг с флешки',
-    'Нажми «Подключиться»',
-  ], link: { label: 'GitHub (APK)', url: 'https://github.com/amnezia-vpn/amnezia-client/releases' } },
+  { id: 'ios', titleKey: 'device_ios', stepKeys: ['instr_ios_1', 'instr_ios_2', 'instr_ios_3', 'instr_ios_4'], link: { label: 'App Store', url: 'https://apps.apple.com/app/amneziavpn/id1600529126' } },
+  { id: 'android', titleKey: 'device_android', stepKeys: ['instr_android_1', 'instr_android_2', 'instr_android_3', 'instr_android_4', 'instr_android_5'], link: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=org.amnezia.vpn' } },
+  { id: 'windows', titleKey: 'device_windows', stepKeys: ['instr_windows_1', 'instr_windows_2', 'instr_windows_3', 'instr_windows_4', 'instr_windows_5'], link: { label: 'GitHub Releases', url: 'https://github.com/amnezia-vpn/amnezia-client/releases' } },
+  { id: 'macos', titleKey: 'device_macos', stepKeys: ['instr_macos_1', 'instr_macos_2', 'instr_macos_3', 'instr_macos_4', 'instr_macos_5'], link: { label: 'App Store', url: 'https://apps.apple.com/app/amneziavpn/id1600529126' } },
+  { id: 'androidtv', titleKey: 'device_androidtv', stepKeys: ['instr_androidtv_1', 'instr_androidtv_2', 'instr_androidtv_3', 'instr_androidtv_4', 'instr_androidtv_5'], link: { label: 'GitHub (APK)', url: 'https://github.com/amnezia-vpn/amnezia-client/releases' } },
 ]
 
 const VLESS_INSTRUCTIONS: Instruction[] = [
-  { id: 'smarttube',  title: 'SmartTube (Android TV)', steps: [
-    'Установи v2rayNG на Android TV',
-    'Импортируй VLESS-ссылку из бота',
-    'В SmartTube выбери прокси → v2ray',
-    'Укажи адрес 127.0.0.1 и порт приложения',
-  ] },
-  { id: 'v2rayng', title: 'v2rayNG (Android)',    steps: [
-    'Установи v2rayNG из Google Play',
-    'Нажми «+» → «Импортировать из буфера»',
-    'Вставь VLESS-ссылку из бота',
-    'Нажми значок запуска',
-  ], link: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=com.v2ray.ang' } },
-  { id: 'streisand', title: 'Streisand (iOS)',    steps: [
-    'Установи Streisand из App Store',
-    'Нажми «+» → «Импортировать»',
-    'Вставь VLESS-ссылку или отсканируй QR',
-    'Нажми «Подключиться»',
-  ], link: { label: 'App Store', url: 'https://apps.apple.com/app/streisand/id6450534064' } },
+  { id: 'smarttube', titleKey: 'device_smarttube', stepKeys: ['instr_smarttube_1', 'instr_smarttube_2', 'instr_smarttube_3', 'instr_smarttube_4'] },
+  { id: 'v2rayng', titleKey: 'device_v2rayng', stepKeys: ['instr_v2rayng_1', 'instr_v2rayng_2', 'instr_v2rayng_3', 'instr_v2rayng_4'], link: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=com.v2ray.ang' } },
+  { id: 'streisand', titleKey: 'device_streisand', stepKeys: ['instr_streisand_1', 'instr_streisand_2', 'instr_streisand_3', 'instr_streisand_4'], link: { label: 'App Store', url: 'https://apps.apple.com/app/streisand/id6450534064' } },
 ]
-
-// ── Аккордеон-элемент ─────────────────────────────────────────────────────────
 
 function DeviceIcon({ id }: { id: string }) {
   const s = { width: 18, height: 18 }
@@ -99,7 +50,7 @@ function DeviceIcon({ id }: { id: string }) {
   )
   if (id === 'macos') return (
     <svg style={s} viewBox="0 0 24 24" fill="none">
-      <path d="M17 5.5C17 4.1 15.9 3 14.5 3c-.8 0-1.5.3-2 .8-.5-.5-1.2-.8-2-.8C9.1 3 8 4.1 8 5.5c0 .4.1.7.3 1.1-.5.4-.8 1-.8 1.6 0 .4.1.7.2 1C7.1 9.7 6.6 10 6 10c-.3 0-.5-.1-.7-.2-.2.3-.3.6-.3 1 0 .8.6 1.5 1.4 1.8-.1.4-.2.8-.2 1.2 0 1 .4 1.9 1 2.6.6.6 1.4 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1.3 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1.3 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1.3 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1 1 1.7 1 .6 0 1.1-.4 1.1-1 0-.6-.4-1-1.1-1-.6 0-1.2-.4-1.6-1-.5-.7-1.2-1.8-1.2-3 0-1.2.5-2.1 1.3-2.8.7-.6 1.6-.9 2.6-.9.5 0 1 .1 1.4.2.2-.6.2-1.2.2-1.8 0-.6-.1-1.2-.2-1.8-.4.1-.9.2-1.4.2-1 0-1.9-.4-2.6-1-.8-.7-1.3-1.7-1.3-2.8 0-.3 0-.6.1-.9.5-.3.9-.7.9-1.3 0-.3-.1-.6-.4-.9-.3-.4-.7-.6-1.2-.6-.4 0-.8.2-1.2.5-.4.4-.7.9-.8 1.5-.1.6-.2 1.3-.2 2 0 .7.1 1.3.2 2-.2.3-.3.5-.5.8z" stroke="#fff" strokeWidth="1.2"/>
+      <path d="M17 5.5C17 4.1 15.9 3 14.5 3c-.8 0-1.5.3-2 .8-.5-.5-1.2-.8-2-.8C9.1 3 8 4.1 8 5.5c0 .4.1.7.3 1.1-.5.4-.8 1-.8 1.6 0 .4.1.7.2 1C7.1 9.7 6.6 10 6 10c-.3 0-.5-.1-.7-.2-.2.3-.3.6-.3 1 0 .8.6 1.5 1.4 1.8-.1.4-.2.8-.2 1.2 0 1 .4 1.9 1 2.6.6.6 1.4 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1.3 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1.3 1 2.3 1 1 0 1.8-.4 2.3-1 .5.6 1 1 1.7 1 .6 0 1.1-.4 1.1-1 0-.6-.4-1-1.1-1-.6 0-1.2-.4-1.6-1-.5-.7-1.2-1.8-1.2-3 0-1.2.5-2.1 1.3-2.8.7-.6 1.6-.9 2.6-.9.5 0 1 .1 1.4.2.2-.6.2-1.2.2-1.8 0-.6-.1-1.2-.2-1.8-.4.1-.9.2-1.4.2-1 0-1.9-.4-2.6-1-.8-.7-1.3-1.7-1.3-2.8 0-.3 0-.6.1-.9.5-.3.9-.7.9-1.3 0-.3-.1-.6-.4-.9-.3-.4-.7-.6-1.2-.6-.4 0-.8.2-1.2.5-.4.4-.7.9-.8 1.5-.1.6-.2 1.3-.2 2 0 .7.1 1.3.2 2-.2.3-.3.5-.5.8z" stroke="#fff" strokeWidth="1.2"/>
     </svg>
   )
   return (
@@ -118,7 +69,7 @@ const DEVICE_COLORS: Record<string, string> = {
   v2rayng: '#27ae60', streisand: '#007aff',
 }
 
-function AccordionGroup({ items, accentColor }: { items: Instruction[]; accentColor: string }) {
+function AccordionGroup({ items, accentColor, t }: { items: Instruction[]; accentColor: string; t: ReturnType<typeof useT> }) {
   const [open, setOpen] = useState<string | null>(null)
   const tp = WebApp.themeParams
 
@@ -146,7 +97,7 @@ function AccordionGroup({ items, accentColor }: { items: Instruction[]; accentCo
                 <DeviceIcon id={item.id} />
               </div>
               <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: tp.text_color, textAlign: 'left' }}>
-                {item.title}
+                {t(item.titleKey as any)}
               </span>
               <svg width="7" height="12" viewBox="0 0 7 12" fill="none" style={{
                 transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0,
@@ -160,8 +111,8 @@ function AccordionGroup({ items, accentColor }: { items: Instruction[]; accentCo
                 borderBottom: i < items.length - 1 ? '1px solid rgba(128,128,128,0.1)' : 'none',
               }}>
                 <ol style={{ margin: 0, paddingLeft: 16, lineHeight: 1.9 }}>
-                  {item.steps.map((step, si) => (
-                    <li key={si} style={{ fontSize: 13, color: tp.text_color, marginBottom: 2 }}>{step}</li>
+                  {item.stepKeys.map((stepKey, si) => (
+                    <li key={si} style={{ fontSize: 13, color: tp.text_color, marginBottom: 2 }}>{t(stepKey as any)}</li>
                   ))}
                 </ol>
                 {item.link && (
@@ -183,11 +134,10 @@ function AccordionGroup({ items, accentColor }: { items: Instruction[]; accentCo
   )
 }
 
-// ── Основной компонент ────────────────────────────────────────────────────────
-
 export default function Instructions() {
   const nav = useNavigate()
   const tp  = WebApp.themeParams
+  const t   = useT()
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -201,21 +151,21 @@ export default function Instructions() {
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
       <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>Инструкции</div>
-        <div style={{ fontSize: 13, color: tp.hint_color }}>Как подключить VPN на своём устройстве</div>
+        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('instr_title')}</div>
+        <div style={{ fontSize: 13, color: tp.hint_color }}>{t('instr_sub')}</div>
       </div>
 
       {/* AWG */}
-      <span className="section-title">Amnezia WireGuard</span>
+      <span className="section-title">{t('instr_awg')}</span>
       <div style={{ fontSize: 12, color: tp.hint_color, margin: '-4px 4px 4px' }}>
-        Основной протокол — обходит блокировки, работает на всех устройствах
+        {t('instr_awg_desc')}
       </div>
-      <AccordionGroup items={AWG_INSTRUCTIONS} accentColor="#27ae60" />
+      <AccordionGroup items={AWG_INSTRUCTIONS} accentColor="#27ae60" t={t} />
 
       {/* VLESS */}
-      <span className="section-title" style={{ paddingTop: 8 }}>VLESS — Smart TV</span>
+      <span className="section-title" style={{ paddingTop: 8 }}>{t('instr_vless')}</span>
       <div style={{ fontSize: 12, color: tp.hint_color, margin: '-4px 4px 4px' }}>
-        Для Smart TV и роутеров · Доступен в тарифах «Про» и «Семейный»
+        {t('instr_vless_desc')}
       </div>
       <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
         <div style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -229,12 +179,12 @@ export default function Instructions() {
             </svg>
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: tp.text_color }}>VLESS-конфиги скоро</div>
-            <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>Пока доступен только AWG</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: tp.text_color }}>{t('instr_vless_soon')}</div>
+            <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>{t('instr_vless_soon_sub')}</div>
           </div>
         </div>
       </div>
-      <AccordionGroup items={VLESS_INSTRUCTIONS} accentColor="#8e44ad" />
+      <AccordionGroup items={VLESS_INSTRUCTIONS} accentColor="#8e44ad" t={t} />
     </div>
   )
 }

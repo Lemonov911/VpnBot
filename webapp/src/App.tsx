@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
-import { HashRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { LanguageProvider } from './i18n'
 import BottomNav from './components/BottomNav'
+import LangSwitch from './components/LangSwitch'
 
 import Home         from './pages/Home'
 import VPN          from './pages/VPN'
@@ -23,7 +24,14 @@ export default function App() {
 
   return (
     <LanguageProvider>
-      <HashRouter>
+      <BrowserRouter>
+        {/* Global language switcher — top-right on every page */}
+        <div style={{
+          position: 'fixed', top: 12, right: 16, zIndex: 200,
+        }}>
+          <LangSwitch />
+        </div>
+
         <Routes>
           {/* VPN */}
           <Route path="/vpn"          element={<VPN />} />
@@ -44,7 +52,7 @@ export default function App() {
           <Route path="/"             element={<Home />} />
         </Routes>
         <BottomNav />
-      </HashRouter>
+      </BrowserRouter>
     </LanguageProvider>
   )
 }

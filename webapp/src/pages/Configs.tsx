@@ -6,8 +6,7 @@ import {
   activateSlot, revokeConfig,
   type VpnConfig, type VpnServer,
 } from '../api'
-
-// ── CSS анимация для прогресс-бара ────────────────────────────────────────────
+import { useT, usePlural, type TKey } from '../i18n'
 
 const REVOKE_STYLE = `
 @keyframes revoke-progress {
@@ -27,23 +26,21 @@ function RevokeStyle() {
   return null
 }
 
-// ── Хелперы ───────────────────────────────────────────────────────────────────
-
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
   } catch { return iso }
 }
 
-const PLAN_NAMES: Record<string, string> = {
-  vpn_start:   'Старт',
-  vpn_popular: 'Популярный',
-  vpn_pro:     'Про',
-  vpn_family:  'Семейный',
-  vpn_1m: '1 месяц', vpn_3m: '3 месяца', vpn_1y: '1 год',
+const PLAN_KEY: Record<string, string> = {
+  vpn_start:   'vpn_plan_start',
+  vpn_popular: 'vpn_plan_popular',
+  vpn_pro:     'vpn_plan_pro',
+  vpn_family:  'vpn_plan_family',
+  vpn_1m:      'configs_plan_1m',
+  vpn_3m:      'configs_plan_3m',
+  vpn_1y:      'configs_plan_1y',
 }
-
-// ── Цвета протоколов ──────────────────────────────────────────────────────────
 
 const PROTO_COLOR: Record<string, string> = {
   awg:   '#27ae60',
@@ -54,9 +51,9 @@ const PROTO_LABEL: Record<string, string> = {
   vless: 'Smart TV',
 }
 
-// ── QR-модальное окно ─────────────────────────────────────────────────────────
-
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
+  const t = useT()
+  const p = usePlural()
   const tp = WebApp.themeParams
   return (
     <>
@@ -76,14 +73,14 @@ function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
           margin: '0 auto 20px',
         }} />
         <div style={{ fontWeight: 700, fontSize: 17, color: tp.text_color, marginBottom: 6 }}>
-          Отсканируй в Amnezia
+          {t('configs_qr_title')}
         </div>
         <div style={{ fontSize: 13, color: tp.hint_color, marginBottom: 20 }}>
-          Открой Amnezia → «+» → «Сканировать QR»
+          {t('configs_qr_sub')}
         </div>
         <img
           src={url}
-          alt="QR конфиг"
+          alt={t('configs_qr_title')}
           style={{
             width: 220, height: 220,
             borderRadius: 12,
@@ -98,14 +95,12 @@ function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
           background: 'var(--section-bg)', color: tp.text_color,
           fontSize: 15, cursor: 'pointer',
         }}>
-          Закрыть
+          {t('configs_close')}
         </button>
       </div>
     </>
   )
 }
-
-// ── Bottom sheet выбора сервера ───────────────────────────────────────────────
 
 function ServerPicker({
   servers,
@@ -120,13 +115,14 @@ function ServerPicker({
   onClose:    () => void
   activating: boolean
 }) {
+  const t = useT()
+  const p = usePlural()
   const tp    = WebApp.themeParams
   const color = PROTO_COLOR[protocol] ?? '#888'
   const label = PROTO_LABEL[protocol] ?? protocol.toUpperCase()
 
   return (
     <>
-      {/* Затемнение фона */}
       <div
         onClick={onClose}
         style={{
@@ -136,7 +132,6 @@ function ServerPicker({
         }}
       />
 
-      {/* Шторка снизу */}
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0,
         background: tp.bg_color ?? '#1c1c1e',
@@ -144,7 +139,6 @@ function ServerPicker({
         padding: '20px 16px 36px',
         zIndex: 201,
       }}>
-        {/* Ручка */}
         <div style={{
           width: 36, height: 4, borderRadius: 2,
           background: tp.hint_color ?? '#888',
@@ -152,15 +146,15 @@ function ServerPicker({
         }} />
 
         <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600, color: tp.text_color }}>
-          Выбери сервер
+          {t('configs_pick_server')}
         </h3>
         <p style={{ margin: '0 0 16px', fontSize: 13, color: tp.hint_color }}>
-          Протокол: <span style={{ color, fontWeight: 600 }}>{label}</span>
+          {t('configs_proto')} <span style={{ color, fontWeight: 600 }}>{label}</span>
         </p>
 
         {activating ? (
           <div style={{ textAlign: 'center', padding: '24px 0', color: tp.hint_color, fontSize: 14 }}>
-            Создаём конфиг на сервере…
+            {t('configs_activating')}
           </div>
         ) : (
           <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 14, overflow: 'hidden', marginBottom: 8 }}>
@@ -196,15 +190,13 @@ function ServerPicker({
               color: tp.hint_color, fontSize: 15, cursor: 'pointer', marginTop: 4,
             }}
           >
-            Отмена
+            {t('configs_cancel')}
           </button>
         )}
       </div>
     </>
   )
 }
-
-// ── SVG иконки протоколов ─────────────────────────────────────────────────────
 
 function ProtoIcon({ protocol }: { protocol: string }) {
   if (protocol === 'awg') return (
@@ -222,8 +214,6 @@ function ProtoIcon({ protocol }: { protocol: string }) {
   )
 }
 
-// ── Карточка слота ────────────────────────────────────────────────────────────
-
 function SlotCard({
   slot, isLast, onActivate, onRevoke,
 }: {
@@ -232,6 +222,8 @@ function SlotCard({
   onActivate: (id: number, serverId: number) => Promise<void>
   onRevoke:   (id: number) => Promise<void>
 }) {
+  const t = useT()
+  const p = usePlural()
   const tp      = WebApp.themeParams
   const color   = PROTO_COLOR[slot.protocol] ?? '#888'
   const label   = PROTO_LABEL[slot.protocol] ?? slot.protocol.toUpperCase()
@@ -269,11 +261,11 @@ function SlotCard({
   const handleRevoke = () => {
     WebApp.showPopup(
       {
-        title: 'Сбросить конфиг?',
-        message: `Слот ${label} #${slot.slot_num} будет очищен. После этого можно добавить новый.`,
+        title: t('configs_revoke_confirm'),
+        message: `${label} #${slot.slot_num} ${t('configs_revoke_msg2')}`,
         buttons: [
           { id: 'cancel', type: 'cancel' },
-          { id: 'ok', type: 'destructive', text: 'Сбросить' },
+          { id: 'ok', type: 'destructive', text: t('configs_revoke_btn2') },
         ],
       },
       async (btn) => {
@@ -292,12 +284,10 @@ function SlotCard({
   return (
     <>
       <div style={{ borderBottom }}>
-        {/* Основная строка */}
         <div style={{
           padding: '13px 16px',
           display: 'flex', alignItems: 'center', gap: 14,
         }}>
-          {/* Иконка */}
           <div style={{
             width: 40, height: 40, borderRadius: 12, flexShrink: 0,
             background: isEmpty ? `${color}33` : color,
@@ -314,21 +304,19 @@ function SlotCard({
             )}
           </div>
 
-          {/* Текст */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: tp.text_color }}>
               {label} · #{slot.slot_num}
             </div>
             <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>
               {isEmpty
-                ? (slot.protocol === 'vless' ? '🚧 Скоро' : 'Не активирован')
+                ? (slot.protocol === 'vless' ? `🚧 ${t('configs_soon')}` : t('configs_not_activated'))
                 : (slot.peer_name ?? `config_${slot.id}`)}
             </div>
           </div>
 
-          {/* Действия справа */}
           {slot.protocol === 'vless' && isEmpty ? (
-            <span style={{ fontSize: 11, color: tp.hint_color, fontWeight: 500 }}>Скоро</span>
+            <span style={{ fontSize: 11, color: tp.hint_color, fontWeight: 500 }}>{t('configs_soon')}</span>
           ) : isEmpty ? (
             <button
               onClick={handleAddClick}
@@ -340,10 +328,10 @@ function SlotCard({
                 opacity: loadingServers ? 0.6 : 1, flexShrink: 0,
               }}
             >
-              {loadingServers ? '...' : '+ Добавить'}
+              {loadingServers ? '...' : t('configs_add_btn')}
             </button>
           ) : revoking ? (
-            <span style={{ fontSize: 12, color: tp.hint_color }}>Сбрасываем…</span>
+            <span style={{ fontSize: 12, color: tp.hint_color }}>{t('configs_revoking')}</span>
           ) : (
             <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
               <button
@@ -394,7 +382,6 @@ function SlotCard({
           )}
         </div>
 
-        {/* Прогресс сброса */}
         {revoking && (
           <div style={{ padding: '0 16px 12px 70px' }}>
             <div style={{ height: 3, borderRadius: 2, background: `${color}22`, overflow: 'hidden' }}>
@@ -417,8 +404,6 @@ function SlotCard({
   )
 }
 
-// ── Группа подписки ───────────────────────────────────────────────────────────
-
 function SubscriptionGroup({
   slots, onActivate, onRevoke,
 }: {
@@ -427,22 +412,22 @@ function SubscriptionGroup({
   onActivate: (id: number, serverId: number) => Promise<void>
   onRevoke:   (id: number) => Promise<void>
 }) {
+  const t = useT()
+  const p = usePlural()
   const tp    = WebApp.themeParams
   const first = slots[0]
 
   return (
     <div style={{ marginBottom: 8 }}>
-      {/* Заголовок подписки */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 4px 8px' }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: tp.text_color }}>
-          {PLAN_NAMES[first.plan] ?? first.plan}
+          {PLAN_KEY[first.plan] ? t(PLAN_KEY[first.plan] as TKey) : first.plan}
         </span>
         <span style={{ fontSize: 12, color: tp.hint_color }}>
-          до {formatDate(first.expires_at)}
+          {t('configs_until')} {formatDate(first.expires_at)}
         </span>
       </div>
 
-      {/* Все слоты в одном card-group */}
       <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
         {slots.map((slot, i) => (
           <SlotCard
@@ -458,17 +443,17 @@ function SubscriptionGroup({
   )
 }
 
-// ── Основной компонент ────────────────────────────────────────────────────────
-
 type RawSlot = VpnConfig & { slot_num: number; subscription_id: number }
 
 export default function Configs() {
+  const t = useT()
+  const p = usePlural()
   const nav = useNavigate()
   const tp  = WebApp.themeParams
 
   const [slots,    setSlots]    = useState<RawSlot[]>([])
   const [loading,  setLoading]  = useState(true)
-  const [errMsg,   setErrMsg]   = useState('')
+  const [errMsg,  setErrMsg]   = useState('')
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -480,7 +465,7 @@ export default function Configs() {
     setLoading(true)
     getUserConfigs()
       .then(data => setSlots(data as RawSlot[]))
-      .catch(() => setErrMsg('Не удалось загрузить конфиги'))
+      .catch(() => setErrMsg(t('configs_err_load')))
       .finally(() => setLoading(false))
   }
 
@@ -492,7 +477,7 @@ export default function Configs() {
       WebApp.HapticFeedback.notificationOccurred('success')
       load()
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка активации')
+      setErrMsg(e instanceof Error ? e.message : t('configs_err_activate'))
     }
   }
 
@@ -505,11 +490,10 @@ export default function Configs() {
           : s
       ))
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка при отзыве')
+      setErrMsg(e instanceof Error ? e.message : t('configs_err_revoke'))
     }
   }
 
-  // Группируем по подписке
   const bySubscription = slots.reduce<Record<number, RawSlot[]>>((acc, s) => {
     const key = s.subscription_id
     if (!acc[key]) acc[key] = []
@@ -521,10 +505,10 @@ export default function Configs() {
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 90px)' }}>
       <RevokeStyle />
       <div style={{ padding: '6px 4px 2px' }}>
-        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>Мои конфиги</div>
+        <div style={{ fontWeight: 800, fontSize: 24, color: tp.text_color, marginBottom: 4 }}>{t('configs_title')}</div>
         <div style={{ fontSize: 13, color: tp.hint_color, display: 'flex', gap: 12 }}>
-          <span><span style={{ color: '#27ae60' }}>●</span> VPN — телефон / ноутбук</span>
-          <span><span style={{ color: '#8e44ad' }}>●</span> Smart TV</span>
+          <span style={{ color: '#27ae60' }}>{t('configs_legend_vpn')}</span>
+          <span style={{ color: '#8e44ad' }}>{t('configs_legend_tv')}</span>
         </div>
       </div>
 
@@ -543,9 +527,9 @@ export default function Configs() {
             background: 'var(--section-bg)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30,
           }}>🔒</div>
-          <div style={{ fontWeight: 600, fontSize: 17, color: tp.text_color, marginBottom: 6 }}>Нет активных подписок</div>
-          <p style={{ color: tp.hint_color, fontSize: 13, marginBottom: 24 }}>Оформи VPN чтобы получить конфиги</p>
-          <button className="btn" style={{ padding: '11px 32px' }} onClick={() => nav('/vpn/plans')}>Купить VPN</button>
+          <div style={{ fontWeight: 600, fontSize: 17, color: tp.text_color, marginBottom: 6 }}>{t('configs_no_sub')}</div>
+          <p style={{ color: tp.hint_color, fontSize: 13, marginBottom: 24 }}>{t('configs_no_sub_sub')}</p>
+          <button className="btn" style={{ padding: '11px 32px' }} onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>
         </div>
       )}
 

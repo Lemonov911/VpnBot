@@ -2,31 +2,20 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getReferralStats, type ReferralStats } from '../api'
-import { useT } from '../i18n'
-
-const STEPS = [
-  {
-    num: '1', color: '#2481cc',
-    title: 'Поделись ссылкой',
-    sub: 'Скопируй и отправь другу в любом мессенджере',
-  },
-  {
-    num: '2', color: '#27ae60',
-    title: 'Друг открывает бота',
-    sub: 'Он переходит по твоей ссылке и запускает бота',
-  },
-  {
-    num: '3', color: '#e67e22',
-    title: 'Получи +7 дней',
-    sub: 'Бонус начисляется когда друг оформит первую подписку',
-  },
-]
+import { useT, useLang } from '../i18n'
 
 export default function Referral() {
-  const nav = useNavigate()
-  const tp  = WebApp.themeParams
-  const t   = useT()
+const nav    = useNavigate()
+  const tp     = WebApp.themeParams
+  const t      = useT()
+  const lang   = useLang().lang
   const accent = 'var(--tg-theme-button-color, #2481cc)'
+
+  const STEPS = [
+    { num: '1', color: '#2481cc', title: t('ref_how1_title'), sub: t('ref_how1_sub') },
+    { num: '2', color: '#27ae60', title: t('ref_how2_title'), sub: t('ref_how2_sub') },
+    { num: '3', color: '#e67e22', title: t('ref_how3_title'), sub: t('ref_how3_sub') },
+  ]
 
   const [stats,   setStats]   = useState<ReferralStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -52,7 +41,10 @@ export default function Referral() {
   const handleShare = () => {
     if (!stats) return
     WebApp.HapticFeedback.impactOccurred('light')
-    const text = encodeURIComponent(`🛡 VPN без блокировок — Amnezia WireGuard\nПопробуй по моей ссылке: ${stats.ref_link}`)
+    const text = encodeURIComponent(lang === 'ru'
+      ? `🛡 VPN без блокировок — Amnezia WireGuard\nПопробуй по моей ссылке: ${stats.ref_link}`
+      : `🛡 VPN without blocks — Amnezia WireGuard\nTry it with my link: ${stats.ref_link}`
+    )
     WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(stats.ref_link)}&text=${text}`)
   }
 
@@ -68,8 +60,8 @@ export default function Referral() {
         </div>
       </div>
 
-      {/* Как это работает */}
-      <span className="section-title">{t('nav_home') === 'Home' ? 'How it works' : 'Как это работает'}</span>
+      {/* How it works */}
+      <span className="section-title">{t('ref_how_title')}</span>
       <div style={{ background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 16, overflow: 'hidden' }}>
         {[
           { num: '1', color: '#2481cc', title: t('ref_how1_title'), sub: t('ref_how1_sub') },
@@ -190,7 +182,7 @@ export default function Referral() {
           )}
         </>
       ) : (
-        <p style={{ color: 'var(--tg-theme-destructive-text-color,#ff3b30)', textAlign: 'center' }}>
+        <p style={{ color: 'var(--tg-theme-destructive-text-color,#ff3b30)', textAlign: 'center', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           {t('ref_error')}
         </p>
       )}

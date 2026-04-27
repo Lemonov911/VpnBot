@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getESimPackages, createESimInvoice, type ESimPackage } from '../api'
+import { useT } from '../i18n'
 
 function filterEssential(pkgs: ESimPackage[]): ESimPackage[] {
   if (pkgs.length <= 5) return pkgs
@@ -35,12 +36,9 @@ function popularIndex(pkgs: ESimPackage[]): number {
   return Math.floor(pkgs.length / 2)
 }
 
-// price units are 1/10000 USD, markup 1.45x, rate ~90 ₽/$
 function priceToRub(price: number): number {
   return Math.round(price / 10_000 * 1.45 * 90)
 }
-
-// ── Payment sheet ─────────────────────────────────────────────────────────────
 
 function PaymentSheet({
   pkg, onClose, onPay, paying,
@@ -50,12 +48,13 @@ function PaymentSheet({
   onPay: () => void
   paying: boolean
 }) {
+  const t = useT()
   const tp     = WebApp.themeParams
   const accent = 'var(--tg-theme-button-color, #2481cc)'
   const isDaily = pkg.dataType === 2
   const durationStr = isDaily
-    ? `${pkg.dataLabel}/день`
-    : `${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit.toLowerCase().startsWith('day') ? 'дн' : 'мес'}`
+    ? `${pkg.dataLabel}${t('esim_pkg_day')}`
+    : `${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit.toLowerCase().startsWith('day') ? t('esim_pkg_days') : t('esim_pkg_mos')}`
 
   return (
     <>
@@ -95,7 +94,7 @@ function PaymentSheet({
           fontSize: 12, fontWeight: 600, color: tp.hint_color,
           textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
         }}>
-          Способ оплаты
+          {t('esim_payment_method')}
         </div>
 
         {/* Stars row */}
@@ -112,7 +111,7 @@ function PaymentSheet({
             <span style={{ fontSize: 22, width: 32, textAlign: 'center', flexShrink: 0 }}>⭐</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 15, color: tp.text_color, fontWeight: 500 }}>Telegram Stars</div>
-              <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>≈ {priceToRub(pkg.price)} ₽</div>
+              <div style={{ fontSize: 12, color: tp.hint_color, marginTop: 1 }}>≈ {priceToRub(pkg.price)} {t('esim_rubles')}</div>
             </div>
             <span style={{ fontSize: 13, color: accent, fontWeight: 600 }}>{pkg.stars} ⭐</span>
             <div style={{
@@ -133,14 +132,12 @@ function PaymentSheet({
           style={{ width: '100%', fontSize: 16, padding: '14px 0' }}
           onClick={onPay}
         >
-          {paying ? '…' : `Оплатить ${pkg.stars} ⭐ · ≈${priceToRub(pkg.price)} ₽`}
+          {paying ? '…' : `${t('esim_pay_btn')} ${pkg.stars} ⭐ · ≈${priceToRub(pkg.price)} ${t('esim_rubles')}`}
         </button>
       </div>
     </>
   )
 }
-
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function ESimCountry() {
   const { code }     = useParams<{ code: string }>()
@@ -149,6 +146,7 @@ export default function ESimCountry() {
   const ruCompatible = state?.ruCompatible ?? false
   const nav          = useNavigate()
   const tp           = WebApp.themeParams
+  const t            = useT()
 
   const [packages,  setPackages]  = useState<ESimPackage[]>([])
   const [loading,   setLoading]   = useState(true)
@@ -167,7 +165,7 @@ export default function ESimCountry() {
     if (!code) return
     getESimPackages(code)
       .then(all => setPackages(filterEssential(all)))
-      .catch(() => setErrMsg('Не удалось загрузить пакеты'))
+      .catch(() => setErrMsg(t('esim_no_pkgs')))
       .finally(() => setLoading(false))
   }, [code])
 
@@ -181,11 +179,11 @@ export default function ESimCountry() {
         setPaying(false)
         setSheetPkg(null)
         if (status === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
-        else if (status !== 'cancelled') setErrMsg('Платёж не прошёл. Попробуй ещё раз.')
+        else if (status !== 'cancelled') setErrMsg(t('payment_failed'))
       })
     } catch (e) {
       setPaying(false)
-      setErrMsg(e instanceof Error ? e.message : 'Ошибка сервера')
+      setErrMsg(e instanceof Error ? e.message : t('server_error'))
     }
   }
 
@@ -198,11 +196,11 @@ export default function ESimCountry() {
             background: 'rgba(39,174,96,0.12)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36,
           }}>✅</div>
-          <div style={{ fontWeight: 800, fontSize: 22, color: tp.text_color }}>eSIM оформлен!</div>
+          <div style={{ fontWeight: 800, fontSize: 22, color: tp.text_color }}>{t('esim_paid_success')}</div>
           <p style={{ color: tp.hint_color, fontSize: 14, lineHeight: 1.6 }}>
-            QR-код уже отправлен в бот — открой чат и отсканируй его в настройках телефона.
+            {t('esim_paid_qr_note')}
           </p>
-          <button className="btn" style={{ width: '100%' }} onClick={() => setPaid(false)}>Купить ещё</button>
+          <button className="btn" style={{ width: '100%' }} onClick={() => setPaid(false)}>{t('esim_buy_more')}</button>
         </div>
       </div>
     )
@@ -220,9 +218,7 @@ export default function ESimCountry() {
             {countryName}
           </div>
           <div style={{ fontSize: 13, color: tp.hint_color }}>
-            {ruCompatible
-              ? '📡 Работает в России — интернет через зарубежного оператора'
-              : '✈️ eSIM для поездки — вставляется без замены основной SIM'}
+            {ruCompatible ? t('esim_country_works_in_ru') : t('esim_country_travel')}
           </div>
         </div>
 
@@ -231,7 +227,7 @@ export default function ESimCountry() {
             background: 'rgba(39,174,96,0.1)', borderRadius: 12,
             padding: '10px 14px', fontSize: 13, color: '#27ae60', lineHeight: 1.5,
           }}>
-            Твой телефон будет думать, что ты за границей — поэтому российские блокировки не действуют. Звонки и SMS на основном номере работают как обычно.
+            {t('esim_ru_compat_note')}
           </div>
         )}
 
@@ -247,8 +243,8 @@ export default function ESimCountry() {
               const isPopular = i === popIdx
               const isDaily = pkg.dataType === 2
               const durationStr = isDaily
-                ? `${pkg.dataLabel}/день`
-                : `${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit.toLowerCase().startsWith('day') ? 'дн' : 'мес'}`
+                ? `${pkg.dataLabel}${t('esim_pkg_day')}`
+                : `${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit.toLowerCase().startsWith('day') ? t('esim_pkg_days') : t('esim_pkg_mos')}`
               return (
                 <div key={pkg.packageCode} style={{
                   padding: '13px 16px',
@@ -269,15 +265,15 @@ export default function ESimCountry() {
 
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: tp.text_color }}>{isDaily ? `${pkg.dataLabel}/день` : pkg.dataLabel}</span>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: tp.text_color }}>{isDaily ? `${pkg.dataLabel}${t('esim_pkg_day')}` : pkg.dataLabel}</span>
                       {isPopular && (
                         <span style={{
                           background: accent, color: tp.button_text_color ?? '#fff',
                           fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
-                        }}>Хит</span>
+                        }}>{t('esim_pkg_hit')}</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: tp.hint_color }}>{isDaily ? `ежедневно · ${pkg.speed}` : `${durationStr} · ${pkg.speed}`}</div>
+                    <div style={{ fontSize: 12, color: tp.hint_color }}>{isDaily ? `${t('esim_pkg_per_day')} · ${pkg.speed}` : `${durationStr} · ${pkg.speed}`}</div>
                   </div>
 
                   <button
@@ -285,7 +281,7 @@ export default function ESimCountry() {
                     style={{ minWidth: 84, fontSize: 13, flexShrink: 0 }}
                     onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setSheetPkg(pkg) }}
                   >
-                    {priceToRub(pkg.price)} ₽
+                    {priceToRub(pkg.price)} {t('esim_rubles')}
                   </button>
                 </div>
               )
@@ -296,7 +292,7 @@ export default function ESimCountry() {
         {!loading && packages.length === 0 && !errMsg && (
           <div style={{ textAlign: 'center', padding: 32 }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>😔</div>
-            <p style={{ color: tp.hint_color }}>Пакеты для этой страны временно недоступны</p>
+            <p style={{ color: tp.hint_color }}>{t('esim_no_pkgs')}</p>
           </div>
         )}
 
@@ -311,7 +307,7 @@ export default function ESimCountry() {
             background: 'var(--section-bg)', border: '1px solid var(--card-border)', borderRadius: 12,
             padding: '12px 16px', fontSize: 13, color: tp.hint_color, lineHeight: 1.6,
           }}>
-            После оплаты QR-код придёт в бот. Открой <b>Настройки → SIM-карта → Добавить</b> и отсканируй его.
+            {t('esim_pkg_install')}
           </div>
         )}
       </div>
