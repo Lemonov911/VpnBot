@@ -29,9 +29,9 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
         <div key={i}>
           <button
             onClick={() => { setOpen(open === i ? null : i); WebApp.HapticFeedback.selectionChanged() }}
-            className={`w-full border-none bg-transparent py-[14px] px-4 cursor-pointer flex items-center gap-3 ${(open === i || i < faqItems.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
+            className={`w-full border-none bg-transparent py-[14px] px-4 cursor-pointer flex items-start gap-3 ${(open === i || i < faqItems.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: FAQ_META[i].color }}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-start justify-center" style={{ background: FAQ_META[i].color }}>
               {FAQ_META[i].icon}
             </div>
             <span className="flex-1 text-[14px] font-semibold text-[var(--tg-theme-text-color)] text-left">{q}</span>
@@ -99,7 +99,7 @@ export default function Support() {
     return (
       <div className="page">
         <div className="center">
-          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
+          <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-start justify-center text-[36px]">✅</div>
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color)]">{t('support_done')}</div>
           <p className="text-[var(--tg-theme-hint-color)] text-sm leading-relaxed max-w-[280px]">
             {t('support_ticket')} #{ticketId} {t('support_ticket_accepted')}.<br />{t('support_done_sub')}
@@ -121,7 +121,7 @@ export default function Support() {
     <div className="page" style={{ gap: 12 }}>
 
       {/* Header */}
-      <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5">
+      <div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
         <img src={import.meta.env.BASE_URL + 'logo.webp'} alt="MAX" className="w-9 h-9 rounded-[10px] shrink-0 object-cover" />
         <div>
           <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)]">{t('support_title')}</div>
@@ -140,9 +140,9 @@ export default function Support() {
           <button
             key={c.key}
             onClick={() => { setCategory(c.key); WebApp.HapticFeedback.selectionChanged() }}
-            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-[14px] ${i < CATS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
+            className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-start gap-[14px] ${i < CATS.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
           >
-            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-center justify-center" style={{ background: c.color }}>
+            <div className="w-9 h-9 rounded-[10px] shrink-0 flex items-start justify-center" style={{ background: c.color }}>
               {c.icon}
             </div>
             <span className="flex-1 text-[15px] font-medium text-[var(--tg-theme-text-color)] text-left">
@@ -162,8 +162,8 @@ export default function Support() {
 
       {/* Поле сообщения */}
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden py-1">
-        <div className="py-[10px] px-4 pb-[6px] flex items-center gap-[10px]">
-          <div className="w-7 h-7 rounded-lg shrink-0 flex items-center justify-center" style={{ background: selectedCat.color }}>
+        <div className="py-[10px] px-4 pb-[6px] flex items-start gap-[10px]">
+          <div className="w-7 h-7 rounded-lg shrink-0 flex items-start justify-center" style={{ background: selectedCat.color }}>
             {selectedCat.icon}
           </div>
           <span className="text-[13px] font-semibold text-[var(--tg-theme-text-color)]">{selectedCat.label}</span>

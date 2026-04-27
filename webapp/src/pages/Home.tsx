@@ -71,7 +71,7 @@ export default function Home() {
       <div className="page gap-3">
 
         {/* ── Header ── */}
-        <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5">
+        <div className="flex items-start gap-[10px] px-1 pt-1.5 pb-0.5">
           <img
             src={import.meta.env.BASE_URL + 'logo.webp'}
             alt="MAX"
@@ -97,7 +97,7 @@ export default function Home() {
             <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
               <div className="h-[3px] bg-gradient-to-r from-primary to-[#5856d6] shrink-0" />
               <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
-                <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-primary to-[#5856d6] flex items-center justify-center mb-[11px] shrink-0 shadow-[0_4px_14px_rgba(36,129,204,0.4)]">
+                <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-primary to-[#5856d6] flex items-start justify-center mb-[11px] shrink-0 shadow-[0_4px_14px_rgba(36,129,204,0.4)]">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
                       stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -111,7 +111,7 @@ export default function Home() {
 
                 {sub ? (
                   <>
-                    <div className="flex items-center gap-[5px] mb-[3px]">
+                    <div className="flex items-start gap-[5px] mb-[3px]">
                       <span className="w-[7px] h-[7px] rounded-full bg-success shrink-0 block" />
                       <span className="text-xs font-bold text-success">
                         {t('home_active')}
@@ -133,7 +133,7 @@ export default function Home() {
                   </>
                 ) : (
                   <>
-                    <div className="flex items-center gap-[5px] mb-[3px]">
+                    <div className="flex items-start gap-[5px] mb-[3px]">
                       <span className="w-[7px] h-[7px] rounded-full bg-gray-500/35 shrink-0 block" />
                       <span className="text-xs font-semibold text-[var(--tg-theme-hint-color)]">
                         {t('home_no_sub')}
@@ -159,7 +159,7 @@ export default function Home() {
           <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
             <div className="h-[3px] bg-gradient-to-r from-success to-[#00b4d8] shrink-0" />
             <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
-              <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-success to-[#00b4d8] flex items-center justify-center mb-[11px] shadow-[0_4px_14px_rgba(39,174,96,0.4)]">
+              <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-success to-[#00b4d8] flex items-start justify-center mb-[11px] shadow-[0_4px_14px_rgba(39,174,96,0.4)]">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                   <rect x="5" y="2" width="14" height="20" rx="3" stroke="#fff" strokeWidth="2"/>
                   <path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"/>
@@ -194,9 +194,9 @@ export default function Home() {
             <button
               key={label}
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); action() }}
-              className="flex flex-col items-center gap-2 pt-[14px] px-1.5 pb-3 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl cursor-pointer"
+              className="flex flex-col items-start gap-2 pt-[14px] px-1.5 pb-3 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl cursor-pointer"
             >
-              <div className={`w-11 h-11 rounded-[13px] ${iconBg} flex items-center justify-center ${shadow}`}>
+              <div className={`w-11 h-11 rounded-[13px] ${iconBg} flex items-start justify-center ${shadow}`}>
                 {icon}
               </div>
               <span className="text-xs font-semibold text-[var(--tg-theme-text-color)] leading-[1.2]">{label}</span>
@@ -207,9 +207,9 @@ export default function Home() {
         {/* ── Referral banner ── */}
         <div
           onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/referral') }}
-          className="bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-center gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
+          className="bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-start gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
         >
-          <div className="w-11 h-11 rounded-[13px] shrink-0 bg-warning flex items-center justify-center shadow-[0_4px_12px_rgba(230,126,34,0.35)]">
+          <div className="w-11 h-11 rounded-[13px] shrink-0 bg-warning flex items-start justify-center shadow-[0_4px_12px_rgba(230,126,34,0.35)]">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <path d="M20 12v10H4V12" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M22 7H2v5h20V7z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

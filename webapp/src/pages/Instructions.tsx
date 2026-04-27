@@ -80,9 +80,9 @@ function AccordionGroup({ items, accentColor, t }: { items: Instruction[]; accen
           <div key={item.id}>
             <button
               onClick={() => { setOpen(isOpen ? null : item.id); WebApp.HapticFeedback.selectionChanged() }}
-              className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-center gap-[14px] ${(isOpen || i < items.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
+              className={`w-full border-none bg-transparent py-[13px] px-4 cursor-pointer flex items-start gap-[14px] ${(isOpen || i < items.length - 1) ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
             >
-              <div className={`w-10 h-10 rounded-[10px] shrink-0 ${color} flex items-center justify-center`}>
+              <div className={`w-10 h-10 rounded-[10px] shrink-0 ${color} flex items-start justify-center`}>
                 <DeviceIcon id={item.id} />
               </div>
               <span className="flex-1 text-[15px] font-semibold text-[var(--tg-theme-text-color)] text-left">
@@ -100,7 +100,7 @@ function AccordionGroup({ items, accentColor, t }: { items: Instruction[]; accen
                   ))}
                 </ol>
                 {item.link && (
-                  <a href={item.link.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-[5px] mt-2.5 text-[13px] text-[var(--tg-theme-link-color,#2481cc)] no-underline">
+                  <a href={item.link.url} target="_blank" rel="noreferrer" className="inline-flex items-start gap-[5px] mt-2.5 text-[13px] text-[var(--tg-theme-link-color,#2481cc)] no-underline">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                     {item.link.label}
                   </a>
@@ -127,8 +127,8 @@ export default function Instructions() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
-      <div className="px-1 pt-1.5 pb-0.5 flex items-center gap-2">
-        <button onClick={() => nav('/vpn')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-center justify-center shrink-0 cursor-pointer">
+      <div className="px-1 pt-1.5 pb-0.5 flex items-start gap-2">
+        <button onClick={() => nav('/vpn')} className="w-8 h-8 rounded-lg bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex items-start justify-center shrink-0 cursor-pointer">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path d="M15 18l-6-6 6-6" stroke="var(--tg-theme-text-color,#000)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
@@ -150,8 +150,8 @@ export default function Instructions() {
         {t('instr_vless_desc')}
       </div>
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
-        <div className="py-[13px] px-4 flex items-center gap-[14px]">
-          <div className="w-10 h-10 rounded-[10px] shrink-0 bg-purple flex items-center justify-center">
+        <div className="py-[13px] px-4 flex items-start gap-[14px]">
+          <div className="w-10 h-10 rounded-[10px] shrink-0 bg-purple flex items-start justify-center">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
