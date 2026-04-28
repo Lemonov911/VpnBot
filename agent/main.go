@@ -15,6 +15,7 @@ import (
 	"vpnctl/fairshare"
 	"vpnctl/watchdog"
 	"vpnctl/wg"
+	"vpnctl/xray"
 )
 
 func main() {
@@ -29,6 +30,13 @@ func main() {
 	mgr, err := wg.NewManager(cfg.WGInterface, cfg.WGSubnet, cfg.WGEndpoint)
 	if err != nil {
 		log.Fatalf("wg init: %v", err)
+	}
+
+	// Init Xray VLESS manager (optional — only if config path is set)
+	var vlessMgr *xray.Manager
+	if cfg.XrayConfigPath != "" {
+		vlessMgr = xray.NewManager(cfg.XrayConfigPath, cfg.XrayAPIAddr, cfg.XrayInboundTag)
+		log.Printf("vless: xray manager enabled (config=%s, api=%s)", cfg.XrayConfigPath, cfg.XrayAPIAddr)
 	}
 
 	// Fair-share scheduler
@@ -50,7 +58,7 @@ func main() {
 	go wd.Run()
 
 	// HTTP server
-	srv := api.NewServer(mgr, cfg.AgentToken)
+	srv := api.NewServer(mgr, vlessMgr, cfg.AgentToken, cfg.VLESSAddr)
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      srv.Handler(),

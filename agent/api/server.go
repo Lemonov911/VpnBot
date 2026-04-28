@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"vpnctl/wg"
+	"vpnctl/xray"
 )
 
 // WGIface is everything the API needs from the WireGuard manager.
@@ -25,13 +26,15 @@ type WGIface interface {
 }
 
 type Server struct {
-	wg        WGIface
-	token     string
-	startTime time.Time
+	wg           WGIface
+	vless        *xray.Manager
+	token        string
+	vlessAddr    string // host:port for VLESS connection (e.g. 151.243.113.31:8443)
+	startTime    time.Time
 }
 
-func NewServer(mgr WGIface, token string) *Server {
-	return &Server{wg: mgr, token: token, startTime: time.Now()}
+func NewServer(mgr WGIface, vlessMgr *xray.Manager, token, vlessAddr string) *Server {
+	return &Server{wg: mgr, vless: vlessMgr, token: token, vlessAddr: vlessAddr, startTime: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -55,6 +58,14 @@ func (s *Server) Handler() http.Handler {
 
 		r.Post("/peers/suspend-all", s.handleSuspendAll)
 		r.Post("/peers/resume-all", s.handleResumeAll)
+
+		if s.vless != nil {
+			r.Post("/vless/users", s.handleAddVLESSUser)
+			r.Get("/vless/users", s.handleListVLESSUsers)
+			r.Delete("/vless/users/{uuid}", s.handleRemoveVLESSUser)
+			r.Put("/vless/users/{uuid}/suspend", s.handleSuspendVLESSUser)
+			r.Put("/vless/users/{uuid}/resume", s.handleResumeVLESSUser)
+		}
 	})
 
 	return r

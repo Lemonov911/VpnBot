@@ -33,7 +33,7 @@ async def main():
     # Mini App API
     runner = web.AppRunner(create_api_app(bot))
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", API_PORT).start()
+    await web.TCPSite(runner, "127.0.0.1", API_PORT).start()
     logging.info("Mini App API listening on :%d", API_PORT)
 
     asyncio.create_task(run_scheduler(bot))

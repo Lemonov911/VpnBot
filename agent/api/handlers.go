@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -146,12 +147,97 @@ func (s *Server) handleResumeAll(w http.ResponseWriter, r *http.Request) {
 // GET /health
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{
-		"status":     "ok",
-		"wg_iface":   s.wg.Interface(),
-		"server_key": s.wg.ServerPublicKey(),
-		"active":     s.wg.ActivePeerCount(),
-		"uptime":     time.Since(s.startTime).String(),
+		"status": "ok",
+		"uptime": time.Since(s.startTime).String(),
 	})
+}
+
+// ---- VLESS handlers ----
+
+type addVLESSReq struct {
+	Label string `json:"label"`
+}
+
+type addVLESSResp struct {
+	UUID     string `json:"uuid"`
+	Email    string `json:"email"`
+	VlessURL string `json:"vless_url"`
+}
+
+func (s *Server) handleAddVLESSUser(w http.ResponseWriter, r *http.Request) {
+	var req addVLESSReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Label == "" {
+		req.Label = "unnamed"
+	}
+
+	user, err := s.vless.AddUser(req.Label)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	vlessURL := fmt.Sprintf("vless://%s@%s?encryption=none&security=tls&type=tcp&flow=xtls-rprx-vision&sni=maxvpn.shop#MaxVPN",
+		user.UUID, s.vlessAddr)
+
+	jsonOK(w, addVLESSResp{
+		UUID:     user.UUID,
+		Email:    user.Email,
+		VlessURL: vlessURL,
+	})
+}
+
+func (s *Server) handleListVLESSUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.vless.ListUsers()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, users)
+}
+
+func (s *Server) handleRemoveVLESSUser(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	if uuid == "" {
+		jsonError(w, "missing uuid", http.StatusBadRequest)
+		return
+	}
+	if err := s.vless.RemoveUser(uuid); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"status": "removed"})
+}
+
+func (s *Server) handleSuspendVLESSUser(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	if uuid == "" {
+		jsonError(w, "missing uuid", http.StatusBadRequest)
+		return
+	}
+	if err := s.vless.RemoveUser(uuid); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"status": "suspended"})
+}
+
+func (s *Server) handleResumeVLESSUser(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	if uuid == "" {
+		jsonError(w, "missing uuid", http.StatusBadRequest)
+		return
+	}
+	// Re-add user with their existing UUID — label is uuid@vpn
+	_, err := s.vless.AddUserWithUUID(uuid, uuid+"@vpn")
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]string{"status": "resumed"})
 }
 
 // ---- helpers ----

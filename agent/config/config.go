@@ -30,6 +30,12 @@ type Config struct {
 	// Watchdog
 	TelegramBotToken string
 	TelegramAdminIDs []int64 // who to notify
+
+	// Xray VLESS (optional — empty disables VLESS support)
+	XrayConfigPath  string // e.g. /usr/local/etc/xray/config.json
+	XrayAPIAddr     string // e.g. 127.0.0.1:10085
+	XrayInboundTag  string // e.g. vless-in
+	VLESSAddr       string // e.g. 151.243.113.31:8443
 }
 
 func Load() *Config {
@@ -51,6 +57,10 @@ func Load() *Config {
 		FairShareIntervalSec: fsInterval,
 		TelegramBotToken:     env("BOT_TOKEN", ""),
 		TelegramAdminIDs:     adminIDs,
+		XrayConfigPath:      env("XRAY_CONFIG_PATH", ""),
+		XrayAPIAddr:         env("XRAY_API_ADDR", "127.0.0.1:10085"),
+		XrayInboundTag:      env("XRAY_INBOUND_TAG", "vless-in"),
+		VLESSAddr:          env("VLESS_ADDR", ""),
 	}
 	return cfg
 }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 
-const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET ?? 'change-me-in-production')
+const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET!)
+if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var is required')
 const ADMIN_IDS   = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
 const PUBLIC      = ['/login', '/api/auth']
 

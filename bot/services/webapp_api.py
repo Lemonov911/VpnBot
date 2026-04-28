@@ -87,6 +87,13 @@ def _unauthorized() -> web.Response:
     return web.json_response({"error": "Unauthorized"}, status=401)
 
 
+def _int_param(request: web.Request, name: str) -> int | None:
+    try:
+        return int(request.match_info[name])
+    except (ValueError, KeyError):
+        return None
+
+
 # ── VPN хендлеры ───────────────────────────────────────────────────────────────
 
 async def handle_vpn_invoice(request: web.Request) -> web.Response:
@@ -172,7 +179,9 @@ async def handle_vpn_config_download(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    config_id = int(request.match_info["id"])
+    config_id = _int_param(request, "id")
+    if config_id is None:
+        return web.json_response({"error": "Invalid ID"}, status=400)
     config = await get_config_by_id(config_id)
 
     if not config or config["user_id"] != user["id"]:
@@ -195,7 +204,9 @@ async def handle_vpn_config_qr(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    config_id = int(request.match_info["id"])
+    config_id = _int_param(request, "id")
+    if config_id is None:
+        return web.json_response({"error": "Invalid ID"}, status=400)
     config = await get_config_by_id(config_id)
 
     if not config or config["user_id"] != user["id"]:
@@ -230,11 +241,10 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
 
 
 async def handle_vpn_status(request: web.Request) -> web.Response:
-    """
-    Быстрая проверка доступности серверов.
-    Возвращает список серверов с полем ok (True/False).
-    Не требует авторизации — публичный эндпоинт.
-    """
+    """Проверка доступности серверов. Требует авторизацию."""
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
     import asyncio
     import socket
 
@@ -271,7 +281,9 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    config_id = int(request.match_info["id"])
+    config_id = _int_param(request, "id")
+    if config_id is None:
+        return web.json_response({"error": "Invalid ID"}, status=400)
     config = await get_config_by_id(config_id)
 
     if not config or config["user_id"] != user["id"]:
@@ -279,6 +291,10 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
 
     if config["status"] != "empty":
         return web.json_response({"error": "Слот уже активен"}, status=400)
+
+    sub = await get_active_subscription(user["id"])
+    if not sub or sub["id"] != config["subscription_id"]:
+        return web.json_response({"error": "Нет активной подписки"}, status=403)
 
     body = await request.json()
     server_id = body.get("server_id")
@@ -332,7 +348,9 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    config_id = int(request.match_info["id"])
+    config_id = _int_param(request, "id")
+    if config_id is None:
+        return web.json_response({"error": "Invalid ID"}, status=400)
     config = await get_config_by_id(config_id)
 
     if not config or config["user_id"] != user["id"]:
@@ -531,12 +549,17 @@ async def handle_esim_invoice(request: web.Request) -> web.Response:
         return _unauthorized()
 
     pkg_code = body.get("package_code", "")
-    price    = body.get("price", 0)
-    stars    = body.get("stars", 0)
-    name     = body.get("name", "eSIM")
-
-    if not pkg_code or not stars:
+    if not pkg_code:
         return web.json_response({"error": "Invalid params"}, status=400)
+
+    packages = await esim.get_packages_for("")
+    pkg = next((p for p in packages if p.get("packageCode") == pkg_code), None)
+    if not pkg:
+        return web.json_response({"error": "Package not found"}, status=404)
+
+    price = pkg.get("price", 0)
+    stars = esim.stars_for(price)
+    name  = body.get("name") or pkg.get("name", "eSIM")
 
     bot: Bot = request.app["bot"]
     payload = f"esim:{pkg_code}:{price}"
@@ -755,6 +778,7 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 # ── CORS middleware ────────────────────────────────────────────────────────────
 
 ALLOWED_ORIGINS = {
+    "https://maxvpn.shop",
     "https://lemonov911.github.io",
     "http://localhost:5173",
     "http://localhost:4173",
@@ -765,12 +789,13 @@ async def cors_middleware(request: web.Request, handler):
     origin = request.headers.get("Origin", "")
     allow_origin = origin if origin in ALLOWED_ORIGINS else ""
 
-    # Preflight
     if request.method == "OPTIONS":
+        if not allow_origin:
+            return web.Response(status=403)
         return web.Response(
             status=204,
             headers={
-                "Access-Control-Allow-Origin":  allow_origin or "*",
+                "Access-Control-Allow-Origin":  allow_origin,
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type, X-Telegram-Init-Data",
                 "Access-Control-Max-Age":       "86400",
@@ -778,8 +803,9 @@ async def cors_middleware(request: web.Request, handler):
         )
 
     response = await handler(request)
-    response.headers["Access-Control-Allow-Origin"]  = allow_origin or "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Telegram-Init-Data"
+    if allow_origin:
+        response.headers["Access-Control-Allow-Origin"]  = allow_origin
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Telegram-Init-Data"
     return response
 
 

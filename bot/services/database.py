@@ -273,7 +273,7 @@ async def get_servers_by_protocol(protocol: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, name, location, host, user, password, key_path FROM servers "
+            "SELECT * FROM servers "
             "WHERE protocol=? AND is_active=1 ORDER BY id",
             (protocol,)
         ) as cur:
@@ -689,10 +689,9 @@ async def add_referral_bonus(referrer_id: int, days: int):
             "UPDATE users SET ref_bonus_days=ref_bonus_days+? WHERE id=?",
             (days, referrer_id),
         )
+        modifier = f"+{days} days"
         await db.execute(
-            """UPDATE subscriptions
-               SET expires_at=datetime(expires_at, '+? days')
-               WHERE user_id=? AND status='active'""",
-            (days, referrer_id),
+            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
+            (modifier, referrer_id),
         )
         await db.commit()
