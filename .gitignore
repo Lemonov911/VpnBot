@@ -26,3 +26,13 @@ webapp/node_modules/
 server-*
 *.server.json
 .claude/
+
+# Screenshots
+screenshot*.png
+
+# Worktrees
+.claude/
+
+# Admin build
+admin/.next/
+admin/node_modules/
