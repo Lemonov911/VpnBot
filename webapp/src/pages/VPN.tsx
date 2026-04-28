@@ -143,23 +143,6 @@ export default function VPN() {
       <>
         <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-          <div className="py-[6px] px-1 pb-[2px]">
-            <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
-            <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸 {t('vpn_server_subtitle')}</div>
-          </div>
-
-          {status !== null && status.length > 0 && (
-            <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_servers')}</span>
-              {status.map(s => (
-                <span key={s.id} className="flex items-center gap-1 text-xs">
-                  <span className={`w-[7px] h-[7px] rounded-full ${s.ok ? 'bg-success' : 'bg-danger'}`} />
-                  <span className="text-[var(--tg-theme-text-color,#000)]">{s.name}</span>
-                </span>
-              ))}
-            </div>
-          )}
-
           <div className="section-title">
             {t('vpn_choose')}
           </div>
@@ -249,11 +232,6 @@ export default function VPN() {
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
-      <div className="py-[6px] px-1 pb-[2px]">
-        <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">VPN</div>
-        <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">Amnezia WireGuard · 🇺🇸</div>
-      </div>
-
       {isExpiring && (
         <div className={`fade-in rounded-xl py-[10px] px-3.5 flex justify-between items-center border ${
           sub.days_remaining <= 3 ? 'bg-danger/10 border-danger/30' : 'bg-warning/10 border-warning/30'
@@ -269,21 +247,6 @@ export default function VPN() {
           <button onClick={() => nav('/vpn/plans')} className={`px-3.5 py-1.5 rounded-lg border-none text-white text-xs font-semibold cursor-pointer shrink-0 ${sub.days_remaining <= 3 ? 'bg-danger' : 'bg-warning'}`}>
             {t('vpn_renew')}
           </button>
-        </div>
-      )}
-
-      {status !== null && (
-        <div className="fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-[10px] px-3.5 flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_servers')}</span>
-          {status.length === 0
-            ? <span className="text-xs text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_no_data')}</span>
-            : status.map(s => (
-              <span key={s.id} className="flex items-center gap-1 text-xs">
-                <span className={`w-[7px] h-[7px] rounded-full ${s.ok ? 'bg-success' : 'bg-danger'}`} />
-                <span className="text-[var(--tg-theme-text-color,#000)]">{s.name}</span>
-              </span>
-            ))
-          }
         </div>
       )}
 

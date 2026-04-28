@@ -230,11 +230,6 @@ export default function Plans() {
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
-        <div className="py-[6px] px-1 pb-[2px]">
-          <div className="font-extrabold text-2xl text-[var(--tg-theme-text-color,#000)] mb-1">{t('plans_title')}</div>
-          <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">{t('plans_sub')}</div>
-        </div>
-
         {sub === null ? (
           PLANS.map((plan, i) => (
             <PlanCard key={plan.key} plan={plan} mode="buy"

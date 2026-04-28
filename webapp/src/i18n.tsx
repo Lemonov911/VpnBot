@@ -41,6 +41,7 @@ const T = {
     vpn_expiry_banner_1: '🚨 Подписка скоро истечёт',
     vpn_days_left: 'Осталось',
     vpn_renew:     'Продлить',
+    vpn_sub:       'WireGuard · VLess · до 300 Мбит/с',
     vpn_change:    'Сменить тариф',
     vpn_my_configs:'Мои конфиги',
     vpn_instr:     'Инструкция',
@@ -104,7 +105,7 @@ const T = {
 
     // eSIM
     esim_title:    '📱 eSIM',
-    esim_sub:      'Иностранная SIM-карта без замены телефона',
+    esim_sub:      'Иностранная SIM без замены телефона',
     esim_tab_ru:   '🇷🇺 Для России',
     esim_tab_travel:'✈️ Для поездок',
     esim_ru_title: 'Интернет без блокировок — прямо в России',
@@ -410,6 +411,7 @@ const T = {
     vpn_expiry_banner_1: '🚨 Subscription expires soon',
     vpn_days_left: 'Left',
     vpn_renew:     'Renew',
+    vpn_sub:       'WireGuard · VLess · up to 300 Mbps',
     vpn_change:    'Change plan',
     vpn_my_configs:'My configs',
     vpn_instr:     'Guide',
@@ -470,7 +472,7 @@ const T = {
     configs_legend_tv:  '● Smart TV',
 
     esim_title:    '📱 eSIM',
-    esim_sub:      'Foreign SIM card without swapping',
+    esim_sub:      'Foreign SIM without swapping phones',
     esim_tab_ru:   '🇷🇺 For Russia',
     esim_tab_travel:'✈️ For travel',
     esim_ru_title: 'Internet without blocks — in Russia',

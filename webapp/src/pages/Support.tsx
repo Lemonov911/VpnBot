@@ -120,12 +120,6 @@ export default function Support() {
   return (
     <div className="page" style={{ gap: 12 }}>
 
-      {/* Header */}
-      <div className="px-1 pt-1.5 pb-0.5">
-        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('support_title')}</div>
-        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('support_sub')}</div>
-      </div>
-
       {/* FAQ */}
       <span className="section-title">{t('support_faq')}</span>
       <FaqGroup t={t} />

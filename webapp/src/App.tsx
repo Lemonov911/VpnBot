@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
-import { LanguageProvider } from './i18n'
+import { LanguageProvider, useT } from './i18n'
 import BottomNav from './components/BottomNav'
 import LangSwitch from './components/LangSwitch'
 
@@ -17,24 +17,53 @@ import Support      from './pages/Support'
 import Referral     from './pages/Referral'
 
 function GlobalHeader() {
+  const t    = useT()
+  const { pathname } = useLocation()
+
+  const info: Record<string, { title: string; sub: string }> = {
+    '/':             { title: t('home_hero_title'),  sub: t('home_hero_sub').split('\n')[0] },
+    '/vpn':          { title: t('nav_vpn'),          sub: t('vpn_sub') },
+    '/vpn/plans':    { title: t('plans_title').replace(/^\S+\s/, ''), sub: '' },
+    '/configs':      { title: t('configs_title').replace(/^\S+\s/, ''), sub: '' },
+    '/instructions': { title: t('instr_title'),      sub: '' },
+    '/esim':         { title: t('esim_title').replace(/^\S+\s/, ''), sub: t('esim_sub') },
+    '/esim/faq':     { title: 'FAQ', sub: '' },
+    '/support':      { title: t('support_title'),    sub: t('support_sub') },
+    '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
+  }
+
+  const page = info[pathname] ?? info['/']
+
   return (
-    <div className="fixed top-0 left-0 right-0 z-[100] flex items-center px-3 h-[52px]"
-      style={{ background: 'var(--tg-theme-bg-color, #fff)', borderBottom: '1px solid var(--card-border)' }}>
+    <div
+      className="fixed top-0 left-0 right-0 z-[100] flex items-start gap-3 px-3 h-[52px] pt-3"
+      style={{ background: 'var(--tg-theme-bg-color, #fff)' }}
+    >
       <img
         src={import.meta.env.BASE_URL + 'logo.png'}
         alt="MAX"
         style={{ width: 32, height: 32, borderRadius: 9, objectFit: 'cover', flexShrink: 0 }}
       />
-      <span style={{
-        marginLeft: 9, fontWeight: 800, fontSize: 16,
-        color: 'var(--tg-theme-text-color)',
-        letterSpacing: '-0.3px', lineHeight: 1,
-      }}>
-        MAX VPN &amp; eSIM
-      </span>
-      <div style={{ marginLeft: 'auto' }}>
-        <LangSwitch />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontWeight: 800, fontSize: 18, lineHeight: 1.2,
+          color: 'var(--tg-theme-text-color)',
+          letterSpacing: '-0.2px',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {page.title}
+        </div>
+        {page.sub && (
+          <div style={{
+            fontSize: 12, lineHeight: 1.2, marginTop: 1,
+            color: 'var(--tg-theme-hint-color)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {page.sub}
+          </div>
+        )}
       </div>
+      <LangSwitch />
     </div>
   )
 }

@@ -49,14 +49,6 @@ export default function Referral() {
   return (
     <div className="page" style={{ gap: 12 }}>
 
-      {/* Header */}
-      <div className="px-1 pt-1.5 pb-0.5">
-        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">{t('ref_title')}</div>
-        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">
-          {t('ref_sub')}{' '}
-          <span className="text-[var(--tg-theme-text-color)] font-semibold">{t('ref_sub2')}</span>
-        </div>
-      </div>
 
       {/* How it works */}
       <span className="section-title">{t('ref_how_title')}</span>

@@ -48,11 +48,6 @@ export default function ESim() {
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
 
-      <div className="px-1 pt-1.5 pb-0.5">
-        <div className="text-2xl font-extrabold text-[var(--tg-theme-text-color)] mb-1">eSIM</div>
-        <div className="text-[13px] text-[var(--tg-theme-hint-color)]">{t('esim_sub')}</div>
-      </div>
-
       <div className="flex gap-2">
         <button
           onClick={() => setTab('ru')}
