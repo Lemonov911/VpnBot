@@ -70,23 +70,6 @@ export default function Home() {
     <>
       <div className="page gap-3">
 
-        {/* ── Header ── */}
-        <div className="flex items-center gap-3 pt-1.5 pb-0.5">
-          <img
-            src={import.meta.env.BASE_URL + 'logo.png'}
-            alt="MAX"
-            className="w-10 h-10 rounded-[11px] shrink-0 object-cover"
-          />
-          <div>
-            <div className="font-extrabold text-[20px] text-[var(--tg-theme-text-color)] tracking-[-0.3px] leading-[1.2]">
-              {t('home_hero_title')}
-            </div>
-            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
-              {t('home_hero_sub').split('\n')[0]}
-            </div>
-          </div>
-        </div>
-
         {/* ── Service cards ── */}
         <div className="grid grid-cols-2 gap-2.5">
 

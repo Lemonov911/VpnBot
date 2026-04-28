@@ -42,7 +42,8 @@ body::before {
 
 /* ── Page layout ───────────────────────────────────── */
 .page {
-  @apply relative z-1 flex flex-col gap-2 min-h-dvh px-3 pt-0;
+  @apply relative z-1 flex flex-col gap-2 min-h-dvh px-3;
+  padding-top: 60px;
   padding-bottom: calc(env(safe-area-inset-bottom) + 96px);
 }
 
