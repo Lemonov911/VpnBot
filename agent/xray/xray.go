@@ -62,6 +62,7 @@ type vlessSettings struct {
 
 type vlessClient struct {
 	ID    string `json:"id"`
+	Flow  string `json:"flow,omitempty"`
 	Level int    `json:"level"`
 	Email string `json:"email"`
 }
@@ -139,6 +140,7 @@ func (m *Manager) AddUser(label string) (*VLESSUser, error) {
 
 	settings.Clients = append(settings.Clients, vlessClient{
 		ID:    newUUID,
+		Flow:  "xtls-rprx-vision",
 		Level: 0,
 		Email: email,
 	})
@@ -194,6 +196,7 @@ func (m *Manager) AddUserWithUUID(existingUUID, email string) (*VLESSUser, error
 
 	settings.Clients = append(settings.Clients, vlessClient{
 		ID:    existingUUID,
+		Flow:  "xtls-rprx-vision",
 		Level: 0,
 		Email: email,
 	})
