@@ -76,6 +76,13 @@ export default function PaymentSheet({
         >
           {method === 'stars' ? `${t('pay_pay_btn')} ${plan.stars} ⭐` : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
+        <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--tg-theme-hint-color)', margin: '8px 0 0', lineHeight: 1.5 }}>
+          {t('nav_home') === 'Home' ? 'By tapping Pay you agree to the ' : 'Нажимая «Оплатить», вы принимаете '}
+          <a href="/oferta.pdf" target="_blank" rel="noreferrer"
+            style={{ color: 'var(--tg-theme-link-color, #2481cc)', textDecoration: 'none' }}>
+            {t('nav_home') === 'Home' ? 'terms of service' : 'условия оферты'}
+          </a>
+        </p>
       </div>
     </>
   )
