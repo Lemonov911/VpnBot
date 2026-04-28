@@ -297,25 +297,33 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         server = servers[0]
         server_id = server["id"]
 
+    if not server.get("agent_url") or not server.get("agent_token"):
+        logger.error("Server %s has no agent_url/agent_token", server.get("name", server["id"]))
+        return web.json_response({"error": "Сервер не настроен (нет агента)"}, status=503)
+
     peer_name = f"tg{user['id']}_{config_id}"
 
-    try:
-        from services.vpn import create_config
-        config_bytes = await create_config(
-            config_id=config_id,
-            user_id=user["id"],
-            server_ip=server["host"],
-            server_user=server.get("user", "root"),
-            server_password=server.get("password"),
-            server_key_path=server.get("key_path"),
-        )
-        if config_bytes is None:
-            return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
-    except Exception as e:
-        logger.error("Activate slot #%d on server %s: %s", config_id, server["host"], e)
-        return web.json_response({"error": "Ошибка SSH"}, status=503)
+    from services.vpnctl_client import provision_peer, VpnctlError
 
-    await activate_config_slot(config_id, peer_name, config_bytes.decode(), server_id)
+    try:
+        result = await provision_peer(server, peer_name, config["protocol"])
+    except VpnctlError as e:
+        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
+    except Exception as e:
+        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        return web.json_response({"error": "Сервер недоступен"}, status=503)
+
+    config_data = result.wg_config if config["protocol"] == "awg" else result.vless_url
+    if not config_data:
+        return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
+
+    wg_pubkey = result.public_key if config["protocol"] == "awg" else None
+    vless_uuid = result.public_key if config["protocol"] == "vless" else None
+    await activate_config_slot(
+        config_id, peer_name, config_data, server_id,
+        wg_pubkey=wg_pubkey, assigned_ip=result.assigned_ip or None, vless_uuid=vless_uuid,
+    )
     logger.info("Слот #%d активирован на %s (%s)", config_id, server["name"], peer_name)
     return web.json_response({"ok": True})
 
@@ -335,11 +343,13 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
     if config["status"] != "active":
         return web.json_response({"error": "Слот не активен"}, status=400)
 
-    # Удаляем пир с сервера (best-effort — не падаем при ошибке SSH)
-    if config.get("peer_name") and config["protocol"] == "awg":
+    # Удаляем пир с сервера через vpnctl (best-effort)
+    if config.get("peer_name") and config.get("server_id"):
         try:
-            from services.vpn import remove_vpn_user
-            await remove_vpn_user(config["peer_name"])
+            srv = await get_server_by_id(config["server_id"])
+            if srv:
+                from services.vpnctl_client import revoke_peer
+                await revoke_peer(srv, config.get("wg_pubkey"), config.get("vless_uuid"), config["protocol"])
         except Exception as e:
             logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e)
 

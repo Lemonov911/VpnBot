@@ -345,14 +345,18 @@ async def create_config_record(subscription_id, user_id,
 
 
 async def activate_config_slot(config_id: int, peer_name: str,
-                                config_data: str, server_id: int | None = None):
+                                config_data: str, server_id: int | None = None,
+                                wg_pubkey: str | None = None,
+                                assigned_ip: str | None = None,
+                                vless_uuid: str | None = None):
     """Переводит слот empty → active, записывает конфиг и сервер."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """UPDATE configs
-               SET peer_name=?, config_data=?, server_id=?, status='active'
+               SET peer_name=?, config_data=?, server_id=?, wg_pubkey=?,
+                   assigned_ip=?, vless_uuid=?, status='active'
                WHERE id=?""",
-            (peer_name, config_data, server_id, config_id),
+            (peer_name, config_data, server_id, wg_pubkey, assigned_ip, vless_uuid, config_id),
         )
         await db.commit()
 
