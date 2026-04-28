@@ -51,13 +51,24 @@ export function createVpnInvoiceCrypto(
 }
 
 export interface VpnConfig {
-  id:         number
-  protocol:   'awg' | 'vless'
-  peer_name:  string | null
-  status:     string
-  has_config: boolean   // есть ли реальные данные конфига (не mock)
-  plan:       string
-  expires_at: string
+  id:          number
+  protocol:    'awg' | 'vless'
+  peer_name:   string | null
+  label:       string | null
+  status:      string
+  has_config:  boolean
+  assigned_ip: string
+  rx_bytes:    number
+  tx_bytes:    number
+  rx_human:    string
+  tx_human:    string
+  last_seen:   string | null
+  plan:        string
+  expires_at:  string
+  sub_status:  string
+  server_name: string
+  server_flag: string
+  server_city: string
 }
 
 export function getUserConfigs(): Promise<VpnConfig[]> {

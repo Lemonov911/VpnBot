@@ -42,9 +42,10 @@ export default async function Dashboard() {
           <div className="text-xl font-extrabold tracking-tight">MAX VPN &amp; eSIM</div>
           <div className="text-xs text-neutral-500 mt-0.5">Привет, {session.username}</div>
         </div>
-        <a href="/logout" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">
-          Выйти
-        </a>
+        <div className="flex gap-4 items-center">
+          <a href="/admin/servers" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Серверы</a>
+          <a href="/logout" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Выйти</a>
+        </div>
       </div>
 
       {/* Stats */}

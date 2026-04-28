@@ -34,11 +34,16 @@ from services.database import (
     has_active_subscription,
     change_subscription_plan,
     add_referral_bonus,
+    get_best_server,
+    save_peer_to_config,
+    update_server_peer_count,
+    record_payment,
 )
 import aiosqlite as _aiosqlite
 from pathlib import Path as _Path
 _DB_PATH = _Path(__file__).parent.parent / "bot.db"
 from services.payments import stars_invoice_kwargs
+from services.vpnctl_client import provision_peer, VpnctlError
 import services.esim_api as esim_api
 
 logger = logging.getLogger(__name__)
@@ -247,30 +252,79 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     awg_slots   = plan.get("awg_slots", 1)
     vless_slots = plan.get("vless_slots", 0)
 
-    # Создаём пустые слоты (без SSH — пользователь активирует сам в мини-апп)
-    for _ in range(awg_slots):
-        await create_config_record(
-            subscription_id=sub_id,
-            user_id=user_id,
-            protocol="awg",
-        )
-    for _ in range(vless_slots):
-        await create_config_record(
-            subscription_id=sub_id,
-            user_id=user_id,
-            protocol="vless",
-        )
+    # Записываем платёж в историю
+    await record_payment(
+        user_id=user_id,
+        subscription_id=sub_id,
+        method="stars",
+        stars=payment.total_amount,
+        tx_id=payment_id,
+    )
 
-    slots_desc = f"{awg_slots} AWG"
+    # Создаём реальные пиры через vpnctl (или пустые слоты если агент недоступен)
+    created_wg    = 0
+    created_vless = 0
+
+    for i in range(awg_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="awg")
+        server = await get_best_server("awg")
+        if server:
+            try:
+                label = f"user_{user_id}_wg_{i+1}"
+                peer = await provision_peer(server, label, "awg")
+                await save_peer_to_config(
+                    config_id, server["id"], peer.public_key,
+                    peer.assigned_ip, peer.wg_config, label,
+                )
+                await update_server_peer_count(server["id"], +1)
+                created_wg += 1
+                # Шлём .conf файл сразу
+                await message.answer_document(
+                    BufferedInputFile(
+                        peer.wg_config.encode(),
+                        filename=f"maxvpn_{i+1}.conf",
+                    ),
+                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {server.get('flag','')} {server.get('name','')}\nIP: {peer.assigned_ip}",
+                    parse_mode="HTML",
+                )
+            except VpnctlError as e:
+                logger.warning("vpnctl WG peer error: %s", e)
+
+    for i in range(vless_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="vless")
+        server = await get_best_server("vless")
+        if server:
+            try:
+                label = f"user_{user_id}_vless_{i+1}"
+                peer = await provision_peer(server, label, "vless")
+                await save_peer_to_config(
+                    config_id, server["id"], peer.public_key,
+                    "", peer.vless_url, label,
+                )
+                await update_server_peer_count(server["id"], +1)
+                created_vless += 1
+            except VpnctlError as e:
+                logger.warning("vpnctl VLess peer error: %s", e)
+
+    slots_desc = f"{awg_slots} WireGuard"
     if vless_slots:
-        slots_desc += f" + {vless_slots} VLESS"
+        slots_desc += f" + {vless_slots} VLess"
+
+    delivered = created_wg + created_vless
+    total     = awg_slots + vless_slots
+
+    if delivered == total:
+        note = "Конфиги отправлены выше 👆"
+    elif delivered > 0:
+        note = f"Часть конфигов ({delivered}/{total}) готова, остальные появятся в мини-апп позже."
+    else:
+        note = "Конфиги появятся в мини-апп → <b>Мои конфиги</b> как только серверы будут готовы."
 
     await message.answer(
         f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
         f"📅 Действует до: <b>{expiry_str}</b>\n"
         f"🔌 Слотов: <b>{slots_desc}</b>\n\n"
-        "Открой мини-апп → <b>Мои конфиги</b> — там ты увидишь свои слоты "
-        "и сможешь добавить конфиг на каждое устройство.",
+        f"{note}",
         parse_mode="HTML",
     )
 

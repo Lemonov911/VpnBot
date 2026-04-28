@@ -1,10 +1,15 @@
+import base64
+import hashlib
+import hmac
+import json
+import time
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
-from config import ADMIN_ID
+from config import ADMIN_ID, BOT_TOKEN, WEBAPP_URL
 from services.database import (
     get_stats,
     create_order,
@@ -18,9 +23,20 @@ from handlers.vpn import VPN_PLANS
 
 router = Router()
 
+ADMIN_IDS = {ADMIN_ID, 594024866}
 
 def _is_admin(user_id: int) -> bool:
-    return bool(ADMIN_ID) and user_id == ADMIN_ID
+    return user_id in ADMIN_IDS
+
+
+def _make_admin_token(user_id: int, username: str) -> str:
+    """Генерирует одноразовый токен для входа в админку (живёт 5 минут)."""
+    payload = base64.b64encode(
+        json.dumps({"userId": user_id, "username": username, "exp": int(time.time()) + 300}).encode()
+    ).decode()
+    sig = hmac.new(BOT_TOKEN.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    raw = f"{payload}.{sig}"
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 @router.message(F.reply_to_message, F.from_user.id == ADMIN_ID)
@@ -49,17 +65,17 @@ async def cmd_admin(message: Message):
     if not _is_admin(message.from_user.id):
         return
 
-    total_users, total_orders, total_stars = await get_stats()
+    user = message.from_user
+    token = _make_admin_token(user.id, user.username or user.first_name)
+    admin_url = f"https://maxvpn.shop/admin/api/auth/token?t={token}"
+
     await message.answer(
-        "📊 <b>Статистика бота</b>\n\n"
-        f"👤 Пользователей: <b>{total_users}</b>\n"
-        f"🛒 Выполненных заказов: <b>{total_orders}</b>\n"
-        f"⭐️ Заработано Stars: <b>{total_stars}</b>\n\n"
-        "Команды:\n"
-        "/gift &lt;план&gt; — бесплатный VPN себе\n"
-        "/send &lt;user_id&gt; &lt;план&gt; — подарить юзеру\n\n"
-        "Планы: <code>vpn_start</code> · <code>vpn_popular</code> · <code>vpn_pro</code> · <code>vpn_family</code>",
+        "🔐 <b>Вход в админ-панель</b>\n\n"
+        "Ссылка действует <b>5 минут</b>. Не передавай её никому.",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="Открыть панель →", url=admin_url)
+        ]])
     )
 
 

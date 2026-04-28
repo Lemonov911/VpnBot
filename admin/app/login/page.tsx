@@ -1,40 +1,10 @@
 'use client'
-import { useEffect, useRef, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-
-const BOT_USERNAME = process.env.NEXT_PUBLIC_BOT_USERNAME ?? 'MaxVpnBot'
+import { Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 function LoginForm() {
-  const router = useRouter()
   const params = useSearchParams()
-  const ref    = useRef<HTMLDivElement>(null)
   const error  = params.get('error')
-
-  useEffect(() => {
-    if (!ref.current) return
-    const script = document.createElement('script')
-    script.src = 'https://telegram.org/js/telegram-widget.js?22'
-    script.setAttribute('data-telegram-login', BOT_USERNAME)
-    script.setAttribute('data-size', 'large')
-    script.setAttribute('data-radius', '10')
-    script.setAttribute('data-onauth', 'onTelegramAuth(user)')
-    script.setAttribute('data-request-access', 'write')
-    script.async = true
-    ref.current.appendChild(script)
-
-    ;(window as any).onTelegramAuth = async (user: Record<string, string>) => {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(user),
-      })
-      if (res.ok) router.replace('/')
-      else {
-        const d = await res.json()
-        alert(d.error ?? 'Ошибка авторизации')
-      }
-    }
-  }, [router])
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] flex items-center justify-center">
@@ -49,10 +19,37 @@ function LoginForm() {
             Нет доступа. Обратитесь к владельцу.
           </div>
         )}
+        {error === 'expired' && (
+          <div className="text-sm text-yellow-400 bg-yellow-400/10 border border-yellow-400/20 rounded-lg px-4 py-2">
+            Ссылка устарела. Запросите новую у бота.
+          </div>
+        )}
 
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-8 space-y-4">
-          <div className="text-neutral-400 text-sm">Войдите через Telegram</div>
-          <div ref={ref} className="flex justify-center" />
+        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-8 space-y-5">
+          <div className="text-3xl">🤖</div>
+          <div className="space-y-2">
+            <div className="text-white font-semibold">Войти через бота</div>
+            <div className="text-neutral-400 text-sm leading-relaxed">
+              Напишите <span className="text-white font-mono bg-neutral-800 px-1.5 py-0.5 rounded">/admin</span> боту{' '}
+              <a
+                href="https://t.me/MaxVpnBot"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[#2481cc] hover:underline"
+              >
+                @MaxVpnBot
+              </a>{' '}
+              — он пришлёт ссылку для входа
+            </div>
+          </div>
+          <a
+            href="https://t.me/MaxVpnBot?start=admin"
+            target="_blank"
+            rel="noreferrer"
+            className="block w-full py-3 rounded-xl bg-[#2481cc] hover:bg-[#1a6db3] transition-colors text-white font-semibold text-sm"
+          >
+            Открыть @MaxVpnBot
+          </a>
         </div>
       </div>
     </div>

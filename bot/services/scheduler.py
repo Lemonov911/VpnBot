@@ -17,18 +17,19 @@ import logging
 from aiogram import Bot
 
 from services.database import (
-    # Новые таблицы
     get_expired_subscriptions,
     get_configs_for_subscription,
     mark_subscription_expired,
     revoke_config,
+    reset_config_slot,
     get_subscriptions_expiring_soon,
     mark_reminded,
-    # Старая таблица (backward compat)
     get_expired_orders,
     mark_order_expired,
+    get_server_by_id,
+    update_server_peer_count,
 )
-from services.vpn import remove_vpn_user
+from services.vpnctl_client import suspend_peer
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +60,20 @@ async def _process_expired_subscriptions(bot: Bot):
         logger.info("Подписка #%d: отзываем %d конфиг(ов)", sub_id, len(configs))
 
         for cfg in configs:
-            # Удаляем AWG-пир с сервера (best-effort — не падаем при ошибке)
-            if cfg.get("peer_name") and cfg["protocol"] == "awg":
-                await remove_vpn_user(cfg["peer_name"])
+            # Приостанавливаем пир через vpnctl (suspend, не удаляем — можно возобновить)
+            if cfg.get("server_id"):
+                server = await get_server_by_id(cfg["server_id"])
+                if server:
+                    await suspend_peer(
+                        server,
+                        wg_pubkey=cfg.get("wg_pubkey"),
+                        vless_uuid=cfg.get("vless_uuid"),
+                        protocol=cfg["protocol"],
+                    )
+                    await update_server_peer_count(cfg["server_id"], -1)
 
-            # VLESS — пока заглушка (панель не настроена)
-            # if cfg["protocol"] == "vless" and cfg.get("vless_uuid"):
-            #     await vless.remove_client(cfg["vless_uuid"])
-
-            await revoke_config(cfg["id"])
-            logger.info("Конфиг #%d отозван (peer=%s)", cfg["id"], cfg.get("peer_name"))
+            await reset_config_slot(cfg["id"])
+            logger.info("Конфиг #%d suspended (sub=%d)", cfg["id"], sub_id)
 
         await mark_subscription_expired(sub_id)
         logger.info("Подписка #%d помечена как expired", sub_id)
@@ -97,7 +102,7 @@ async def _process_expired_orders(bot: Bot):
         vpn_username = order["vpn_username"]
 
         if vpn_username:
-            await remove_vpn_user(vpn_username)
+            pass  # legacy SSH — больше не используем
 
         await mark_order_expired(order_id)
         logger.info("Order #%d истёк, пир удалён: %s", order_id, vpn_username)

@@ -29,7 +29,7 @@ from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL
 from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
-    get_user_configs, get_config_by_id, activate_config_slot,
+    get_user_configs, get_user_configs_full, get_config_by_id, activate_config_slot,
     reset_config_slot, get_servers_by_protocol, get_server_by_id,
     get_active_subscription, change_subscription_plan, schedule_plan_change,
     has_active_subscription, create_support_ticket, update_ticket_admin_msg,
@@ -121,13 +121,48 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
 
 
 async def handle_vpn_configs(request: web.Request) -> web.Response:
-    """Возвращает список активных конфигов пользователя."""
+    """Возвращает список конфигов пользователя с данными сервера и трафиком."""
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
 
-    configs = await get_user_configs(user["id"])
-    return web.json_response(configs)
+    configs = await get_user_configs_full(user["id"])
+
+    # Форматируем трафик и убираем чувствительные поля
+    result = []
+    for c in configs:
+        result.append({
+            "id":           c["id"],
+            "protocol":     c["protocol"],
+            "label":        c["label"] or c["peer_name"] or f"Устройство #{c['slot_num']}",
+            "slot_num":     c["slot_num"],
+            "status":       c["status"],
+            "has_config":   bool(c["config_data"]),
+            "assigned_ip":  c.get("assigned_ip", ""),
+            "rx_bytes":     c.get("rx_bytes", 0),
+            "tx_bytes":     c.get("tx_bytes", 0),
+            "rx_human":     _fmt_bytes(c.get("rx_bytes", 0)),
+            "tx_human":     _fmt_bytes(c.get("tx_bytes", 0)),
+            "last_seen":    c.get("last_seen"),
+            "plan":         c["plan"],
+            "expires_at":   c["expires_at"],
+            "sub_status":   c["sub_status"],
+            "server_name":  c.get("server_name") or "",
+            "server_flag":  c.get("flag") or "🌍",
+            "server_city":  c.get("city") or "",
+        })
+    return web.json_response(result)
+
+
+def _fmt_bytes(b: int) -> str:
+    if b < 1024:
+        return f"{b} B"
+    elif b < 1024 ** 2:
+        return f"{b/1024:.1f} KB"
+    elif b < 1024 ** 3:
+        return f"{b/1024**2:.1f} MB"
+    else:
+        return f"{b/1024**3:.2f} GB"
 
 
 async def handle_vpn_config_download(request: web.Request) -> web.Response:

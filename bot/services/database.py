@@ -109,13 +109,52 @@ async def _migrate(db: aiosqlite.Connection):
         if col not in cols:
             await db.execute(f"ALTER TABLE orders ADD COLUMN {col} {defn}")
 
-    # servers — добавляем name/location если их нет (для старых БД)
+    # servers — agent fields + metadata
     async with db.execute("PRAGMA table_info(servers)") as cur:
         cols = {row[1] for row in await cur.fetchall()}
-    for col, defn in [("name", "TEXT NOT NULL DEFAULT 'Сервер'"),
-                      ("location", "TEXT NOT NULL DEFAULT '🌍'")]:
+    for col, defn in [
+        ("name",         "TEXT NOT NULL DEFAULT 'Сервер'"),
+        ("location",     "TEXT NOT NULL DEFAULT '🌍'"),
+        ("flag",         "TEXT NOT NULL DEFAULT '🌍'"),
+        ("city",         "TEXT NOT NULL DEFAULT ''"),
+        ("agent_url",    "TEXT"),
+        ("agent_token",  "TEXT"),
+        ("wg_pubkey",    "TEXT"),
+        ("capacity",     "INTEGER NOT NULL DEFAULT 100"),
+        ("active_peers", "INTEGER NOT NULL DEFAULT 0"),
+    ]:
         if col not in cols:
             await db.execute(f"ALTER TABLE servers ADD COLUMN {col} {defn}")
+
+    # configs — peer tracking fields
+    async with db.execute("PRAGMA table_info(configs)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    for col, defn in [
+        ("wg_pubkey",   "TEXT"),
+        ("assigned_ip", "TEXT"),
+        ("rx_bytes",    "INTEGER NOT NULL DEFAULT 0"),
+        ("tx_bytes",    "INTEGER NOT NULL DEFAULT 0"),
+        ("last_seen",   "TIMESTAMP"),
+        ("label",       "TEXT"),
+    ]:
+        if col not in cols:
+            await db.execute(f"ALTER TABLE configs ADD COLUMN {col} {defn}")
+
+    # payments table
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL,
+            subscription_id INTEGER,
+            method          TEXT NOT NULL,
+            amount_usd      REAL,
+            stars           INTEGER,
+            tx_id           TEXT,
+            status          TEXT NOT NULL DEFAULT 'completed',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
 
     # subscriptions — pending_plan, expiry reminders
     async with db.execute("PRAGMA table_info(subscriptions)") as cur:
@@ -544,6 +583,99 @@ async def get_referral_stats(referrer_id: int) -> dict:
             row = await cur.fetchone()
             bonus_days = row[0] if row else 0
     return {"invited": invited, "converted": converted, "bonus_days": bonus_days}
+
+
+async def get_best_server(protocol: str) -> dict | None:
+    """Сервер с наименьшей загрузкой для данного протокола."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        proto_field = "awg" if protocol == "awg" else "vless"
+        async with db.execute("""
+            SELECT * FROM servers
+            WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
+            ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
+            LIMIT 1
+        """, (proto_field,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def update_server_peer_count(server_id: int, delta: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE servers SET active_peers=MAX(0, active_peers+?) WHERE id=?",
+            (delta, server_id),
+        )
+        await db.commit()
+
+
+async def save_peer_to_config(config_id: int, server_id: int, wg_pubkey: str,
+                               assigned_ip: str, config_data: str, label: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE configs SET
+                server_id=?, wg_pubkey=?, assigned_ip=?,
+                config_data=?, peer_name=?, label=?, status='active'
+            WHERE id=?
+        """, (server_id, wg_pubkey, assigned_ip, config_data, label, label, config_id))
+        await db.commit()
+
+
+async def update_config_traffic(config_id: int, rx: int, tx: int, last_seen: str | None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE configs SET rx_bytes=?, tx_bytes=?, last_seen=? WHERE id=?",
+            (rx, tx, last_seen, config_id),
+        )
+        await db.commit()
+
+
+async def get_user_configs_full(user_id: int) -> list[dict]:
+    """Конфиги пользователя с данными сервера."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT
+                c.id, c.subscription_id, c.protocol, c.peer_name, c.label,
+                c.status, c.config_data, c.vless_uuid, c.wg_pubkey,
+                c.assigned_ip, c.rx_bytes, c.tx_bytes, c.last_seen,
+                s.plan, s.expires_at, s.status AS sub_status,
+                srv.name AS server_name, srv.flag, srv.city,
+                srv.host AS server_host,
+                ROW_NUMBER() OVER (
+                    PARTITION BY c.subscription_id, c.protocol ORDER BY c.id
+                ) AS slot_num
+            FROM configs c
+            JOIN subscriptions s ON c.subscription_id = s.id
+            LEFT JOIN servers srv ON c.server_id = srv.id
+            WHERE c.user_id=?
+              AND s.status='active'
+            ORDER BY s.created_at DESC, c.protocol DESC, c.id ASC
+        """, (user_id,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def record_payment(user_id: int, subscription_id: int, method: str,
+                          stars: int = 0, amount_usd: float = 0.0, tx_id: str = ""):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO payments (user_id, subscription_id, method, stars, amount_usd, tx_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, subscription_id, method, stars, amount_usd, tx_id))
+        await db.commit()
+
+
+async def get_configs_by_server(server_id: int) -> list[dict]:
+    """Все активные конфиги на сервере (для suspend-all при истечении)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT c.id, c.wg_pubkey, c.vless_uuid, c.protocol,
+                   c.subscription_id, c.user_id
+            FROM configs c
+            WHERE c.server_id=? AND c.status='active'
+        """, (server_id,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def add_referral_bonus(referrer_id: int, days: int):

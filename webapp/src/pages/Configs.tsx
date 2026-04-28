@@ -226,13 +226,18 @@ function SlotCard({
 
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">
-              {label} · #{slot.slot_num}
+              {slot.server_flag && !isEmpty ? `${slot.server_flag} ` : ''}{label} · #{slot.slot_num}
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {isEmpty
                 ? (slot.protocol === 'vless' ? `🚧 ${t('configs_soon')}` : t('configs_not_activated'))
-                : (slot.peer_name ?? `config_${slot.id}`)}
+                : slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}
             </div>
+            {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
+              <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5 opacity-70">
+                ↓ {slot.rx_human} · ↑ {slot.tx_human}
+              </div>
+            )}
           </div>
 
           {slot.protocol === 'vless' && isEmpty ? (

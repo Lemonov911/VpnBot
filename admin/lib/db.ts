@@ -52,6 +52,15 @@ export function userFull(userId: number) {
   return { user, subs, tickets }
 }
 
+export function allServers() {
+  return db().prepare(`
+    SELECT id, name, flag, city, host, agent_url, protocol,
+           capacity, active_peers, status, is_active, created_at,
+           wg_pubkey
+    FROM servers ORDER BY created_at DESC
+  `).all()
+}
+
 export function searchUsers(query: string) {
   const q = `%${query}%`
   return db().prepare(`
