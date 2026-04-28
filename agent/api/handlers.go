@@ -180,7 +180,7 @@ func (s *Server) handleAddVLESSUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vlessURL := fmt.Sprintf("vless://%s@%s?encryption=none&security=tls&type=tcp&flow=xtls-rprx-vision&sni=maxvpn.shop#MaxVPN",
+	vlessURL := fmt.Sprintf("vless://%s@%s?encryption=none&security=tls&type=tcp&flow=xtls-rprx-vision&sni=maxvpn.shop&allowInsecure=1#MaxVPN",
 		user.UUID, s.vlessAddr)
 
 	jsonOK(w, addVLESSResp{
