@@ -1,5 +1,0 @@
-aiogram>=3.20
-aiohttp>=3.9
-openai>=1.50
-feedparser>=6.0
-python-dotenv>=1.0
