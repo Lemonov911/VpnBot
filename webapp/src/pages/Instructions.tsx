@@ -138,17 +138,6 @@ export default function Instructions() {
         {t('instr_vless_desc')}
       </div>
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
-        <div className="py-[13px] px-4 flex items-center gap-[14px]">
-          <div className="w-10 h-10 rounded-[10px] shrink-0 bg-purple flex items-center justify-center">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <div className="flex-1">
-            <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{t('instr_vless_soon')}</div>
-            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{t('instr_vless_soon_sub')}</div>
-          </div>
-        </div>
       </div>
       <AccordionGroup items={VLESS_INSTRUCTIONS} accentColor="bg-purple" t={t} />
     </div>

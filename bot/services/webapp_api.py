@@ -150,6 +150,7 @@ async def handle_vpn_configs(request: web.Request) -> web.Response:
             "server_name":  c.get("server_name") or "",
             "server_flag":  c.get("flag") or "🌍",
             "server_city":  c.get("city") or "",
+            "vless_url":    c.get("config_data") if c["protocol"] == "vless" else None,
         })
     return web.json_response(result)
 
@@ -278,9 +279,6 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
 
     if config["status"] != "empty":
         return web.json_response({"error": "Слот уже активен"}, status=400)
-
-    if config["protocol"] == "vless":
-        return web.json_response({"error": "VLESS будет доступен в ближайшее время"}, status=400)
 
     body = await request.json()
     server_id = body.get("server_id")

@@ -69,6 +69,7 @@ export interface VpnConfig {
   server_name: string
   server_flag: string
   server_city: string
+  vless_url:   string | null
 }
 
 export function getUserConfigs(): Promise<VpnConfig[]> {

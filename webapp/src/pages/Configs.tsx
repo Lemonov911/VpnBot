@@ -169,9 +169,9 @@ function SlotCard({
   const [showQr,         setShowQr]         = useState(false)
   const [servers,        setServers]        = useState<VpnServer[]>([])
   const [loadingServers, setLoadingServers] = useState(false)
+  const [copied,         setCopied]          = useState(false)
 
   const handleAddClick = async () => {
-    if (slot.protocol === 'vless') return
     setLoadingServers(true)
     try {
       const list = await getVpnServers(slot.protocol)
@@ -230,7 +230,7 @@ function SlotCard({
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {isEmpty
-                ? (slot.protocol === 'vless' ? `🚧 ${t('configs_soon')}` : t('configs_not_activated'))
+                ? t('configs_not_activated')
                 : slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}
             </div>
             {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
@@ -240,9 +240,7 @@ function SlotCard({
             )}
           </div>
 
-          {slot.protocol === 'vless' && isEmpty ? (
-            <span className="text-[11px] text-[var(--tg-theme-hint-color)] font-medium">{t('configs_soon')}</span>
-          ) : isEmpty ? (
+          {isEmpty ? (
             <button
               onClick={handleAddClick}
               disabled={loadingServers}
@@ -252,6 +250,30 @@ function SlotCard({
             </button>
           ) : revoking ? (
             <span className="text-xs text-[var(--tg-theme-hint-color)]">{t('configs_revoking')}</span>
+          ) : slot.protocol === 'vless' ? (
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  WebApp.HapticFeedback.impactOccurred('light')
+                  navigator.clipboard.writeText(slot.vless_url || '').then(() => {
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 1500)
+                  })
+                }}
+                className={`${bg} text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none flex items-center gap-[5px]`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                {copied ? '✓' : t('configs_copy')}
+              </button>
+              <button
+                onClick={handleRevoke}
+                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
           ) : (
             <div className="flex gap-2 shrink-0">
               <button
