@@ -56,38 +56,27 @@ VPN_PLANS: dict[str, dict] = {
     # ── v2 тарифы по скорости (Reality only) ──
     # speed_mbps — гарантированная скорость, soft_cap_gb — мягкий лимит трафика,
     # после которого скорость падает до throttle_mbps до конца месяца.
-    "vpn_solo": {
-        "name":           "Solo",
-        "stars":          250,            # ≈ 350 ₽
-        "duration_days":  30,
-        "awg_slots":      0,
-        "vless_slots":    2,              # 2 устройства
-        "speed_mbps":     30,
-        "soft_cap_gb":    200,
-        "throttle_mbps":  3,
-        "description":    "1 чел в 4K + кто-то параллельно в Telegram",
-    },
-    "vpn_family_v2": {
-        "name":           "Family",
-        "stars":          430,            # ≈ 600 ₽
+    "vpn_base": {
+        "name":           "База",
+        "stars":          145,            # ≈ 200 ₽
         "duration_days":  30,
         "awg_slots":      0,
         "vless_slots":    5,
-        "speed_mbps":     50,
-        "soft_cap_gb":    600,
-        "throttle_mbps":  8,
-        "description":    "2 человека одновременно в 4K",
+        "speed_mbps":     60,
+        "soft_cap_gb":    500,
+        "throttle_mbps":  5,
+        "description":    "2 человека в 4K + телефоны в фоне",
     },
-    "vpn_pro_v2": {
-        "name":           "Pro",
-        "stars":          800,            # ≈ 1100 ₽
+    "vpn_max": {
+        "name":           "Макс",
+        "stars":          360,            # ≈ 500 ₽
         "duration_days":  30,
         "awg_slots":      0,
         "vless_slots":    10,
-        "speed_mbps":     100,
-        "soft_cap_gb":    1500,
-        "throttle_mbps":  25,
-        "description":    "Семья 5+ устройств, торренты, стриминг",
+        "speed_mbps":     120,
+        "soft_cap_gb":    1000,
+        "throttle_mbps":  15,
+        "description":    "Семья 3+ чел / стриминг + торренты",
     },
 
     # ── Legacy тарифы (для уже-купивших, в UI скрыты) ──
@@ -101,11 +90,10 @@ VPN_PLANS: dict[str, dict] = {
 }
 
 PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🟢 Solo — 250 ⭐️ · 30 Mbps · 2 устройства",       callback_data="vpn:buy:vpn_solo")],
-    [InlineKeyboardButton(text="⭐ Family — 430 ⭐️ · 50 Mbps · 5 устройств",     callback_data="vpn:buy:vpn_family_v2")],
-    [InlineKeyboardButton(text="💎 Pro — 800 ⭐️ · 100 Mbps · 10 устройств",       callback_data="vpn:buy:vpn_pro_v2")],
-    [InlineKeyboardButton(text="📖 Как настроить?",                                 callback_data="vpn:howto")],
-    [InlineKeyboardButton(text="◀️ Назад",                                          callback_data="menu:start")],
+    [InlineKeyboardButton(text="⭐ База — 145 ⭐️ · 60 Mbps · 5 устройств",     callback_data="vpn:buy:vpn_base")],
+    [InlineKeyboardButton(text="🚀 Макс — 360 ⭐️ · 120 Mbps · 10 устройств",   callback_data="vpn:buy:vpn_max")],
+    [InlineKeyboardButton(text="📖 Как настроить?",                              callback_data="vpn:howto")],
+    [InlineKeyboardButton(text="◀️ Назад",                                       callback_data="menu:start")],
 ])
 
 HOWTO_TEXT = (
@@ -151,10 +139,9 @@ async def show_vpn_menu(callback: CallbackQuery):
         "не палится DPI и ТСПУ\n"
         "Локация: 🇩🇪 Frankfurt\n"
         "Soft-лимит трафика, после — медленнее, но не отключение\n\n"
-        "<b>Тарифы по скорости:</b>\n"
-        "• <b>Solo</b> 30 Mbps — 1 человек, 4K видео\n"
-        "• <b>Family</b> 50 Mbps — 2 человека одновременно в 4K\n"
-        "• <b>Pro</b> 100 Mbps — семья + торренты\n",
+        "<b>Тарифы:</b>\n"
+        "• <b>База</b> 60 Mbps — 2 человека в 4K + телефоны в фоне\n"
+        "• <b>Макс</b> 120 Mbps — семья / стриминг + торренты\n",
         reply_markup=PLANS_KEYBOARD,
         parse_mode="HTML",
     )

@@ -183,6 +183,8 @@ const T = {
     // VPN page extras
     vpn_server_subtitle:  'до 300 Мбит/с',
     vpn_no_data:           'нет данных',
+    vpn_plan_base:         'База',
+    vpn_plan_max:          'Макс',
     vpn_plan_start:        'Старт',
     vpn_plan_popular:      'Популярный',
     vpn_plan_pro:          'Про',
@@ -549,6 +551,8 @@ const T = {
     // VPN page extras
     vpn_server_subtitle:  'up to 300 Mbit/s',
     vpn_no_data:           'no data',
+    vpn_plan_base:         'Base',
+    vpn_plan_max:          'Max',
     vpn_plan_start:        'Starter',
     vpn_plan_popular:      'Popular',
     vpn_plan_pro:          'Pro',

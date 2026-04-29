@@ -7,14 +7,27 @@ export type PayMethod = 'stars' | 'crypto'
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
   awg: number; vless: number; badge?: string
+  // v2: speed-based plans
+  speedMbps?: number
+  softCapGb?: number
+  throttleMbps?: number
+  legacy?: boolean   // hide from default UI but keep callbacks working
 }
 
 export const PLANS: Plan[] = [
-  { key: 'vpn_start',   nameKey: 'vpn_plan_start',   stars: 128, rub: 180, usd: 2, awg: 1, vless: 0 },
-  { key: 'vpn_popular', nameKey: 'vpn_plan_popular', stars: 214, rub: 270, usd: 3, awg: 2, vless: 0, badge: 'hit' },
-  { key: 'vpn_pro',     nameKey: 'vpn_plan_pro',     stars: 342, rub: 450, usd: 5, awg: 3, vless: 1 },
-  { key: 'vpn_family',  nameKey: 'vpn_plan_family',   stars: 513, rub: 640, usd: 7, awg: 7, vless: 1 },
+  // v2 — Reality, по скорости
+  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, awg: 0, vless: 5,  speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, awg: 0, vless: 10, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
+
+  // legacy — оставлены для уже-купивших, в новом UI скрыты
+  { key: 'vpn_start',   nameKey: 'vpn_plan_start',   stars: 128, rub: 180, usd: 2, awg: 1, vless: 0, legacy: true },
+  { key: 'vpn_popular', nameKey: 'vpn_plan_popular', stars: 214, rub: 270, usd: 3, awg: 2, vless: 0, legacy: true },
+  { key: 'vpn_pro',     nameKey: 'vpn_plan_pro',     stars: 342, rub: 450, usd: 5, awg: 3, vless: 1, legacy: true },
+  { key: 'vpn_family',  nameKey: 'vpn_plan_family',  stars: 513, rub: 640, usd: 7, awg: 7, vless: 1, legacy: true },
 ]
+
+// for default UI rendering (purchase / browse)
+export const VISIBLE_PLANS: Plan[] = PLANS.filter(p => !p.legacy)
 
 export default function PaymentSheet({
   plan, onClose, onPay,
@@ -40,8 +53,10 @@ export default function PaymentSheet({
             {t('pay_buy')} «{t(plan.nameKey as never)}»
           </div>
           <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
-            {plan.rub} ₽ {t('pay_per_month')} · {p(plan.awg, { ru: (t('plans_devices' as never) as string).split('|') as [string, string, string], en: ['device', 'devices'] })}
-            {plan.vless > 0 ? ' · TV' : ''}
+            {plan.rub} ₽ {t('pay_per_month')}
+            {plan.speedMbps ? ` · ${plan.speedMbps} Mbps` : ''}
+            {' · '}
+            {p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
           </div>
         </div>
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">

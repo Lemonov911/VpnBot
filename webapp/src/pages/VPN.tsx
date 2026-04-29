@@ -7,9 +7,13 @@ import {
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
 import { useT, usePlural } from '../i18n'
-import PaymentSheet, { PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
+  // v2 — по скорости
+  vpn_base: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+  vpn_max:  { bg: '#af52de', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h7v8l10-12h-7V2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+  // legacy
   vpn_start:   { bg: '#5ac8fa', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
   vpn_popular: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
   vpn_pro:     { bg: '#5856d6', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" fill="#ffffff33" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
@@ -17,6 +21,9 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
 }
 
 const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
+  vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
+  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'shadow-[0_4px_12px_rgba(175,82,222,0.55)]' },
+  // legacy
   vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
   vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
   vpn_pro:     { bg: 'bg-[#5856d6]',   shadow: 'shadow-[0_4px_12px_rgba(88,86,214,0.55)]' },
@@ -74,8 +81,12 @@ export default function VPN() {
   const p   = usePlural()
 
   const PLAN_NAMES: Record<string, string> = {
-    vpn_start: t('vpn_plan_start'), vpn_popular: t('vpn_plan_popular'),
-    vpn_pro: t('vpn_plan_pro'), vpn_family: t('vpn_plan_family'),
+    vpn_base:    t('vpn_plan_base'),
+    vpn_max:     t('vpn_plan_max'),
+    vpn_start:   t('vpn_plan_start'),
+    vpn_popular: t('vpn_plan_popular'),
+    vpn_pro:     t('vpn_plan_pro'),
+    vpn_family:  t('vpn_plan_family'),
   }
 
   const [sub,        setSub]        = useState<Subscription | null | undefined>(undefined)
@@ -147,11 +158,11 @@ export default function VPN() {
             {t('vpn_choose')}
           </div>
 
-          {PLANS.map((plan, i) => {
-            const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_start
-            const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_start
+          {VISIBLE_PLANS.map((plan, i) => {
+            const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
+            const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_base
             const isHit = plan.badge === 'hit'
-            const deviceWord = p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
+            const deviceWord = p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
             return (
               <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
                 isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
@@ -169,7 +180,11 @@ export default function VPN() {
                   <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">
                     <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
                     <span className="opacity-40 mx-1">·</span>
-                    <span className="text-xs">📱 {plan.awg} {deviceWord}{plan.vless > 0 ? ' · 📺 TV' : ''}</span>
+                    <span className="text-xs">
+                      {plan.speedMbps ? <>⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span></> : null}
+                      📱 {plan.vless || plan.awg} {deviceWord}
+                      {!plan.speedMbps && plan.vless > 0 ? ' · 📺 TV' : ''}
+                    </span>
                   </div>
                 </div>
                 <button

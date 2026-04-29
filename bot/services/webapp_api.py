@@ -42,12 +42,10 @@ logger = logging.getLogger(__name__)
 
 VPN_PLANS: dict[str, dict] = {
     # ── v2 тарифы по скорости (Reality) ──
-    "vpn_solo":      {"name": "Solo",   "stars": 250, "rub": "350",  "usd": "3.50", "duration_days": 30,
-                      "awg_slots": 0, "vless_slots": 2,  "speed_mbps": 30,  "soft_cap_gb": 200,  "throttle_mbps": 3},
-    "vpn_family_v2": {"name": "Family", "stars": 430, "rub": "600",  "usd": "6.00", "duration_days": 30,
-                      "awg_slots": 0, "vless_slots": 5,  "speed_mbps": 50,  "soft_cap_gb": 600,  "throttle_mbps": 8},
-    "vpn_pro_v2":    {"name": "Pro",    "stars": 800, "rub": "1100", "usd": "11.00", "duration_days": 30,
-                      "awg_slots": 0, "vless_slots": 10, "speed_mbps": 100, "soft_cap_gb": 1500, "throttle_mbps": 25},
+    "vpn_base": {"name": "База", "stars": 145, "rub": "200", "usd": "2.20", "duration_days": 30,
+                 "awg_slots": 0, "vless_slots": 5,  "speed_mbps": 60,  "soft_cap_gb": 500,  "throttle_mbps": 5},
+    "vpn_max":  {"name": "Макс", "stars": 360, "rub": "500", "usd": "5.50", "duration_days": 30,
+                 "awg_slots": 0, "vless_slots": 10, "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15},
 
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
     "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},

@@ -5,7 +5,7 @@ import {
   createVpnInvoice, createVpnInvoiceCrypto, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
-import PaymentSheet, { PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
 import { useT, usePlural } from '../i18n'
 import type { TKey } from '../i18n'
 
@@ -14,6 +14,10 @@ function calcUpgradePrice(curRub: number, newRub: number, daysLeft: number): num
 }
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
+  // v2 — по скорости
+  vpn_base: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+  vpn_max:  { bg: '#af52de', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h7v8l10-12h-7V2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
+  // legacy
   vpn_start:   { bg: '#5ac8fa', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
   vpn_popular: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
   vpn_pro:     { bg: '#5856d6', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" fill="#ffffff33" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
@@ -21,6 +25,9 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
 }
 
 const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
+  vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
+  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'shadow-[0_4px_12px_rgba(175,82,222,0.55)]' },
+  // legacy
   vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
   vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
   vpn_pro:     { bg: 'bg-[#5856d6]',   shadow: 'shadow-[0_4px_12px_rgba(88,86,214,0.55)]' },
@@ -28,10 +35,12 @@ const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
 }
 
 const PLAN_NAME_KEY: Record<string, TKey> = {
-  vpn_start: 'vpn_plan_start',
+  vpn_base:    'vpn_plan_base',
+  vpn_max:     'vpn_plan_max',
+  vpn_start:   'vpn_plan_start',
   vpn_popular: 'vpn_plan_popular',
-  vpn_pro: 'vpn_plan_pro',
-  vpn_family: 'vpn_plan_family',
+  vpn_pro:     'vpn_plan_pro',
+  vpn_family:  'vpn_plan_family',
 }
 
 function PlanCard({
@@ -45,8 +54,8 @@ function PlanCard({
   const p = usePlural()
   const isHit = plan.badge === 'hit' && mode === 'buy'
   const isCurrent = mode === 'current'
-  const planIcon = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_start
-  const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_start
+  const planIcon = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
+  const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_base
 
   const borderClass = isCurrent
     ? 'border-2 border-[var(--tg-theme-button-color,#2481cc)]'
@@ -112,7 +121,11 @@ function PlanCard({
         <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">
           <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
           <span className="opacity-40 mx-1">·</span>
-          <span className="text-xs">📱 {p(plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}{plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}</span>
+          <span className="text-xs">
+            {plan.speedMbps ? <>⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span></> : null}
+            📱 {p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            {!plan.speedMbps && plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}
+          </span>
         </div>
       </div>
 
@@ -231,7 +244,7 @@ export default function Plans() {
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
         {sub === null ? (
-          PLANS.map((plan, i) => (
+          VISIBLE_PLANS.map((plan, i) => (
             <PlanCard key={plan.key} plan={plan} mode="buy"
               upgradePrice={0} loading={loading === plan.key}
               isPending={false} animDelay={i + 1}
@@ -240,7 +253,12 @@ export default function Plans() {
         ) : (
           (() => {
             const curPlan = PLANS.find(p => p.key === sub.plan)!
-            return PLANS.map((plan, i) => {
+            // Always show v2 plans + the user's current plan (even if it's legacy)
+            const planList = [
+              ...VISIBLE_PLANS,
+              ...(curPlan.legacy ? [curPlan] : []),
+            ]
+            return planList.map((plan, i) => {
               const isPending = sub.pending_plan === plan.key
               let mode: 'current' | 'upgrade' | 'downgrade' | 'pending'
               if (plan.key === curPlan.key) mode = 'current'
