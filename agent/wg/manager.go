@@ -1,12 +1,16 @@
 package wg
 
 import (
-	"crypto/rand"
+	"bufio"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,57 +18,61 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// Peer holds all info about a WireGuard peer managed by vpnctl.
 type Peer struct {
 	PublicKey  string
-	PrivateKey string // kept only to generate client config
-	AssignedIP string // e.g. 10.8.0.3/32
+	PrivateKey string
+	AssignedIP string
 	Label      string
 	Suspended  bool
 	CreatedAt  time.Time
-
-	// last stats snapshot from kernel
-	RxBytes   int64
-	TxBytes   int64
-	LastSeen  time.Time
+	RxBytes    int64
+	TxBytes    int64
+	LastSeen   time.Time
 }
 
-// ClientConfig is what we hand to the user.
 type ClientConfig struct {
 	PrivateKey string
 	AssignedIP string
-	PublicKey  string // server pubkey
+	PublicKey  string
 	Endpoint   string
 	DNS        string
 }
 
 type Manager struct {
-	mu        sync.RWMutex
-	iface     string
-	subnet    string // 10.8.0.0/24
-	endpoint  string // host:port
-	serverKey wgtypes.Key
-	peers     map[string]*Peer // pubkey → Peer
-	usedIPs   map[string]bool
-	client    *wgctrl.Client
+	mu         sync.RWMutex
+	iface      string
+	subnet     string
+	endpoint   string
+	serverKey  wgtypes.Key
+	peers      map[string]*Peer
+	usedIPs    map[string]bool
+	client     *wgctrl.Client
+	userspace  bool
+	uapiSocket string
 }
 
 func NewManager(iface, subnet, endpoint string) (*Manager, error) {
-	c, err := wgctrl.New()
-	if err != nil {
-		return nil, fmt.Errorf("wgctrl: %w", err)
-	}
-
 	m := &Manager{
-		iface:    iface,
-		subnet:   subnet,
-		endpoint: endpoint,
-		peers:    make(map[string]*Peer),
-		usedIPs:  make(map[string]bool),
-		client:   c,
+		iface:      iface,
+		subnet:     subnet,
+		endpoint:   endpoint,
+		peers:      make(map[string]*Peer),
+		usedIPs:    make(map[string]bool),
 	}
 
-	// Load existing device state (if wg0 already configured)
+	uapiSocket := "/var/run/wireguard/" + iface + ".sock"
+	if _, err := os.Stat(uapiSocket); err == nil {
+		log.Printf("wg: using UAPI socket (userspace mode)")
+		m.userspace = true
+		m.uapiSocket = uapiSocket
+	} else {
+		c, err := wgctrl.New()
+		if err != nil {
+			return nil, fmt.Errorf("wgctrl: %w", err)
+		}
+		m.client = c
+	}
+
 	if err := m.syncFromKernel(); err != nil {
 		log.Printf("wg: initial sync warning: %v", err)
 	}
@@ -72,24 +80,194 @@ func NewManager(iface, subnet, endpoint string) (*Manager, error) {
 	return m, nil
 }
 
-// ServerPublicKey returns the server's WireGuard public key as base64.
+func (m *Manager) uapiRequest(req string) (string, error) {
+	conn, err := net.Dial("unix", m.uapiSocket)
+	if err != nil {
+		return "", fmt.Errorf("uapi connect: %w", err)
+	}
+	defer conn.Close()
+
+	fmt.Fprint(conn, req)
+
+	scanner := bufio.NewScanner(conn)
+	var resp strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		resp.WriteString(line + "\n")
+		if line == "" {
+			break
+		}
+	}
+	return resp.String(), nil
+}
+
+func (m *Manager) uapiSetPeer(pubKey wgtypes.Key, ipNet *net.IPNet, remove bool, allowed []net.IPNet) error {
+	pubHex := hex.EncodeToString(pubKey[:])
+
+	var cmd strings.Builder
+	cmd.WriteString("set=1\n")
+	cmd.WriteString("public_key=" + pubHex + "\n")
+
+	if remove {
+		cmd.WriteString("remove=true\n")
+	} else {
+		for _, ip := range allowed {
+			cmd.WriteString("allowed_ip=" + ip.String() + "\n")
+		}
+	}
+	cmd.WriteString("\n")
+
+	resp, err := m.uapiRequest(cmd.String())
+	if err != nil {
+		return err
+	}
+	if strings.Contains(resp, "errno=-") {
+		return fmt.Errorf("uapi error: %s", resp)
+	}
+	return nil
+}
+
+func (m *Manager) uapiDevice() (*wgtypes.Device, error) {
+	resp, err := m.uapiRequest("get=1\n\n")
+	if err != nil {
+		return nil, err
+	}
+
+	dev := &wgtypes.Device{
+		Type: wgtypes.Userspace,
+		Name: m.iface,
+	}
+
+	var curPeer *wgtypes.Peer
+	lines := strings.Split(resp, "\n")
+	for _, line := range lines {
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, val := parts[0], parts[1]
+
+		switch key {
+		case "private_key":
+			b, _ := hex.DecodeString(val)
+			if len(b) == 32 {
+				priv, _ := wgtypes.NewKey(b)
+				dev.PrivateKey = priv
+				dev.PublicKey = priv.PublicKey()
+				m.serverKey = dev.PublicKey
+			}
+		case "listen_port":
+			port, _ := strconv.Atoi(val)
+			dev.ListenPort = port
+		case "public_key":
+			if curPeer != nil {
+				dev.Peers = append(dev.Peers, *curPeer)
+			}
+			b, _ := hex.DecodeString(val)
+			if len(b) == 32 {
+				pubKey, _ := wgtypes.NewKey(b)
+				curPeer = &wgtypes.Peer{
+					PublicKey: pubKey,
+				}
+			}
+		case "allowed_ip":
+			_, ipNet, err := net.ParseCIDR(val)
+			if err == nil && curPeer != nil {
+				curPeer.AllowedIPs = append(curPeer.AllowedIPs, *ipNet)
+			}
+		case "endpoint":
+			addr, err := net.ResolveUDPAddr("udp", val)
+			if err == nil && curPeer != nil {
+				curPeer.Endpoint = addr
+			}
+		case "rx_bytes":
+			if curPeer != nil {
+				curPeer.ReceiveBytes, _ = strconv.ParseInt(val, 10, 64)
+			}
+		case "tx_bytes":
+			if curPeer != nil {
+				curPeer.TransmitBytes, _ = strconv.ParseInt(val, 10, 64)
+			}
+		case "last_handshake_time_sec":
+			if curPeer != nil {
+				sec, _ := strconv.ParseInt(val, 10, 64)
+				if sec > 0 {
+					curPeer.LastHandshakeTime = time.Unix(sec, 0)
+				}
+			}
+		case "persistent_keepalive_interval":
+			if curPeer != nil {
+				interval, _ := strconv.Atoi(val)
+				curPeer.PersistentKeepaliveInterval = time.Duration(interval) * time.Second
+			}
+		}
+	}
+	if curPeer != nil {
+		dev.Peers = append(dev.Peers, *curPeer)
+	}
+
+	return dev, nil
+}
+
+func (m *Manager) configureDevice(cfg wgtypes.Config) error {
+	if m.userspace {
+		return m.configureDeviceUAPI(cfg)
+	}
+	return m.client.ConfigureDevice(m.iface, cfg)
+}
+
+func (m *Manager) configureDeviceUAPI(cfg wgtypes.Config) error {
+	for _, peer := range cfg.Peers {
+		if peer.Remove {
+			if err := m.uapiSetPeer(peer.PublicKey, nil, true, nil); err != nil {
+				return err
+			}
+		} else {
+			if err := m.uapiSetPeer(peer.PublicKey, nil, false, peer.AllowedIPs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) getDevice() (*wgtypes.Device, error) {
+	if m.userspace {
+		return m.uapiDevice()
+	}
+	return m.client.Device(m.iface)
+}
+
 func (m *Manager) ServerPublicKey() string {
 	return m.serverKey.String()
 }
 
-// AddPeer creates a new WireGuard peer, assigns an IP, returns client config.
+func (m *Manager) Interface() string {
+	return m.iface
+}
+
+func (m *Manager) PeerIPs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var ips []string
+	for _, p := range m.peers {
+		if !p.Suspended {
+			ips = append(ips, stripMask(p.AssignedIP))
+		}
+	}
+	return ips
+}
+
 func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Generate client key pair
 	privKey, err := wgtypes.GeneratePrivateKey()
 	if err != nil {
 		return nil, nil, err
 	}
 	pubKey := privKey.PublicKey()
 
-	// Assign next free IP in subnet
 	ip, err := m.nextFreeIP()
 	if err != nil {
 		return nil, nil, err
@@ -97,7 +275,6 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 
 	_, ipNet, _ := net.ParseCIDR(ip + "/32")
 
-	// Add to WireGuard
 	cfg := wgtypes.Config{
 		Peers: []wgtypes.PeerConfig{
 			{
@@ -107,7 +284,7 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 			},
 		},
 	}
-	if err := m.client.ConfigureDevice(m.iface, cfg); err != nil {
+	if err := m.configureDevice(cfg); err != nil {
 		return nil, nil, fmt.Errorf("configure wg peer: %w", err)
 	}
 
@@ -132,7 +309,6 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 	return peer, clientCfg, nil
 }
 
-// RemovePeer removes a peer from WireGuard permanently (slot freed).
 func (m *Manager) RemovePeer(pubkeyStr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -147,7 +323,7 @@ func (m *Manager) RemovePeer(pubkeyStr string) error {
 			{PublicKey: key, Remove: true},
 		},
 	}
-	if err := m.client.ConfigureDevice(m.iface, cfg); err != nil {
+	if err := m.configureDevice(cfg); err != nil {
 		return err
 	}
 
@@ -159,21 +335,18 @@ func (m *Manager) RemovePeer(pubkeyStr string) error {
 	return nil
 }
 
-// SuspendPeer blocks all traffic for a peer by clearing AllowedIPs.
 func (m *Manager) SuspendPeer(pubkeyStr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.setSuspended(pubkeyStr, true)
 }
 
-// ResumePeer restores AllowedIPs for a suspended peer.
 func (m *Manager) ResumePeer(pubkeyStr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.setSuspended(pubkeyStr, false)
 }
 
-// SuspendAll suspends all peers for a subscription (by list of pubkeys).
 func (m *Manager) SuspendAll(pubkeys []string) error {
 	for _, pk := range pubkeys {
 		if err := m.SuspendPeer(pk); err != nil {
@@ -183,7 +356,6 @@ func (m *Manager) SuspendAll(pubkeys []string) error {
 	return nil
 }
 
-// ResumeAll resumes all peers for a subscription.
 func (m *Manager) ResumeAll(pubkeys []string) error {
 	for _, pk := range pubkeys {
 		if err := m.ResumePeer(pk); err != nil {
@@ -193,12 +365,11 @@ func (m *Manager) ResumeAll(pubkeys []string) error {
 	return nil
 }
 
-// Stats returns a snapshot of all peers with current rx/tx from kernel.
 func (m *Manager) Stats() ([]*Peer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	dev, err := m.client.Device(m.iface)
+	dev, err := m.getDevice()
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +393,6 @@ func (m *Manager) Stats() ([]*Peer, error) {
 	return result, nil
 }
 
-// ActivePeerCount returns number of peers active in the last 5 minutes.
 func (m *Manager) ActivePeerCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -237,8 +407,6 @@ func (m *Manager) ActivePeerCount() int {
 	return count
 }
 
-// --------- internal helpers ---------
-
 func (m *Manager) setSuspended(pubkeyStr string, suspend bool) error {
 	p, ok := m.peers[pubkeyStr]
 	if !ok {
@@ -249,11 +417,9 @@ func (m *Manager) setSuspended(pubkeyStr string, suspend bool) error {
 	var allowed []net.IPNet
 
 	if !suspend {
-		// restore original IP
 		_, ipNet, _ := net.ParseCIDR(p.AssignedIP)
 		allowed = []net.IPNet{*ipNet}
 	}
-	// suspend → empty AllowedIPs → WireGuard drops all packets
 
 	cfg := wgtypes.Config{
 		Peers: []wgtypes.PeerConfig{
@@ -264,7 +430,7 @@ func (m *Manager) setSuspended(pubkeyStr string, suspend bool) error {
 			},
 		},
 	}
-	if err := m.client.ConfigureDevice(m.iface, cfg); err != nil {
+	if err := m.configureDevice(cfg); err != nil {
 		return err
 	}
 	p.Suspended = suspend
@@ -272,12 +438,11 @@ func (m *Manager) setSuspended(pubkeyStr string, suspend bool) error {
 }
 
 func (m *Manager) syncFromKernel() error {
-	dev, err := m.client.Device(m.iface)
+	dev, err := m.getDevice()
 	if err != nil {
-		// Device may not exist yet on first start
 		return err
 	}
-	m.serverKey = dev.PrivateKey.PublicKey()
+	m.serverKey = dev.PublicKey
 
 	for _, kp := range dev.Peers {
 		pk := kp.PublicKey.String()
@@ -305,10 +470,9 @@ func (m *Manager) nextFreeIP() (string, error) {
 		return "", err
 	}
 
-	// Start from .2 (.1 is server)
 	ip := cloneIP(network.IP)
 	inc(ip)
-	inc(ip) // skip .1
+	inc(ip)
 
 	for network.Contains(ip) {
 		s := ip.String()
@@ -343,25 +507,6 @@ func stripMask(cidr string) string {
 	return ip.String()
 }
 
-// Interface returns the WireGuard interface name.
-func (m *Manager) Interface() string {
-	return m.iface
-}
-
-// PeerIPs returns assigned IPs of all non-suspended peers (for tc rules).
-func (m *Manager) PeerIPs() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var ips []string
-	for _, p := range m.peers {
-		if !p.Suspended {
-			ips = append(ips, stripMask(p.AssignedIP))
-		}
-	}
-	return ips
-}
-
-// WireGuardConfig returns a ready-to-use [Interface]+[Peer] INI string for the client.
 func WireGuardConfig(cc *ClientConfig) string {
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
@@ -376,29 +521,19 @@ PersistentKeepalive = 25
 `, cc.PrivateKey, cc.AssignedIP, cc.DNS, cc.PublicKey, cc.Endpoint)
 }
 
-// randomHex returns n random hex bytes (for token generation).
 func randomHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	b = b[:copy(b, b)]
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// SetupInterface ensures wg0 exists with server keys and listen port.
-// Safe to call on every start — skips if already configured.
 func SetupInterface(iface string, port int) error {
-	// Check if interface exists
 	out, _ := exec.Command("ip", "link", "show", iface).Output()
 	if len(out) > 0 {
 		log.Printf("wg: interface %s already exists, skipping setup", iface)
 		return nil
 	}
 
-	cmds := [][]string{
-		{"ip", "link", "add", "dev", iface, "type", "wireguard"},
-		{"wg", "genkey"},
-	}
-	_ = cmds
-	// Real setup is done via wg-quick or separate script; agent just manages peers.
 	log.Printf("wg: interface %s not found — create it with wg-quick or setup script", iface)
 	return nil
 }
