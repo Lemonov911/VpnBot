@@ -272,19 +272,19 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             try:
                 label = f"user_{user_id}_wg_{i+1}"
                 peer = await provision_peer(server, label, "awg")
+                peer_ip = (peer.extra or {}).get("assigned_ip", "")
                 await save_peer_to_config(
-                    config_id, server["id"], peer.public_key,
-                    peer.assigned_ip, peer.wg_config, label,
+                    config_id, server["id"], peer.id,
+                    peer_ip, peer.config, label,
                 )
                 await update_server_peer_count(server["id"], +1)
                 created_wg += 1
-                # Шлём .conf файл сразу
                 await message.answer_document(
                     BufferedInputFile(
-                        peer.wg_config.encode(),
+                        peer.config.encode(),
                         filename=f"maxvpn_{i+1}.conf",
                     ),
-                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {server.get('flag','')} {server.get('name','')}\nIP: {peer.assigned_ip}",
+                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {server.get('flag','')} {server.get('name','')}\nIP: {peer_ip}",
                     parse_mode="HTML",
                 )
             except VpnctlError as e:
@@ -298,8 +298,8 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                 label = f"user_{user_id}_vless_{i+1}"
                 peer = await provision_peer(server, label, "vless")
                 await save_peer_to_config(
-                    config_id, server["id"], peer.public_key,
-                    "", peer.vless_url, label,
+                    config_id, server["id"], peer.id,
+                    "", peer.config, label,
                 )
                 await update_server_peer_count(server["id"], +1)
                 created_vless += 1

@@ -64,12 +64,9 @@ async def _process_expired_subscriptions(bot: Bot):
             if cfg.get("server_id"):
                 server = await get_server_by_id(cfg["server_id"])
                 if server:
-                    await suspend_peer(
-                        server,
-                        wg_pubkey=cfg.get("wg_pubkey"),
-                        vless_uuid=cfg.get("vless_uuid"),
-                        protocol=cfg["protocol"],
-                    )
+                    peer_id = cfg.get("vless_uuid") or cfg.get("wg_pubkey")
+                    protocol = cfg["protocol"]
+                    await suspend_peer(server, peer_id, protocol)
                     await update_server_peer_count(cfg["server_id"], -1)
 
             await reset_config_slot(cfg["id"])

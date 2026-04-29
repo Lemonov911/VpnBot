@@ -1,0 +1,62 @@
+#!/bin/bash
+# vpnctl script: list AmneziaWG peers
+# Input JSON:  {}
+# Output JSON: [{id, label, suspended, rx_bytes, tx_bytes, ...}, ...]
+set -euo pipefail
+
+IFACE="${AWG_INTERFACE:-awg0}"
+
+wg show "$IFACE" | awk '
+/^peer:/ { 
+    id=$2; rx=0; tx=0; ip=""; hs=""
+}
+/latest handshake/ { hs=$3" "$4 }
+/transfer:/ { 
+    split($2, a, ",")
+    rx=a[1]; tx=a[2]
+}
+/allowed ips:/ { ip=$3 }
+' | while IFS= read -r line; do
+    echo "$line"
+done
+
+# Use wg show with JSON if available, otherwise parse text
+if wg show "$IFACE" json 2>/dev/null; then
+    # wg supports json output
+    wg show "$IFACE" json | jq --arg iface "$IFACE" '
+        [.peers | to_entries[] | {
+            id: .value.publicKey,
+            label: (.value.name // "unnamed"),
+            suspended: false,
+            rx_bytes: .value.transferRx,
+            tx_bytes: .value.transferTx,
+            extra: {
+                public_key: .value.publicKey,
+                assigned_ip: (if (.value.allowedIps | length) > 0 then .value.allowedIps[0] else "" end)
+            }
+        }]
+    '
+else
+    # Fallback: parse wg show text output
+    wg show "$IFACE" | python3 -c "
+import sys, json
+peers = []
+current = {}
+for line in sys.stdin:
+    line = line.strip()
+    if line.startswith('peer:'):
+        if current:
+            peers.append(current)
+        pk = line.split(':',1)[1].strip()
+        current = {'id': pk, 'label': 'unnamed', 'suspended': False, 'rx_bytes': 0, 'tx_bytes': 0, 'extra': {'public_key': pk, 'assigned_ip': ''}}
+    elif 'transfer' in line.lower():
+        pass
+    elif 'allowed ips' in line.lower():
+        ip = line.split(':',1)[1].strip()
+        if current:
+            current['extra']['assigned_ip'] = ip
+if current:
+    peers.append(current)
+print(json.dumps(peers))
+"
+fi

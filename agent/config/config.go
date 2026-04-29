@@ -8,34 +8,24 @@ import (
 )
 
 type Config struct {
-	// HTTP API
-	ListenAddr string // e.g. 127.0.0.1:9000
+	ListenAddr string
+	AgentToken string
 
-	// Auth
-	AgentToken string // X-Agent-Token header
+	Services []string // e.g. ["wg", "awg"]
 
-	// WireGuard
-	WGInterface string // e.g. wg0
-	WGSubnet    string // e.g. 10.8.0.0/24
-	WGEndpoint  string // e.g. 1.2.3.4:51820
+	WGInterface string
+	WGSubnet    string
+	WGEndpoint  string
 	WGPort      int
 
-	// Bandwidth (Mbit/s)
-	TotalBandwidthMbit int // server uplink, e.g. 1000
-	MinPerPeerMbit     int // guaranteed minimum per peer, e.g. 50
-
-	// Fair-share recalc interval (seconds)
+	TotalBandwidthMbit   int
+	MinPerPeerMbit      int
 	FairShareIntervalSec int
 
-	// Watchdog
 	TelegramBotToken string
-	TelegramAdminIDs []int64 // who to notify
+	TelegramAdminIDs []int64
 
-	// Xray VLESS (optional — empty disables VLESS support)
-	XrayConfigPath  string // e.g. /usr/local/etc/xray/config.json
-	XrayAPIAddr     string // e.g. 127.0.0.1:10085
-	XrayInboundTag  string // e.g. vless-in
-	VLESSAddr       string // e.g. 151.243.113.31:8443
+	ScriptsDir string // base directory for script-based services
 }
 
 func Load() *Config {
@@ -45,9 +35,12 @@ func Load() *Config {
 	minBW, _ := strconv.Atoi(env("MIN_PER_PEER_MBIT", "50"))
 	fsInterval, _ := strconv.Atoi(env("FAIRSHARE_INTERVAL_SEC", "120"))
 
+	services := parseServices(env("SERVICES", "wg"))
+
 	cfg := &Config{
-		ListenAddr:           env("LISTEN_ADDR", "127.0.0.1:9000"),
+		ListenAddr:           env("LISTEN_ADDR", "0.0.0.0:9000"),
 		AgentToken:           mustEnv("AGENT_TOKEN"),
+		Services:             services,
 		WGInterface:          env("WG_INTERFACE", "wg0"),
 		WGSubnet:             env("WG_SUBNET", "10.8.0.0/24"),
 		WGEndpoint:           mustEnv("WG_ENDPOINT"),
@@ -57,10 +50,7 @@ func Load() *Config {
 		FairShareIntervalSec: fsInterval,
 		TelegramBotToken:     env("BOT_TOKEN", ""),
 		TelegramAdminIDs:     adminIDs,
-		XrayConfigPath:      env("XRAY_CONFIG_PATH", ""),
-		XrayAPIAddr:         env("XRAY_API_ADDR", "127.0.0.1:10085"),
-		XrayInboundTag:      env("XRAY_INBOUND_TAG", "vless-in"),
-		VLESSAddr:          env("VLESS_ADDR", ""),
+		ScriptsDir:           env("SCRIPTS_DIR", "/opt/vpnbot/scripts"),
 	}
 	return cfg
 }
@@ -93,4 +83,15 @@ func parseAdminIDs(s string) []int64 {
 		}
 	}
 	return ids
+}
+
+func parseServices(s string) []string {
+	var services []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			services = append(services, strings.ToLower(p))
+		}
+	}
+	return services
 }

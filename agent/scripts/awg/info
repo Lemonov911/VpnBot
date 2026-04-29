@@ -1,0 +1,19 @@
+#!/bin/bash
+# vpnctl script: return AmneziaWG service info
+# Input JSON:  {}
+# Output JSON: {"type": "amnezia-wg", "interface": "awg0", "public_key": "...", "port": 51820, ...}
+set -euo pipefail
+
+IFACE="${AWG_INTERFACE:-awg0}"
+
+PUBKEY=$(wg show "$IFACE" | grep "public key" | awk '{print $3}')
+PORT=$(wg show "$IFACE" | grep "listening port" | awk '{print $3}')
+ENDPOINT="${AWG_ENDPOINT}"
+
+jq -n \
+    --arg type "amnezia-wg" \
+    --arg iface "$IFACE" \
+    --arg pubkey "$PUBKEY" \
+    --arg port "$PORT" \
+    --arg endpoint "$ENDPOINT" \
+    '{type: $type, interface: $iface, public_key: $pubkey, port: ($port | tonumber), endpoint: $endpoint}'

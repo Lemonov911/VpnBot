@@ -1,0 +1,16 @@
+#!/bin/bash
+# vpnctl script: resume all listed AmneziaWG peers
+# Input JSON:  {"ids": ["pubkey1:10.8.0.3/32", "pubkey2:10.8.0.4/32"]}
+#   (each id may contain optional IP after colon for resume)
+# Output JSON: {"status": "ok"}
+set -euo pipefail
+
+IFACE="${AWG_INTERFACE:-awg0}"
+
+echo "$1" | jq -r '.ids[]' | while IFS=: read -r KEY IP; do
+    if [ -n "$IP" ]; then
+        wg set "$IFACE" peer "$KEY" allowed-ips "$IP" 2>/dev/null || true
+    fi
+done
+
+jq -n '{status: "ok"}'

@@ -1,0 +1,21 @@
+#!/bin/bash
+# vpnctl script: resume AmneziaWG peer (restore allowed-ips)
+# Input JSON:  {"id": "<pubkey>", "extra": {"assigned_ip": "10.8.0.x/32"}}
+# Output JSON: {"status": "resumed"}
+set -euo pipefail
+
+ID=$(echo "$1" | jq -r '.id')
+IFACE="${AWG_INTERFACE:-awg0}"
+
+# Need to find the original IP - check if provided in extra
+IP=$(echo "$1" | jq -r '.extra.assigned_ip // .ip // empty')
+
+if [ -z "$IP" ]; then
+    # Try to find in a state file or error
+    echo '{"error": "cannot determine IP to resume"}' >&2
+    exit 1
+fi
+
+wg set "$IFACE" peer "$ID" allowed-ips "$IP"
+
+jq -n '{status: "resumed"}'

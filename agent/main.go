@@ -13,43 +13,56 @@ import (
 	"vpnctl/api"
 	"vpnctl/config"
 	"vpnctl/fairshare"
+	"vpnctl/service"
+	wgpkg "vpnctl/wg"
 	"vpnctl/watchdog"
-	"vpnctl/wg"
-	"vpnctl/xray"
 )
 
 func main() {
-	// Load .env if present
 	godotenv.Load()
 
 	cfg := config.Load()
 
-	log.Printf("vpnctl starting on %s (wg=%s)", cfg.ListenAddr, cfg.WGInterface)
+	services := make(map[string]service.Service)
 
-	// Init WireGuard manager
-	mgr, err := wg.NewManager(cfg.WGInterface, cfg.WGSubnet, cfg.WGEndpoint)
-	if err != nil {
-		log.Fatalf("wg init: %v", err)
+	var wgMgr *wgpkg.Manager
+
+	for _, svcName := range cfg.Services {
+		switch svcName {
+		case "wg":
+			mgr, err := wgpkg.NewManager(cfg.WGInterface, cfg.WGSubnet, cfg.WGEndpoint)
+			if err != nil {
+				log.Fatalf("wg init: %v", err)
+			}
+			wgMgr = mgr
+			services["wg"] = service.NewWGService(mgr)
+			log.Printf("service: wg (built-in, interface=%s)", cfg.WGInterface)
+
+		default:
+			svcDir := cfg.ScriptsDir + "/" + svcName
+			if _, err := os.Stat(svcDir); os.IsNotExist(err) {
+				log.Fatalf("service %q: scripts dir %s not found", svcName, svcDir)
+			}
+			services[svcName] = service.NewScriptService(svcName, svcDir)
+			log.Printf("service: %s (script, dir=%s)", svcName, svcDir)
+		}
 	}
 
-	// Init Xray VLESS manager (optional — only if config path is set)
-	var vlessMgr *xray.Manager
-	if cfg.XrayConfigPath != "" {
-		vlessMgr = xray.NewManager(cfg.XrayConfigPath, cfg.XrayAPIAddr, cfg.XrayInboundTag)
-		log.Printf("vless: xray manager enabled (config=%s, api=%s)", cfg.XrayConfigPath, cfg.XrayAPIAddr)
+	if len(services) == 0 {
+		log.Fatal("no services configured (set SERVICES=wg,awg,...)")
 	}
 
-	// Fair-share scheduler
-	fs := fairshare.NewScheduler(
-		cfg.WGInterface,
-		cfg.TotalBandwidthMbit,
-		cfg.MinPerPeerMbit,
-		cfg.FairShareIntervalSec,
-		mgr,
-	)
-	go fs.Run()
+	if wgMgr != nil {
+		fs := fairshare.NewScheduler(
+			cfg.WGInterface,
+			cfg.TotalBandwidthMbit,
+			cfg.MinPerPeerMbit,
+			cfg.FairShareIntervalSec,
+			wgMgr,
+		)
+		go fs.Run()
+	}
 
-	// Watchdog
 	wd := watchdog.New(
 		cfg.TelegramBotToken,
 		cfg.TelegramAdminIDs,
@@ -57,8 +70,7 @@ func main() {
 	)
 	go wd.Run()
 
-	// HTTP server
-	srv := api.NewServer(mgr, vlessMgr, cfg.AgentToken, cfg.VLESSAddr)
+	srv := api.NewServer(services, wgMgr, cfg.AgentToken)
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      srv.Handler(),
@@ -66,12 +78,11 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("vpnctl listening on %s", cfg.ListenAddr)
+		log.Printf("vpnctl listening on %s (services: %v)", cfg.ListenAddr, cfg.Services)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}

@@ -1,0 +1,15 @@
+#!/bin/bash
+# vpnctl script: suspend all listed AmneziaWG peers
+# Input JSON:  {"ids": ["pubkey1", "pubkey2"]}
+# Output JSON: {"status": "ok"}
+set -euo pipefail
+
+IFACE="${AWG_INTERFACE:-awg0}"
+
+IDS=$(echo "$1" | jq -r '.ids[]')
+
+for ID in $IDS; do
+    wg set "$IFACE" peer "$ID" allowed-ips "" 2>/dev/null || true
+done
+
+jq -n '{status: "ok"}'

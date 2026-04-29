@@ -1,0 +1,69 @@
+#!/bin/bash
+# vpnctl script: add AmneziaWG peer
+# Input JSON:  {"label": "user123"}
+# Output JSON: {"id": "<pubkey>", "label": "user123", "config": "<awg .conf>", "extra": {...}}
+set -euo pipefail
+
+LABEL=$(echo "$1" | jq -r '.label // "unnamed"')
+
+IFACE="${AWG_INTERFACE:-awg0}"
+SUBNET="${AWG_SUBNET:-10.8.0.0/24}"
+ENDPOINT="${AWG_ENDPOINT}"
+PORT="${AWG_PORT:-51820}"
+JUNK_PACKETS="${AWG_JUNK_PACKETS:-3}"
+JUNK_MIN="${AWG_JUNK_PACKET_MIN:-1}"
+JUNK_MAX="${AWG_JUNK_PACKET_MAX:-6}"
+IKCP=$(cat /etc/amnezia/${IFACE}/ikcp 2>/dev/null || echo 5)
+IHDR=$(cat /etc/amnezia/${IFACE}/ihdr 2>/dev/null || head -c 4 /dev/urandom | xxd -p)
+
+CLIENT_PRIVKEY=$(wg genkey)
+CLIENT_PUBKEY=$(echo "$CLIENT_PRIVKEY" | wg pubkey)
+SERVER_PUBKEY=$(cat /etc/amnezia/${IFACE}/server_public.key 2>/dev/null || wg show "$IFACE" | grep "public key" | awk '{print $3}')
+
+# Find next free IP
+USED_IPS=$(wg show "$IFACE" allowed-ips | awk '{print $NF}' | cut -d/ -f1)
+BASE=$(echo "$SUBNET" | cut -d. -f1-3)
+IP=""
+for i in $(seq 2 254); do
+    CANDIDATE="${BASE}.${i}"
+    if ! echo "$USED_IPS" | grep -qw "$CANDIDATE"; then
+        IP="$CANDIDATE"
+        break
+    fi
+done
+
+if [ -z "$IP" ]; then
+    echo '{"error": "no free IPs"}' >&2
+    exit 1
+fi
+
+# Add peer to interface
+wg set "$IFACE" peer "$CLIENT_PUBKEY" allowed-ips "${IP}/32"
+
+# Generate client config
+CONFIG="[Interface]
+PrivateKey = ${CLIENT_PRIVKEY}
+Address = ${IP}/32
+DNS = 1.1.1.1
+Jc = ${JUNK_PACKETS}
+Jmin = ${JUNK_MIN}
+Jmax = ${JUNK_MAX}
+S1 = 0
+S2 = 0
+H1 = ${IHDR}
+H2 = ${IHDR}
+H3 = ${IHDR}
+H4 = ${IHDR}
+
+[Peer]
+PublicKey = ${SERVER_PUBKEY}
+Endpoint = ${ENDPOINT}
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25"
+
+jq -n \
+    --arg id "$CLIENT_PUBKEY" \
+    --arg label "$LABEL" \
+    --arg config "$CONFIG" \
+    --arg ip "${IP}/32" \
+    '{id: $id, label: $label, config: $config, extra: {public_key: $id, assigned_ip: $ip}}'

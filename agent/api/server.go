@@ -6,65 +6,62 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"vpnctl/service"
 	"vpnctl/wg"
-	"vpnctl/xray"
 )
 
-// WGIface is everything the API needs from the WireGuard manager.
-type WGIface interface {
-	AddPeer(label string) (*wg.Peer, *wg.ClientConfig, error)
-	RemovePeer(pubkey string) error
-	SuspendPeer(pubkey string) error
-	ResumePeer(pubkey string) error
-	SuspendAll(pubkeys []string) error
-	ResumeAll(pubkeys []string) error
-	Stats() ([]*wg.Peer, error)
-	ActivePeerCount() int
-	PeerIPs() []string
-	ServerPublicKey() string
-	Interface() string
-}
-
 type Server struct {
-	wg           WGIface
-	vless        *xray.Manager
-	token        string
-	vlessAddr    string // host:port for VLESS connection (e.g. 151.243.113.31:8443)
-	startTime    time.Time
+	services  map[string]service.Service
+	wgMgr     *wg.Manager
+	token     string
+	startTime time.Time
 }
 
-func NewServer(mgr WGIface, vlessMgr *xray.Manager, token, vlessAddr string) *Server {
-	return &Server{wg: mgr, vless: vlessMgr, token: token, vlessAddr: vlessAddr, startTime: time.Now()}
+func NewServer(services map[string]service.Service, wgMgr *wg.Manager, token string) *Server {
+	return &Server{
+		services:  services,
+		wgMgr:     wgMgr,
+		token:     token,
+		startTime: time.Now(),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 
-	// Health is public — watchdog hits it without a token
 	r.Get("/health", s.handleHealth)
 
-	// Everything else requires auth
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Logger)
 		r.Use(s.authMiddleware)
 
-		r.Post("/peers", s.handleAddPeer)
-		r.Get("/peers", s.handleListPeers)
-		r.Get("/peers/{pubkey}", s.handleGetPeer)
-		r.Delete("/peers/{pubkey}", s.handleRemovePeer)
-		r.Put("/peers/{pubkey}/suspend", s.handleSuspendPeer)
-		r.Put("/peers/{pubkey}/resume", s.handleResumePeer)
+		r.Get("/services", s.handleListServices)
 
-		r.Post("/peers/suspend-all", s.handleSuspendAll)
-		r.Post("/peers/resume-all", s.handleResumeAll)
+		for name, svc := range s.services {
+			svcName := name
+			svcRef := svc
+			isWG := name == "wg"
+			r.Route("/services/"+svcName, func(r chi.Router) {
+				r.Post("/peers", s.handleServiceAddPeer(svcRef, false))
+				r.Get("/peers", s.handleServiceListPeers(svcRef, false))
+				r.Delete("/peers/{id}", s.handleServiceRemovePeer(svcRef))
+				r.Put("/peers/{id}/suspend", s.handleServiceSuspendPeer(svcRef))
+				r.Put("/peers/{id}/resume", s.handleServiceResumePeer(svcRef))
+				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, false))
+				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, false))
+				r.Get("/info", s.handleServiceInfo(svcRef))
+			})
 
-		if s.vless != nil {
-			r.Post("/vless/users", s.handleAddVLESSUser)
-			r.Get("/vless/users", s.handleListVLESSUsers)
-			r.Delete("/vless/users/{uuid}", s.handleRemoveVLESSUser)
-			r.Put("/vless/users/{uuid}/suspend", s.handleSuspendVLESSUser)
-			r.Put("/vless/users/{uuid}/resume", s.handleResumeVLESSUser)
+			if isWG {
+				r.Post("/peers", s.handleServiceAddPeer(svcRef, true))
+				r.Get("/peers", s.handleServiceListPeers(svcRef, true))
+				r.Delete("/peers/{pubkey}", s.handleServiceRemovePeer(svcRef))
+				r.Put("/peers/{pubkey}/suspend", s.handleServiceSuspendPeer(svcRef))
+				r.Put("/peers/{pubkey}/resume", s.handleServiceResumePeer(svcRef))
+				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, true))
+				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, true))
+			}
 		}
 	})
 

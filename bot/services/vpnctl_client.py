@@ -1,23 +1,24 @@
 """
 Клиент для vpnctl агента.
 Вызывается ботом при создании/удалении/suspend/resume пиров.
+Поддерживает универсальный API: /services/{name}/peers
 """
 
 import aiohttp
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
 class PeerResult:
-    public_key: str
-    assigned_ip: str
+    id: str              # peer ID (pubkey for WG, uuid for VLESS, etc.)
     label: str
-    wg_config: str        # готовый .conf файл (только для WG)
-    vless_url: str = ""   # vless://... (только для VLess)
+    config: str          # connection config (WG .conf, AWG .conf, VLESS URL, etc.)
+    extra: dict = None   # service-specific fields (assigned_ip, public_key, etc.)
 
 
 class VpnctlError(Exception):
@@ -39,93 +40,96 @@ class VpnctlClient:
                     raise VpnctlError(f"health check failed: {r.status}")
                 return await r.json()
 
-    # ── WireGuard ──────────────────────────────────────────────────────────────
+    async def list_services(self) -> list:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{self.base}/services",
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                if r.status != 200:
+                    raise VpnctlError(f"list_services failed: {r.status}")
+                return await r.json()
 
-    async def add_wg_peer(self, label: str) -> PeerResult:
+    # ── Generic service API ────────────────────────────────────────────────────
+
+    async def add_peer(self, service: str, label: str) -> PeerResult:
         async with aiohttp.ClientSession() as s:
             async with s.post(
-                f"{self.base}/peers",
+                f"{self.base}/services/{service}/peers",
                 json={"label": label},
                 headers=self._headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 data = await r.json()
                 if r.status != 200:
-                    raise VpnctlError(f"add_wg_peer failed: {data}")
-                return PeerResult(
-                    public_key=data["peer"]["public_key"],
-                    assigned_ip=data["peer"]["assigned_ip"],
-                    label=data["peer"]["label"],
-                    wg_config=data["wg_config"],
-                )
+                    raise VpnctlError(f"add_peer({service}) failed: {data}")
+                # New unified format
+                if "id" in data:
+                    return PeerResult(
+                        id=data["id"],
+                        label=data.get("label", label),
+                        config=data.get("config", ""),
+                        extra=data.get("extra"),
+                    )
+                # Old WG compat format
+                if "peer" in data:
+                    p = data["peer"]
+                    return PeerResult(
+                        id=p["public_key"],
+                        label=p.get("label", label),
+                        config=data.get("wg_config", ""),
+                        extra={"public_key": p["public_key"], "assigned_ip": p.get("assigned_ip", "")},
+                    )
+                raise VpnctlError(f"unexpected response format: {data}")
 
-    async def remove_wg_peer(self, pubkey: str):
+    async def remove_peer(self, service: str, peer_id: str):
         async with aiohttp.ClientSession() as s:
             async with s.delete(
-                f"{self.base}/peers/{pubkey}",
+                f"{self.base}/services/{service}/peers/{self._enc(peer_id)}",
                 headers=self._headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 if r.status not in (200, 404):
-                    raise VpnctlError(f"remove_wg_peer failed: {r.status}")
+                    raise VpnctlError(f"remove_peer({service}) failed: {r.status}")
 
-    async def suspend_wg_peer(self, pubkey: str):
-        await self._put(f"/peers/{pubkey}/suspend")
+    async def suspend_peer(self, service: str, peer_id: str):
+        await self._put(f"/services/{service}/peers/{self._enc(peer_id)}/suspend")
 
-    async def resume_wg_peer(self, pubkey: str):
-        await self._put(f"/peers/{pubkey}/resume")
+    async def resume_peer(self, service: str, peer_id: str):
+        await self._put(f"/services/{service}/peers/{self._enc(peer_id)}/resume")
 
-    async def suspend_all_wg(self, pubkeys: list[str]):
-        await self._post("/peers/suspend-all", {"pubkeys": pubkeys})
-
-    async def resume_all_wg(self, pubkeys: list[str]):
-        await self._post("/peers/resume-all", {"pubkeys": pubkeys})
-
-    async def list_wg_peers(self) -> list[dict]:
+    async def list_peers(self, service: str) -> list:
         async with aiohttp.ClientSession() as s:
             async with s.get(
-                f"{self.base}/peers",
+                f"{self.base}/services/{service}/peers",
                 headers=self._headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 return await r.json()
 
-    # ── VLess ──────────────────────────────────────────────────────────────────
+    async def suspend_all(self, service: str, ids: list[str]):
+        await self._post(f"/services/{service}/peers/suspend-all", {"ids": ids})
 
-    async def add_vless_user(self, label: str) -> PeerResult:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(
-                f"{self.base}/vless/users",
-                json={"label": label},
-                headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                data = await r.json()
-                if r.status != 200:
-                    raise VpnctlError(f"add_vless_user failed: {data}")
-                return PeerResult(
-                    public_key=data["uuid"],
-                    assigned_ip="",
-                    label=label,
-                    wg_config="",
-                    vless_url=data["vless_url"],
-                )
+    async def resume_all(self, service: str, ids: list[str]):
+        await self._post(f"/services/{service}/peers/resume-all", {"ids": ids})
 
-    async def remove_vless_user(self, uuid: str):
-        async with aiohttp.ClientSession() as s:
-            async with s.delete(
-                f"{self.base}/vless/users/{uuid}",
-                headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                if r.status not in (200, 404):
-                    raise VpnctlError(f"remove_vless_user failed: {r.status}")
+    # ── Backward compat (WG-only) ──────────────────────────────────────────────
 
-    async def suspend_vless_user(self, uuid: str):
-        await self._put(f"/vless/users/{uuid}/suspend")
+    async def add_wg_peer(self, label: str) -> PeerResult:
+        return await self.add_peer("wg", label)
 
-    async def resume_vless_user(self, uuid: str):
-        await self._put(f"/vless/users/{uuid}/resume")
+    async def remove_wg_peer(self, pubkey: str):
+        await self.remove_peer("wg", pubkey)
+
+    async def suspend_wg_peer(self, pubkey: str):
+        await self.suspend_peer("wg", pubkey)
+
+    async def resume_wg_peer(self, pubkey: str):
+        await self.resume_peer("wg", pubkey)
+
+    async def list_wg_peers(self) -> list:
+        return await self.list_peers("wg")
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -150,6 +154,10 @@ class VpnctlClient:
                 if r.status != 200:
                     raise VpnctlError(f"POST {path} failed: {r.status}")
 
+    @staticmethod
+    def _enc(peer_id: str) -> str:
+        return quote(peer_id, safe='')
+
 
 def client_for_server(server: dict) -> VpnctlClient:
     """Создаёт клиент из словаря сервера (из БД)."""
@@ -161,49 +169,34 @@ def client_for_server(server: dict) -> VpnctlClient:
 async def provision_peer(server: dict, label: str, protocol: str) -> PeerResult:
     """
     Создаёт пир на сервере через vpnctl.
-    protocol: 'awg' или 'vless'
+    protocol: 'wg', 'awg', 'vless', etc. — maps to service name.
     """
     c = client_for_server(server)
-    if protocol == "vless":
-        return await c.add_vless_user(label)
-    else:
-        return await c.add_wg_peer(label)
+    return await c.add_peer(protocol, label)
 
 
-async def revoke_peer(server: dict, wg_pubkey: str | None,
-                       vless_uuid: str | None, protocol: str):
+async def revoke_peer(server: dict, peer_id: str, protocol: str):
     """Удаляет пир с сервера."""
     try:
         c = client_for_server(server)
-        if protocol == "vless" and vless_uuid:
-            await c.remove_vless_user(vless_uuid)
-        elif wg_pubkey:
-            await c.remove_wg_peer(wg_pubkey)
+        await c.remove_peer(protocol, peer_id)
     except Exception as e:
         log.warning(f"revoke_peer error (server={server['id']}): {e}")
 
 
-async def suspend_peer(server: dict, wg_pubkey: str | None,
-                        vless_uuid: str | None, protocol: str):
+async def suspend_peer(server: dict, peer_id: str, protocol: str):
     """Приостанавливает пир."""
     try:
         c = client_for_server(server)
-        if protocol == "vless" and vless_uuid:
-            await c.suspend_vless_user(vless_uuid)
-        elif wg_pubkey:
-            await c.suspend_wg_peer(wg_pubkey)
+        await c.suspend_peer(protocol, peer_id)
     except Exception as e:
         log.warning(f"suspend_peer error: {e}")
 
 
-async def resume_peer(server: dict, wg_pubkey: str | None,
-                       vless_uuid: str | None, protocol: str):
+async def resume_peer(server: dict, peer_id: str, protocol: str):
     """Возобновляет пир."""
     try:
         c = client_for_server(server)
-        if protocol == "vless" and vless_uuid:
-            await c.resume_vless_user(vless_uuid)
-        elif wg_pubkey:
-            await c.resume_wg_peer(wg_pubkey)
+        await c.resume_peer(protocol, peer_id)
     except Exception as e:
         log.warning(f"resume_peer error: {e}")

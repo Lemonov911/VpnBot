@@ -328,15 +328,17 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
         return web.json_response({"error": "Сервер недоступен"}, status=503)
 
-    config_data = result.wg_config if config["protocol"] == "awg" else result.vless_url
+    config_data = result.config
     if not config_data:
         return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
 
-    wg_pubkey = result.public_key if config["protocol"] == "awg" else None
-    vless_uuid = result.public_key if config["protocol"] == "vless" else None
+    peer_id = result.id
+    peer_ip = (result.extra or {}).get("assigned_ip")
+    wg_pubkey = peer_id if config["protocol"] == "awg" else None
+    vless_uuid = peer_id if config["protocol"] == "vless" else None
     await activate_config_slot(
         config_id, peer_name, config_data, server_id,
-        wg_pubkey=wg_pubkey, assigned_ip=result.assigned_ip or None, vless_uuid=vless_uuid,
+        wg_pubkey=wg_pubkey, assigned_ip=peer_ip, vless_uuid=vless_uuid,
     )
     logger.info("Слот #%d активирован на %s (%s)", config_id, server["name"], peer_name)
     return web.json_response({"ok": True})
@@ -365,7 +367,8 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
             srv = await get_server_by_id(config["server_id"])
             if srv:
                 from services.vpnctl_client import revoke_peer
-                await revoke_peer(srv, config.get("wg_pubkey"), config.get("vless_uuid"), config["protocol"])
+                peer_id = config.get("vless_uuid") or config.get("wg_pubkey")
+                await revoke_peer(srv, peer_id, config["protocol"])
         except Exception as e:
             logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e)
 
