@@ -41,14 +41,22 @@ logger = logging.getLogger(__name__)
 # ── VPN тарифы ─────────────────────────────────────────────────────────────────
 
 VPN_PLANS: dict[str, dict] = {
-    "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30, "awg_slots": 1, "vless_slots": 0},
-    "vpn_popular": {"name": "Популярный", "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30, "awg_slots": 2, "vless_slots": 0},
-    "vpn_pro":     {"name": "Про",        "stars": 342,  "rub": "450",  "usd": "5.00",  "duration_days": 30, "awg_slots": 3, "vless_slots": 1},
-    "vpn_family":  {"name": "Семейный",   "stars": 513,  "rub": "640",  "usd": "7.00",  "duration_days": 30, "awg_slots": 7, "vless_slots": 1},
-    # Старые тарифы — обратная совместимость с существующими заказами
-    "vpn_1m": {"name": "1 месяц",  "stars": 299,  "rub": "299",  "usd": "3.50",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0},
-    "vpn_3m": {"name": "3 месяца", "stars": 699,  "rub": "699",  "usd": "8.00",  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0},
-    "vpn_1y": {"name": "1 год",    "stars": 1990, "rub": "1990", "usd": "22.00", "duration_days": 365, "awg_slots": 1, "vless_slots": 0},
+    # ── v2 тарифы по скорости (Reality) ──
+    "vpn_solo":      {"name": "Solo",   "stars": 250, "rub": "350",  "usd": "3.50", "duration_days": 30,
+                      "awg_slots": 0, "vless_slots": 2,  "speed_mbps": 30,  "soft_cap_gb": 200,  "throttle_mbps": 3},
+    "vpn_family_v2": {"name": "Family", "stars": 430, "rub": "600",  "usd": "6.00", "duration_days": 30,
+                      "awg_slots": 0, "vless_slots": 5,  "speed_mbps": 50,  "soft_cap_gb": 600,  "throttle_mbps": 8},
+    "vpn_pro_v2":    {"name": "Pro",    "stars": 800, "rub": "1100", "usd": "11.00", "duration_days": 30,
+                      "awg_slots": 0, "vless_slots": 10, "speed_mbps": 100, "soft_cap_gb": 1500, "throttle_mbps": 25},
+
+    # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
+    "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_popular": {"name": "Популярный", "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30, "awg_slots": 2, "vless_slots": 0, "legacy": True},
+    "vpn_pro":     {"name": "Про",        "stars": 342,  "rub": "450",  "usd": "5.00",  "duration_days": 30, "awg_slots": 3, "vless_slots": 1, "legacy": True},
+    "vpn_family":  {"name": "Семейный",   "stars": 513,  "rub": "640",  "usd": "7.00",  "duration_days": 30, "awg_slots": 7, "vless_slots": 1, "legacy": True},
+    "vpn_1m":      {"name": "1 месяц",    "stars": 299,  "rub": "299",  "usd": "3.50",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_3m":      {"name": "3 месяца",   "stars": 699,  "rub": "699",  "usd": "8.00",  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_1y":      {"name": "1 год",      "stars": 1990, "rub": "1990", "usd": "22.00", "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
 }
 
 # ── Авторизация ────────────────────────────────────────────────────────────────

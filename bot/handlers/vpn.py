@@ -53,35 +53,74 @@ router = Router()
 # ── Тарифы ─────────────────────────────────────────────────────────────────────
 
 VPN_PLANS: dict[str, dict] = {
-    # Новые тарифы
-    "vpn_start":   {"name": "Старт",      "stars": 128,  "duration_days": 30, "awg_slots": 1, "vless_slots": 0},
-    "vpn_popular": {"name": "Популярный", "stars": 214,  "duration_days": 30, "awg_slots": 2, "vless_slots": 0},
-    "vpn_pro":     {"name": "Про",        "stars": 342,  "duration_days": 30, "awg_slots": 3, "vless_slots": 1},
-    "vpn_family":  {"name": "Семейный",   "stars": 513,  "duration_days": 30, "awg_slots": 7, "vless_slots": 1},
-    # Старые тарифы — обратная совместимость
-    "vpn_1m": {"name": "1 месяц",  "stars": 299,  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0},
-    "vpn_3m": {"name": "3 месяца", "stars": 699,  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0},
-    "vpn_1y": {"name": "1 год",    "stars": 1990, "duration_days": 365, "awg_slots": 1, "vless_slots": 0},
+    # ── v2 тарифы по скорости (Reality only) ──
+    # speed_mbps — гарантированная скорость, soft_cap_gb — мягкий лимит трафика,
+    # после которого скорость падает до throttle_mbps до конца месяца.
+    "vpn_solo": {
+        "name":           "Solo",
+        "stars":          250,            # ≈ 350 ₽
+        "duration_days":  30,
+        "awg_slots":      0,
+        "vless_slots":    2,              # 2 устройства
+        "speed_mbps":     30,
+        "soft_cap_gb":    200,
+        "throttle_mbps":  3,
+        "description":    "1 чел в 4K + кто-то параллельно в Telegram",
+    },
+    "vpn_family_v2": {
+        "name":           "Family",
+        "stars":          430,            # ≈ 600 ₽
+        "duration_days":  30,
+        "awg_slots":      0,
+        "vless_slots":    5,
+        "speed_mbps":     50,
+        "soft_cap_gb":    600,
+        "throttle_mbps":  8,
+        "description":    "2 человека одновременно в 4K",
+    },
+    "vpn_pro_v2": {
+        "name":           "Pro",
+        "stars":          800,            # ≈ 1100 ₽
+        "duration_days":  30,
+        "awg_slots":      0,
+        "vless_slots":    10,
+        "speed_mbps":     100,
+        "soft_cap_gb":    1500,
+        "throttle_mbps":  25,
+        "description":    "Семья 5+ устройств, торренты, стриминг",
+    },
+
+    # ── Legacy тарифы (для уже-купивших, в UI скрыты) ──
+    "vpn_start":   {"name": "Старт",      "stars": 128,  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_popular": {"name": "Популярный", "stars": 214,  "duration_days": 30, "awg_slots": 2, "vless_slots": 0, "legacy": True},
+    "vpn_pro":     {"name": "Про",        "stars": 342,  "duration_days": 30, "awg_slots": 3, "vless_slots": 1, "legacy": True},
+    "vpn_family":  {"name": "Семейный",   "stars": 513,  "duration_days": 30, "awg_slots": 7, "vless_slots": 1, "legacy": True},
+    "vpn_1m":      {"name": "1 месяц",    "stars": 299,  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_3m":      {"name": "3 месяца",   "stars": 699,  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_1y":      {"name": "1 год",      "stars": 1990, "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
 }
 
 PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="Старт — 128 ⭐️ · 1 устройство",        callback_data="vpn:buy:vpn_start")],
-    [InlineKeyboardButton(text="Популярный — 214 ⭐️ · 2 устройства",   callback_data="vpn:buy:vpn_popular")],
-    [InlineKeyboardButton(text="Про — 342 ⭐️ · 3 AWG + VLESS",        callback_data="vpn:buy:vpn_pro")],
-    [InlineKeyboardButton(text="Семейный — 513 ⭐️ · 7 AWG + VLESS",   callback_data="vpn:buy:vpn_family")],
-    [InlineKeyboardButton(text="📖 Как настроить?",                     callback_data="vpn:howto")],
-    [InlineKeyboardButton(text="◀️ Назад",                              callback_data="menu:start")],
+    [InlineKeyboardButton(text="🟢 Solo — 250 ⭐️ · 30 Mbps · 2 устройства",       callback_data="vpn:buy:vpn_solo")],
+    [InlineKeyboardButton(text="⭐ Family — 430 ⭐️ · 50 Mbps · 5 устройств",     callback_data="vpn:buy:vpn_family_v2")],
+    [InlineKeyboardButton(text="💎 Pro — 800 ⭐️ · 100 Mbps · 10 устройств",       callback_data="vpn:buy:vpn_pro_v2")],
+    [InlineKeyboardButton(text="📖 Как настроить?",                                 callback_data="vpn:howto")],
+    [InlineKeyboardButton(text="◀️ Назад",                                          callback_data="menu:start")],
 ])
 
 HOWTO_TEXT = (
     "📖 <b>Как настроить VPN</b>\n\n"
-    "1. Скачай <b>Amnezia VPN</b>:\n"
-    "   • <a href=\"https://apps.apple.com/app/amneziavpn/id1600529126\">iOS / macOS</a>\n"
-    "   • <a href=\"https://play.google.com/store/apps/details?id=org.amnezia.vpn\">Android</a>\n"
-    "   • <a href=\"https://github.com/amnezia-vpn/amnezia-client/releases\">Windows / Linux</a>\n\n"
-    "2. После оплаты я пришлю файл конфигурации (.conf)\n\n"
-    "3. В приложении: <b>«+»</b> → <b>«Добавить файл»</b> → выбери файл\n\n"
-    "4. Нажми <b>Подключить</b> — готово! ✅"
+    "<b>1. Скачай приложение</b> (рекомендуем <b>Happ</b>):\n"
+    "   • <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">iOS</a>\n"
+    "   • <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Android</a>\n"
+    "   • Альтернативы: Streisand, V2Box, Shadowrocket\n\n"
+    "<b>2. После оплаты</b> я пришлю vless://-ссылку\n\n"
+    "<b>3. В Happ:</b>\n"
+    "   • Нажми <b>«+»</b> → <b>«Из буфера обмена»</b>\n"
+    "   • Или скопируй ссылку и вставь вручную\n\n"
+    "<b>4. Включи переключатель</b> — готово! ✅\n\n"
+    "💡 Если какие-то российские сайты не открываются (Сбер, Госуслуги) — "
+    "напиши в поддержку, добавим в исключения"
 )
 
 MOCK_CONFIG_TEMPLATE = """\
@@ -107,11 +146,15 @@ PersistentKeepalive = 25
 @router.callback_query(F.data == "menu:vpn")
 async def show_vpn_menu(callback: CallbackQuery):
     await callback.message.edit_text(
-        "🌐 <b>VPN — безлимитный доступ к интернету</b>\n\n"
-        "Протокол: <b>Amnezia WireGuard</b> (обходит DPI-блокировки)\n"
-        "Сервер: 🇺🇸 США\n"
-        "Скорость: до 300 Мбит/с\n\n"
-        "Выбери тариф:",
+        "🌐 <b>VPN — обход блокировок и приватность</b>\n\n"
+        "Протокол: <b>VLESS + Reality</b> — маскируется под обычный сайт, "
+        "не палится DPI и ТСПУ\n"
+        "Локация: 🇩🇪 Frankfurt\n"
+        "Soft-лимит трафика, после — медленнее, но не отключение\n\n"
+        "<b>Тарифы по скорости:</b>\n"
+        "• <b>Solo</b> 30 Mbps — 1 человек, 4K видео\n"
+        "• <b>Family</b> 50 Mbps — 2 человека одновременно в 4K\n"
+        "• <b>Pro</b> 100 Mbps — семья + торренты\n",
         reply_markup=PLANS_KEYBOARD,
         parse_mode="HTML",
     )
