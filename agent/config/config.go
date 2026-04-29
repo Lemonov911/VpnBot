@@ -26,6 +26,19 @@ type Config struct {
 	TelegramAdminIDs []int64
 
 	ScriptsDir string // base directory for script-based services
+
+	// Xray / VLESS-Reality (used when "vless" appears in Services).
+	XrayConfigPath  string // /usr/local/etc/xray/config.json
+	XrayAPIAddr     string // 127.0.0.1:10085
+	XrayInboundTag  string // "vless-reality-fr" or similar
+	XrayBin         string // /usr/local/bin/xray
+	XrayInboundPort int    // first port of the inbound (used in adu JSON)
+	XrayFlow        string // "xtls-rprx-vision" or empty
+	XrayPublicHost  string // host to embed in vless:// URLs (e.g. fr.maxvpn.shop or IP)
+	XrayPubKey      string // Reality publicKey
+	XrayShortID     string // Reality shortId
+	XraySNI         string // Reality dest, e.g. www.yahoo.com
+	XrayFingerprint string // utls fingerprint, default "chrome"
 }
 
 func Load() *Config {
@@ -36,6 +49,12 @@ func Load() *Config {
 	fsInterval, _ := strconv.Atoi(env("FAIRSHARE_INTERVAL_SEC", "120"))
 
 	services := parseServices(env("SERVICES", "wg"))
+	xrayPort, _ := strconv.Atoi(env("XRAY_INBOUND_PORT", "8443"))
+
+	wgEndpoint := env("WG_ENDPOINT", "")
+	if wgEndpoint == "" && contains(services, "wg") {
+		log.Fatalf("required env WG_ENDPOINT is not set (needed for wg service)")
+	}
 
 	cfg := &Config{
 		ListenAddr:           env("LISTEN_ADDR", "0.0.0.0:9000"),
@@ -43,7 +62,7 @@ func Load() *Config {
 		Services:             services,
 		WGInterface:          env("WG_INTERFACE", "wg0"),
 		WGSubnet:             env("WG_SUBNET", "10.8.0.0/24"),
-		WGEndpoint:           mustEnv("WG_ENDPOINT"),
+		WGEndpoint:           wgEndpoint,
 		WGPort:               port,
 		TotalBandwidthMbit:   totalBW,
 		MinPerPeerMbit:       minBW,
@@ -51,8 +70,42 @@ func Load() *Config {
 		TelegramBotToken:     env("BOT_TOKEN", ""),
 		TelegramAdminIDs:     adminIDs,
 		ScriptsDir:           env("SCRIPTS_DIR", "/opt/vpnbot/scripts"),
+
+		XrayConfigPath:  env("XRAY_CONFIG_PATH", "/usr/local/etc/xray/config.json"),
+		XrayAPIAddr:     env("XRAY_API_ADDR", "127.0.0.1:10085"),
+		XrayInboundTag:  env("XRAY_INBOUND_TAG", "vless-in"),
+		XrayBin:         env("XRAY_BIN", "/usr/local/bin/xray"),
+		XrayInboundPort: xrayPort,
+		XrayFlow:        env("XRAY_FLOW", "xtls-rprx-vision"),
+		XrayPublicHost:  env("XRAY_PUBLIC_HOST", ""),
+		XrayPubKey:      env("XRAY_PUBKEY", ""),
+		XrayShortID:     env("XRAY_SHORT_ID", ""),
+		XraySNI:         env("XRAY_SNI", "www.yahoo.com"),
+		XrayFingerprint: env("XRAY_FINGERPRINT", "chrome"),
 	}
+
+	if contains(services, "vless") {
+		if cfg.XrayPublicHost == "" {
+			log.Fatalf("required env XRAY_PUBLIC_HOST is not set (needed for vless service)")
+		}
+		if cfg.XrayPubKey == "" {
+			log.Fatalf("required env XRAY_PUBKEY is not set (needed for vless service)")
+		}
+		if cfg.XrayShortID == "" {
+			log.Fatalf("required env XRAY_SHORT_ID is not set (needed for vless service)")
+		}
+	}
+
 	return cfg
+}
+
+func contains(s []string, target string) bool {
+	for _, v := range s {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 func env(key, fallback string) string {

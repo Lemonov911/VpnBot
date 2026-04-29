@@ -114,6 +114,21 @@ class VpnctlClient:
     async def resume_all(self, service: str, ids: list[str]):
         await self._post(f"/services/{service}/peers/resume-all", {"ids": ids})
 
+    async def sync_active_ids(self, service: str, valid_ids: list[str]) -> dict:
+        """Tell agent which peer IDs are paid for. Agent removes any not in this list.
+        Returns: {"removed": [...], "kept": N, "valid_count": M}."""
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{self.base}/services/{service}/sync",
+                json={"valid_ids": valid_ids},
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                data = await r.json()
+                if r.status != 200:
+                    raise VpnctlError(f"sync({service}) failed: {data}")
+                return data
+
     # ── Backward compat (WG-only) ──────────────────────────────────────────────
 
     async def add_wg_peer(self, label: str) -> PeerResult:

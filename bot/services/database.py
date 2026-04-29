@@ -634,6 +634,30 @@ async def update_config_traffic(config_id: int, rx: int, tx: int, last_seen: str
         await db.commit()
 
 
+async def get_config_id_by_vless_uuid(vless_uuid: str) -> int | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id FROM configs WHERE vless_uuid=? LIMIT 1", (vless_uuid,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def get_active_vless_uuids_by_server(server_id: int) -> list[str]:
+    """UUIDs of currently active VLESS configs on the given server.
+    Used by sync job to tell agent which UUIDs are still paid for."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT c.vless_uuid FROM configs c
+               JOIN subscriptions s ON c.subscription_id = s.id
+               WHERE c.server_id=? AND c.protocol='vless' AND c.status='active'
+                 AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
+                 AND s.status='active'""",
+            (server_id,),
+        ) as cur:
+            return [r[0] for r in await cur.fetchall()]
+
+
 async def get_user_configs_full(user_id: int) -> list[dict]:
     """Конфиги пользователя с данными сервера."""
     async with aiosqlite.connect(DB_PATH) as db:

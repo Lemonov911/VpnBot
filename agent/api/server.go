@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/peers/{id}/resume", s.handleServiceResumePeer(svcRef))
 				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, false))
 				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, false))
+				r.Post("/sync", s.handleServiceSync(svcRef))
 				r.Get("/info", s.handleServiceInfo(svcRef))
 			})
 

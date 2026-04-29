@@ -200,6 +200,48 @@ func (s *Server) handleServiceInfo(svc service.Service) http.HandlerFunc {
 	}
 }
 
+type syncReq struct {
+	ValidIDs []string `json:"valid_ids"`
+}
+
+// handleServiceSync removes any peer whose ID is not in valid_ids.
+// Used by the bot to keep the agent in sync with paid subscriptions —
+// peers whose subscription expired/was cancelled are removed automatically.
+func (s *Server) handleServiceSync(svc service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req syncReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		peers, err := svc.ListPeers()
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		valid := make(map[string]bool, len(req.ValidIDs))
+		for _, id := range req.ValidIDs {
+			valid[id] = true
+		}
+		removed := []string{}
+		kept := 0
+		for _, p := range peers {
+			if !valid[p.ID] {
+				if err := svc.RemovePeer(p.ID); err == nil {
+					removed = append(removed, p.ID)
+				}
+				continue
+			}
+			kept++
+		}
+		jsonOK(w, map[string]any{
+			"removed":     removed,
+			"kept":        kept,
+			"valid_count": len(req.ValidIDs),
+		})
+	}
+}
+
 func serviceNames(services map[string]service.Service) []string {
 	names := make([]string, 0, len(services))
 	for name := range services {
