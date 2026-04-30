@@ -172,13 +172,16 @@ async def _migrate(db: aiosqlite.Connection):
     if "admin_msg_id" not in cols:
         await db.execute("ALTER TABLE support_tickets ADD COLUMN admin_msg_id INTEGER")
 
-    # users — referral tracking
+    # users — referral tracking + sub_token (for subscription URL)
     async with db.execute("PRAGMA table_info(users)") as cur:
         cols = {row[1] for row in await cur.fetchall()}
     if "referred_by" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
     if "ref_bonus_days" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN ref_bonus_days INTEGER NOT NULL DEFAULT 0")
+    if "sub_token" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN sub_token TEXT")
+        await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)")
 
 
 async def _seed_default_server():
@@ -682,6 +685,46 @@ async def update_config_data(config_id: int, config_data: str):
             (config_data, config_id),
         )
         await db.commit()
+
+
+async def get_or_create_sub_token(user_id: int) -> str:
+    """Returns the user's stable subscription token (creates one on first call)."""
+    import secrets
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT sub_token FROM users WHERE id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+        if row and row[0]:
+            return row[0]
+        token = secrets.token_urlsafe(24)
+        await db.execute("UPDATE users SET sub_token=? WHERE id=?", (token, user_id))
+        await db.commit()
+        return token
+
+
+async def get_user_by_sub_token(token: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM users WHERE sub_token=? LIMIT 1", (token,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_active_vless_configs_for_user(user_id: int) -> list[dict]:
+    """Active VLESS configs (with config_data) belonging to the user.
+    Used to render subscription endpoint."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT c.id, c.config_data, c.peer_name, c.label, c.protocol
+               FROM configs c
+               JOIN subscriptions s ON c.subscription_id = s.id
+               WHERE c.user_id=? AND c.protocol='vless' AND c.status='active'
+                 AND s.status='active'
+                 AND c.config_data IS NOT NULL AND c.config_data != ''
+               ORDER BY c.id""",
+            (user_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def get_user_configs_full(user_id: int) -> list[dict]:

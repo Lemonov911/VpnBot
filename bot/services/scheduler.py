@@ -200,7 +200,8 @@ async def _apply_quota_throttle(bot: Bot):
                         cfg["user_id"],
                         f"🐢 <b>Лимит трафика {cap_gb} GB исчерпан</b>\n\n"
                         f"Скорость снижена до {plan.get('throttle_mbps', '?')} Mbps до конца месяца.\n"
-                        f"Чтобы вернуть полную скорость — обнови URL в приложении (свежий придёт в /myvpn).\n\n"
+                        f"Если ты импортировал <b>Subscription URL</b> — конфиг обновится автоматически "
+                        f"в течение нескольких минут.\n\n"
                         f"💎 Апгрейд тарифа в /start даёт больше квоты.",
                         parse_mode="HTML",
                     )

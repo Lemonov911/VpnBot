@@ -18,6 +18,7 @@ eSIM:
   В DEBUG-режиме проверка отключается.
 """
 
+import base64
 import logging
 import os
 
@@ -693,6 +694,37 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "scheduled": True})
 
 
+# ── Subscription URL для VPN-клиентов ──────────────────────────────────────────
+
+async def handle_user_subscription(request: web.Request) -> web.Response:
+    """GET /sub/{token} — возвращает base64-encoded список vless URL клиента.
+    Happ / Streisand / sing-box обновляют его в фоне, поэтому при throttle
+    или смене UUID юзер автоматически получает свежие конфиги."""
+    from services.database import get_user_by_sub_token, get_active_vless_configs_for_user
+
+    token = request.match_info.get("token", "").strip()
+    if not token or len(token) < 16:
+        return web.Response(text="invalid", status=400)
+
+    user = await get_user_by_sub_token(token)
+    if not user:
+        return web.Response(text="not found", status=404)
+
+    configs = await get_active_vless_configs_for_user(user["id"])
+    urls = [c["config_data"] for c in configs if c.get("config_data")]
+    body_text = "\n".join(urls)
+    encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
+
+    headers = {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        # Подсказка sing-box / Happ как часто опрашивать
+        "Subscription-Userinfo": f"upload=0; download=0; total=0",
+        "Profile-Update-Interval": "12",
+    }
+    return web.Response(text=encoded, headers=headers)
+
+
 # ── Статистика пользователя ────────────────────────────────────────────────────
 
 async def handle_user_stats(request: web.Request) -> web.Response:
@@ -843,6 +875,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/vpn/config/{id}/revoke",     handle_vpn_config_revoke)
     app.router.add_get ("/api/vpn/subscription",           handle_vpn_subscription)
     app.router.add_post("/api/vpn/subscription/change",    handle_vpn_change_plan)
+    # Subscription URL для VPN-клиентов (Happ/Streisand): один URL — все его vless-конфиги
+    app.router.add_get ("/sub/{token}",                    handle_user_subscription)
 
     # CryptoBot webhook
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)

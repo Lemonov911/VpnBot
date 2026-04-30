@@ -371,11 +371,28 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     else:
         note = "Конфиги появятся в мини-апп → <b>Мои конфиги</b> как только серверы будут готовы."
 
+    # Persistent subscription URL (Happ / Streisand auto-refresh при throttle)
+    sub_url = ""
+    if vless_slots > 0 and created_vless > 0:
+        try:
+            from services.database import get_or_create_sub_token
+            tok = await get_or_create_sub_token(user_id)
+            sub_url = f"https://maxvpn.shop/sub/{tok}"
+        except Exception as e:
+            logger.warning("sub_token gen failed for user %d: %s", user_id, e)
+
+    sub_block = (
+        f"\n\n🔗 <b>Subscription URL</b> (импортируй в Happ один раз — обновляется автоматом):\n"
+        f"<code>{sub_url}</code>"
+        if sub_url else ""
+    )
+
     await message.answer(
         f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
         f"📅 Действует до: <b>{expiry_str}</b>\n"
         f"🔌 Слотов: <b>{slots_desc}</b>\n\n"
-        f"{note}",
+        f"{note}"
+        f"{sub_block}",
         parse_mode="HTML",
     )
 
