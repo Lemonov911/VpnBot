@@ -11,6 +11,7 @@ import (
 
 type addPeerReq struct {
 	Label string `json:"label"`
+	ID    string `json:"id,omitempty"` // optional — reuse this UUID instead of generating a new one
 }
 
 type bulkIDsReq struct {
@@ -48,7 +49,18 @@ func (s *Server) handleServiceAddPeer(svc service.Service, compatWG bool) http.H
 		if req.Label == "" {
 			req.Label = "unnamed"
 		}
-		peer, err := svc.AddPeer(req.Label)
+		var peer *service.Peer
+		var err error
+		if req.ID != "" {
+			if svc2, ok := svc.(service.PeerWithIDAdder); ok {
+				peer, err = svc2.AddPeerWithID(req.ID, req.Label)
+			} else {
+				jsonError(w, "service does not support add-with-id", http.StatusBadRequest)
+				return
+			}
+		} else {
+			peer, err = svc.AddPeer(req.Label)
+		}
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return

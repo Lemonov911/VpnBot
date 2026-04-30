@@ -121,6 +121,16 @@ def vless_service_for_plan(plan_key: str) -> str:
     return "vless"
 
 
+def vless_slow_service_for_plan(plan_key: str) -> str | None:
+    """Throttled service for a plan, used after soft-cap is exceeded.
+    Returns None for legacy plans without a slow-tier."""
+    if plan_key == "vpn_base":
+        return "vless-base-slow"
+    if plan_key == "vpn_max":
+        return "vless-max-slow"
+    return None
+
+
 MOCK_CONFIG_TEMPLATE = """\
 # ТЕСТОВЫЙ КОНФИГ — сервер ещё не подключён
 # Рабочий файл придёт автоматически когда сервер будет готов

@@ -53,11 +53,14 @@ class VpnctlClient:
 
     # ── Generic service API ────────────────────────────────────────────────────
 
-    async def add_peer(self, service: str, label: str) -> PeerResult:
+    async def add_peer(self, service: str, label: str, *, peer_id: str | None = None) -> PeerResult:
+        body: dict = {"label": label}
+        if peer_id:
+            body["id"] = peer_id
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{self.base}/services/{service}/peers",
-                json={"label": label},
+                json=body,
                 headers=self._headers(),
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:

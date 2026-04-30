@@ -92,14 +92,18 @@ func Load() *Config {
 	// Tier-specific config: каждый VLESS-service (vless, vless-base, vless-max)
 	// читает свою пару INBOUND_TAG / INBOUND_PORT.
 	tierVarPrefix := map[string]string{
-		"vless":      "XRAY", // legacy compatibility — XRAY_INBOUND_TAG / XRAY_INBOUND_PORT
-		"vless-base": "XRAY_BASE",
-		"vless-max":  "XRAY_MAX",
+		"vless":           "XRAY", // legacy compatibility — XRAY_INBOUND_TAG / XRAY_INBOUND_PORT
+		"vless-base":      "XRAY_BASE",
+		"vless-max":       "XRAY_MAX",
+		"vless-base-slow": "XRAY_BASE_SLOW",
+		"vless-max-slow":  "XRAY_MAX_SLOW",
 	}
 	tierDefaults := map[string]TierConfig{
-		"vless":      {InboundTag: "vless-in", InboundPort: 8443},
-		"vless-base": {InboundTag: "vless-reality-base", InboundPort: 8443},
-		"vless-max":  {InboundTag: "vless-reality-max", InboundPort: 8448},
+		"vless":           {InboundTag: "vless-in", InboundPort: 8443},
+		"vless-base":      {InboundTag: "vless-reality-base", InboundPort: 8443},
+		"vless-max":       {InboundTag: "vless-reality-max", InboundPort: 8448},
+		"vless-base-slow": {InboundTag: "vless-reality-base-slow", InboundPort: 9443},
+		"vless-max-slow":  {InboundTag: "vless-reality-max-slow", InboundPort: 9448},
 	}
 	hasVLESS := false
 	for _, svc := range services {

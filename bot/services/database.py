@@ -658,6 +658,32 @@ async def get_active_vless_uuids_by_server(server_id: int) -> list[str]:
             return [r[0] for r in await cur.fetchall()]
 
 
+async def get_active_vless_configs_with_plan() -> list[dict]:
+    """Active VLESS configs along with the plan_key of their subscription.
+    Used by quota-throttle scheduler."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT c.id AS config_id, c.user_id, c.server_id, c.vless_uuid, c.config_data,
+                      c.rx_bytes, c.tx_bytes, s.plan AS plan_key, s.id AS subscription_id
+               FROM configs c
+               JOIN subscriptions s ON c.subscription_id = s.id
+               WHERE c.protocol='vless' AND c.status='active'
+                 AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
+                 AND s.status='active'"""
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_config_data(config_id: int, config_data: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE configs SET config_data=? WHERE id=?",
+            (config_data, config_id),
+        )
+        await db.commit()
+
+
 async def get_user_configs_full(user_id: int) -> list[dict]:
     """Конфиги пользователя с данными сервера."""
     async with aiosqlite.connect(DB_PATH) as db:

@@ -32,8 +32,15 @@ from services.database import (
     update_config_traffic,
     get_config_id_by_vless_uuid,
     get_active_vless_uuids_by_server,
+    get_active_vless_configs_with_plan,
+    update_config_data,
 )
 from services.vpnctl_client import suspend_peer, client_for_server, VpnctlError
+from handlers.vpn import (
+    VPN_PLANS,
+    vless_service_for_plan,
+    vless_slow_service_for_plan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +152,72 @@ async def _sync_vless_stats():
                 await update_config_traffic(cfg_id, rx, tx, last_seen)
 
 
+async def _apply_quota_throttle(bot: Bot):
+    """For each VLESS config, check if soft-cap is exceeded and switch
+    user between normal and throttled tiers via the agent."""
+    configs = await get_active_vless_configs_with_plan()
+    for cfg in configs:
+        plan = VPN_PLANS.get(cfg["plan_key"])
+        if not plan:
+            continue
+        cap_gb = plan.get("soft_cap_gb")
+        if not cap_gb:
+            continue  # legacy plan without speed-tier — пропускаем
+
+        cap_bytes = cap_gb * (1024 ** 3)
+        used = (cfg.get("rx_bytes") or 0) + (cfg.get("tx_bytes") or 0)
+        cfg_data = cfg.get("config_data") or ""
+        is_throttled = (":9443" in cfg_data) or (":9448" in cfg_data)
+        should_throttle = used > cap_bytes
+
+        if should_throttle == is_throttled:
+            continue  # state already correct
+
+        normal_svc = vless_service_for_plan(cfg["plan_key"])
+        slow_svc = vless_slow_service_for_plan(cfg["plan_key"])
+        if not slow_svc:
+            continue
+
+        server = await get_server_by_id(cfg["server_id"])
+        if not server or not server.get("agent_url"):
+            continue
+        client = client_for_server(server)
+        uuid = cfg["vless_uuid"]
+        label = f"tg{cfg['user_id']}_{cfg['config_id']}"
+
+        try:
+            if should_throttle and not is_throttled:
+                # Move into throttled tier: add to slow, remove from normal
+                slow_peer = await client.add_peer(slow_svc, label, peer_id=uuid)
+                await client.remove_peer(normal_svc, uuid)
+                await update_config_data(cfg["config_id"], slow_peer.config)
+                logger.info(
+                    "throttled config #%d (used %.1f GB > %d GB cap)",
+                    cfg["config_id"], used / 1024**3, cap_gb,
+                )
+                try:
+                    await bot.send_message(
+                        cfg["user_id"],
+                        f"🐢 <b>Лимит трафика {cap_gb} GB исчерпан</b>\n\n"
+                        f"Скорость снижена до {plan.get('throttle_mbps', '?')} Mbps до конца месяца.\n"
+                        f"Чтобы вернуть полную скорость — обнови URL в приложении (свежий придёт в /myvpn).\n\n"
+                        f"💎 Апгрейд тарифа в /start даёт больше квоты.",
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    logger.warning("notify throttle user %d: %s", cfg["user_id"], e)
+            elif is_throttled and not should_throttle:
+                # Restore: re-add to normal, remove from slow
+                normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
+                await client.remove_peer(slow_svc, uuid)
+                await update_config_data(cfg["config_id"], normal_peer.config)
+                logger.info("throttle restored on config #%d", cfg["config_id"])
+        except VpnctlError as e:
+            logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e)
+        except Exception as e:
+            logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e)
+
+
 async def _sync_vless_active_uuids():
     """Sends the list of currently-active UUIDs to each VLESS server.
     Agent removes any UUID not in the list — stops users without a paid subscription."""
@@ -204,6 +277,7 @@ async def run_scheduler(bot: Bot):
             await _process_expired_orders(bot)
             await _send_expiry_reminders(bot)
             await _sync_vless_stats()
+            await _apply_quota_throttle(bot)
             await _sync_vless_active_uuids()
         except Exception as e:
             logger.error("Ошибка планировщика: %s", e)

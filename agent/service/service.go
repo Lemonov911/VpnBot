@@ -24,3 +24,10 @@ type Service interface {
 	ResumeAll(ids []string) error
 	Info() map[string]any
 }
+
+// PeerWithIDAdder is an optional capability — services that can add a peer
+// with a caller-supplied ID (e.g. to keep VLESS UUIDs across tier moves)
+// implement this. Use a type assertion in handlers.
+type PeerWithIDAdder interface {
+	AddPeerWithID(id, label string) (*Peer, error)
+}

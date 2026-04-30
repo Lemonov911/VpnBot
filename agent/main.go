@@ -39,16 +39,16 @@ func main() {
 			services["wg"] = service.NewWGService(mgr)
 			log.Printf("service: wg (built-in, interface=%s)", cfg.WGInterface)
 
-		case "vless", "vless-base", "vless-max":
+		case "vless", "vless-base", "vless-max", "vless-base-slow", "vless-max-slow":
 			tier, ok := cfg.XrayTiers[svcName]
 			if !ok {
 				log.Fatalf("vless tier %q not configured", svcName)
 			}
-			// vless-max использует чистый VLESS без vision, чтобы быть
-			// совместимым с большим набором клиентов и mux в перспективе.
-			// vless и vless-base — с Vision.
+			// vless-max и его slow-вариант используют чистый VLESS без vision,
+			// чтобы быть совместимым с большим набором клиентов и mux в перспективе.
+			// vless / vless-base / vless-base-slow — с Vision.
 			flow := cfg.XrayFlow
-			if svcName == "vless-max" {
+			if svcName == "vless-max" || svcName == "vless-max-slow" {
 				flow = ""
 			}
 			xrayMgr := xraypkg.NewManager(

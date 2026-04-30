@@ -39,9 +39,8 @@ func NewVLESSService(mgr *xray.Manager, conn VLESSConnection) *VLESSService {
 	if conn.FP == "" {
 		conn.FP = "chrome"
 	}
-	if conn.Flow == "" {
-		conn.Flow = "xtls-rprx-vision"
-	}
+	// Note: empty conn.Flow is intentional — vless-max / vless-max-slow run
+	// plain VLESS without xtls-rprx-vision. Don't set a default here.
 	return &VLESSService{
 		mgr:       mgr,
 		conn:      conn,
@@ -69,6 +68,27 @@ func (s *VLESSService) buildURL(uuid, label string) string {
 
 func (s *VLESSService) AddPeer(label string) (*Peer, error) {
 	user, err := s.mgr.AddUser(label)
+	if err != nil {
+		return nil, err
+	}
+	return &Peer{
+		ID:     user.UUID,
+		Label:  label,
+		Config: s.buildURL(user.UUID, label),
+		Extra: map[string]any{
+			"email":    user.Email,
+			"uuid":     user.UUID,
+			"protocol": "vless-reality",
+		},
+	}, nil
+}
+
+// AddPeerWithID adds the user using a caller-supplied UUID — used by the bot
+// to "move" a user between tiers (e.g. base → base-slow on quota throttle).
+// Email is "<label>@vpn".
+func (s *VLESSService) AddPeerWithID(id, label string) (*Peer, error) {
+	email := label + "@vpn"
+	user, err := s.mgr.AddUserWithUUID(id, email)
 	if err != nil {
 		return nil, err
 	}
