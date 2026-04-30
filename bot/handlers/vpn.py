@@ -111,6 +111,16 @@ HOWTO_TEXT = (
     "напиши в поддержку, добавим в исключения"
 )
 
+def vless_service_for_plan(plan_key: str) -> str:
+    """Resolves vpnctl service-name for a given plan_key.
+    New v2 plans map to speed-tier services; legacy/unknown fallback to 'vless'."""
+    if plan_key == "vpn_base":
+        return "vless-base"
+    if plan_key == "vpn_max":
+        return "vless-max"
+    return "vless"
+
+
 MOCK_CONFIG_TEMPLATE = """\
 # ТЕСТОВЫЙ КОНФИГ — сервер ещё не подключён
 # Рабочий файл придёт автоматически когда сервер будет готов
@@ -320,13 +330,14 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             except VpnctlError as e:
                 logger.warning("vpnctl WG peer error: %s", e)
 
+    vless_service = vless_service_for_plan(plan_key)
     for i in range(vless_slots):
         config_id = await create_config_record(sub_id, user_id, protocol="vless")
         server = await get_best_server("vless")
         if server:
             try:
                 label = f"user_{user_id}_vless_{i+1}"
-                peer = await provision_peer(server, label, "vless")
+                peer = await provision_peer(server, label, vless_service)
                 await save_peer_to_config(
                     config_id, server["id"], peer.id,
                     "", peer.config, label,

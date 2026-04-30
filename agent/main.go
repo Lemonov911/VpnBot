@@ -39,26 +39,37 @@ func main() {
 			services["wg"] = service.NewWGService(mgr)
 			log.Printf("service: wg (built-in, interface=%s)", cfg.WGInterface)
 
-		case "vless":
+		case "vless", "vless-base", "vless-max":
+			tier, ok := cfg.XrayTiers[svcName]
+			if !ok {
+				log.Fatalf("vless tier %q not configured", svcName)
+			}
+			// vless-max использует чистый VLESS без vision, чтобы быть
+			// совместимым с большим набором клиентов и mux в перспективе.
+			// vless и vless-base — с Vision.
+			flow := cfg.XrayFlow
+			if svcName == "vless-max" {
+				flow = ""
+			}
 			xrayMgr := xraypkg.NewManager(
 				cfg.XrayConfigPath,
 				cfg.XrayAPIAddr,
-				cfg.XrayInboundTag,
+				tier.InboundTag,
 				cfg.XrayBin,
-				cfg.XrayInboundPort,
-				cfg.XrayFlow,
+				tier.InboundPort,
+				flow,
 			)
-			services["vless"] = service.NewVLESSService(xrayMgr, service.VLESSConnection{
+			services[svcName] = service.NewVLESSService(xrayMgr, service.VLESSConnection{
 				Host:    cfg.XrayPublicHost,
-				Port:    cfg.XrayInboundPort,
+				Port:    tier.InboundPort,
 				SNI:     cfg.XraySNI,
 				PubKey:  cfg.XrayPubKey,
 				ShortID: cfg.XrayShortID,
 				FP:      cfg.XrayFingerprint,
-				Flow:    cfg.XrayFlow,
+				Flow:    flow,
 			})
-			log.Printf("service: vless (built-in, inbound=%s, port=%d, host=%s)",
-				cfg.XrayInboundTag, cfg.XrayInboundPort, cfg.XrayPublicHost)
+			log.Printf("service: %s (built-in, inbound=%s, port=%d, host=%s, flow=%q)",
+				svcName, tier.InboundTag, tier.InboundPort, cfg.XrayPublicHost, flow)
 
 		default:
 			svcDir := cfg.ScriptsDir + "/" + svcName

@@ -324,9 +324,16 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     peer_name = f"tg{user['id']}_{config_id}"
 
     from services.vpnctl_client import provision_peer, VpnctlError
+    from handlers.vpn import vless_service_for_plan
+
+    # For VLESS, resolve speed-tier service from the subscription's plan.
+    if config["protocol"] == "vless":
+        service_name = vless_service_for_plan(sub["plan"])
+    else:
+        service_name = config["protocol"]
 
     try:
-        result = await provision_peer(server, peer_name, config["protocol"])
+        result = await provision_peer(server, peer_name, service_name)
     except VpnctlError as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
         return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)

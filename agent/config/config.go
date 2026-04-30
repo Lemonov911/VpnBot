@@ -27,18 +27,25 @@ type Config struct {
 
 	ScriptsDir string // base directory for script-based services
 
-	// Xray / VLESS-Reality (used when "vless" appears in Services).
+	// Xray / VLESS-Reality (used when "vless"/"vless-base"/"vless-max" appears in Services).
 	XrayConfigPath  string // /usr/local/etc/xray/config.json
 	XrayAPIAddr     string // 127.0.0.1:10085
-	XrayInboundTag  string // "vless-reality-fr" or similar
 	XrayBin         string // /usr/local/bin/xray
-	XrayInboundPort int    // first port of the inbound (used in adu JSON)
 	XrayFlow        string // "xtls-rprx-vision" or empty
 	XrayPublicHost  string // host to embed in vless:// URLs (e.g. fr.maxvpn.shop or IP)
-	XrayPubKey      string // Reality publicKey
-	XrayShortID     string // Reality shortId
+	XrayPubKey      string // Reality publicKey (shared across tiers)
+	XrayShortID     string // Reality shortId (shared across tiers)
 	XraySNI         string // Reality dest, e.g. www.yahoo.com
 	XrayFingerprint string // utls fingerprint, default "chrome"
+
+	// Per-service tier params. Key = service name ("vless", "vless-base", "vless-max").
+	// Each tier has its own Xray inbound tag and first-port for adu JSON.
+	XrayTiers map[string]TierConfig
+}
+
+type TierConfig struct {
+	InboundTag  string
+	InboundPort int
 }
 
 func Load() *Config {
@@ -49,7 +56,6 @@ func Load() *Config {
 	fsInterval, _ := strconv.Atoi(env("FAIRSHARE_INTERVAL_SEC", "120"))
 
 	services := parseServices(env("SERVICES", "wg"))
-	xrayPort, _ := strconv.Atoi(env("XRAY_INBOUND_PORT", "8443"))
 
 	wgEndpoint := env("WG_ENDPOINT", "")
 	if wgEndpoint == "" && contains(services, "wg") {
@@ -73,26 +79,52 @@ func Load() *Config {
 
 		XrayConfigPath:  env("XRAY_CONFIG_PATH", "/usr/local/etc/xray/config.json"),
 		XrayAPIAddr:     env("XRAY_API_ADDR", "127.0.0.1:10085"),
-		XrayInboundTag:  env("XRAY_INBOUND_TAG", "vless-in"),
 		XrayBin:         env("XRAY_BIN", "/usr/local/bin/xray"),
-		XrayInboundPort: xrayPort,
 		XrayFlow:        env("XRAY_FLOW", "xtls-rprx-vision"),
 		XrayPublicHost:  env("XRAY_PUBLIC_HOST", ""),
 		XrayPubKey:      env("XRAY_PUBKEY", ""),
 		XrayShortID:     env("XRAY_SHORT_ID", ""),
 		XraySNI:         env("XRAY_SNI", "www.yahoo.com"),
 		XrayFingerprint: env("XRAY_FINGERPRINT", "chrome"),
+		XrayTiers:       map[string]TierConfig{},
 	}
 
-	if contains(services, "vless") {
+	// Tier-specific config: каждый VLESS-service (vless, vless-base, vless-max)
+	// читает свою пару INBOUND_TAG / INBOUND_PORT.
+	tierVarPrefix := map[string]string{
+		"vless":      "XRAY", // legacy compatibility — XRAY_INBOUND_TAG / XRAY_INBOUND_PORT
+		"vless-base": "XRAY_BASE",
+		"vless-max":  "XRAY_MAX",
+	}
+	tierDefaults := map[string]TierConfig{
+		"vless":      {InboundTag: "vless-in", InboundPort: 8443},
+		"vless-base": {InboundTag: "vless-reality-base", InboundPort: 8443},
+		"vless-max":  {InboundTag: "vless-reality-max", InboundPort: 8448},
+	}
+	hasVLESS := false
+	for _, svc := range services {
+		prefix, ok := tierVarPrefix[svc]
+		if !ok {
+			continue
+		}
+		hasVLESS = true
+		def := tierDefaults[svc]
+		port, _ := strconv.Atoi(env(prefix+"_INBOUND_PORT", strconv.Itoa(def.InboundPort)))
+		cfg.XrayTiers[svc] = TierConfig{
+			InboundTag:  env(prefix+"_INBOUND_TAG", def.InboundTag),
+			InboundPort: port,
+		}
+	}
+
+	if hasVLESS {
 		if cfg.XrayPublicHost == "" {
-			log.Fatalf("required env XRAY_PUBLIC_HOST is not set (needed for vless service)")
+			log.Fatalf("required env XRAY_PUBLIC_HOST is not set (needed for VLESS service)")
 		}
 		if cfg.XrayPubKey == "" {
-			log.Fatalf("required env XRAY_PUBKEY is not set (needed for vless service)")
+			log.Fatalf("required env XRAY_PUBKEY is not set (needed for VLESS service)")
 		}
 		if cfg.XrayShortID == "" {
-			log.Fatalf("required env XRAY_SHORT_ID is not set (needed for vless service)")
+			log.Fatalf("required env XRAY_SHORT_ID is not set (needed for VLESS service)")
 		}
 	}
 
