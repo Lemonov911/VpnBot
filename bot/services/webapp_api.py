@@ -826,7 +826,10 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 # ── CORS middleware ────────────────────────────────────────────────────────────
 
 ALLOWED_ORIGINS = {
+    "https://maxvpnesim.com",
+    "https://www.maxvpnesim.com",
     "https://maxvpn.shop",
+    "https://www.maxvpn.shop",
     "https://lemonov911.github.io",
     "http://localhost:5173",
     "http://localhost:4173",

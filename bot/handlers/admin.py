@@ -18,8 +18,11 @@ from services.database import (
     create_config_record,
     get_ticket_by_admin_msg,
     get_referral_stats,
+    get_servers_by_protocol,
+    get_active_vless_configs_with_plan,
 )
-from handlers.vpn import VPN_PLANS
+from services.vpnctl_client import client_for_server, VpnctlError
+from handlers.vpn import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan
 
 router = Router()
 
@@ -67,7 +70,7 @@ async def cmd_admin(message: Message):
 
     user = message.from_user
     token = _make_admin_token(user.id, user.username or user.first_name)
-    admin_url = f"https://maxvpn.shop/admin/api/auth/token?t={token}"
+    admin_url = f"https://maxvpnesim.com/admin/api/auth/token?t={token}"
 
     await message.answer(
         "🔐 <b>Вход в админ-панель</b>\n\n"
