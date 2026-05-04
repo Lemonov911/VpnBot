@@ -37,8 +37,8 @@ const PROTO_TEXT: Record<string, string> = {
   vless: 'text-purple',
 }
 const PROTO_LABEL: Record<string, string> = {
-  awg:   'VPN',
-  vless: 'Smart TV',
+  awg:   'WireGuard',
+  vless: 'VLESS',
 }
 
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {

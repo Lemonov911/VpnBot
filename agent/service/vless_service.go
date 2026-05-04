@@ -12,13 +12,15 @@ import (
 
 // VLESSConnection holds the public-facing parameters needed to build vless:// URLs.
 type VLESSConnection struct {
-	Host    string // public host or IP, e.g. "fr.maxvpn.shop" or "207.154.214.108"
-	Port    int    // 8443 (or first port from a multi-port range)
-	SNI     string // www.yahoo.com (Reality dest)
-	PubKey  string // Reality publicKey
-	ShortID string // Reality shortId
-	FP      string // utls fingerprint, default "chrome"
-	Flow    string // VLESS flow, default "xtls-rprx-vision"
+	Host       string // public host or IP, e.g. "fr.maxvpn.shop" or "207.154.214.108"
+	Port       int    // 8443 (or first port from a multi-port range)
+	SNI        string // www.yahoo.com (Reality dest)
+	PubKey     string // Reality publicKey
+	ShortID    string // Reality shortId
+	FP         string // utls fingerprint, default "chrome"
+	Flow       string // VLESS flow, default "xtls-rprx-vision"
+	PeerLabel  string // Human-friendly peer name, e.g. "🇩🇪 Frankfurt".
+	            //     Falls back to the per-call label if empty.
 }
 
 // VLESSService implements service.Service on top of xray.Manager + Reality URL builder.
@@ -63,7 +65,13 @@ func (s *VLESSService) buildURL(uuid, label string) string {
 	q.Set("headerType", "none")
 	q.Set("spx", "/")
 
-	frag := url.PathEscape(strings.ReplaceAll(label, " ", "-"))
+	// Human-friendly fragment (Happ shows this as the peer's name + flag emoji).
+	// Use the configured label if set; fall back to the technical label otherwise.
+	displayName := s.conn.PeerLabel
+	if displayName == "" {
+		displayName = label
+	}
+	frag := url.PathEscape(displayName)
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", uuid, s.conn.Host, s.conn.Port, q.Encode(), frag)
 }
 

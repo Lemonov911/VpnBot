@@ -124,7 +124,7 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     bot: Bot = request.app["bot"]
     url = await bot.create_invoice_link(
         title=f"VPN {plan['name']}",
-        description=f"Доступ к VPN на 30 дней. Amnezia WireGuard.",
+        description=f"Доступ к VPN на 30 дней. VLESS-Reality.",
         payload=body["plan_key"],
         currency="XTR",
         prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
@@ -436,7 +436,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
             fiat=currency,
             amount=amount,
             payload=payload,
-            description=f"VPN {plan['name']} — 30 дней · Amnezia WireGuard",
+            description=f"VPN {plan['name']} — 30 дней · VLESS-Reality",
             bot_username=bot_info.username,
         )
     except Exception as e:
@@ -699,8 +699,17 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
 async def handle_user_subscription(request: web.Request) -> web.Response:
     """GET /sub/{token} — возвращает base64-encoded список vless URL клиента.
     Happ / Streisand / sing-box обновляют его в фоне, поэтому при throttle
-    или смене UUID юзер автоматически получает свежие конфиги."""
-    from services.database import get_user_by_sub_token, get_active_vless_configs_for_user
+    или смене UUID юзер автоматически получает свежие конфиги.
+
+    Подписочные HTTP-заголовки (Profile-Title, Subscription-Userinfo)
+    дают клиенту красивый заголовок с трафиком и датой истечения —
+    как у Outline/StealthSurf и других платных провайдеров."""
+    from datetime import datetime
+    from services.database import (
+        get_user_by_sub_token, get_active_vless_configs_for_user
+    )
+    import aiosqlite
+    from services.database import DB_PATH
 
     token = request.match_info.get("token", "").strip()
     if not token or len(token) < 16:
@@ -715,12 +724,68 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     body_text = "\n".join(urls)
     encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
 
+    # ── Build Subscription-Userinfo header ───────────────────────────────────
+    # Найдём активную подписку юзера + лимиты её плана + использованный трафик
+    used_bytes = 0
+    total_bytes = 0
+    expire_unix = 0
+    plan_name = "MAX VPN"
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            sub = await (await db.execute(
+                """SELECT id, plan, expires_at FROM subscriptions
+                   WHERE user_id=? AND status='active'
+                   ORDER BY id DESC LIMIT 1""",
+                (user["id"],),
+            )).fetchone()
+            if sub:
+                plan = VPN_PLANS.get(sub["plan"], {})
+                plan_name = plan.get("name", "VPN")
+                cap_gb = plan.get("soft_cap_gb")
+                if cap_gb:
+                    total_bytes = int(cap_gb) * 1024 ** 3
+                # Cумма трафика по конфигам подписки
+                row = await (await db.execute(
+                    """SELECT COALESCE(SUM(rx_bytes),0)+COALESCE(SUM(tx_bytes),0) AS used
+                       FROM configs WHERE subscription_id=? AND status='active'""",
+                    (sub["id"],),
+                )).fetchone()
+                if row:
+                    used_bytes = int(row["used"] or 0)
+                # expire_at
+                try:
+                    exp = sub["expires_at"]
+                    if exp:
+                        # формат может быть "2026-05-28 21:00:58" или ISO
+                        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+                                    "%Y-%m-%d %H:%M:%S"):
+                            try:
+                                expire_unix = int(datetime.strptime(exp, fmt).timestamp())
+                                break
+                            except ValueError:
+                                continue
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("subscription header build failed: %s", e)
+
+    # download = upload + общий используемый объём (Happ показывает download)
+    sub_userinfo_parts = [f"download={used_bytes}", "upload=0"]
+    if total_bytes > 0:
+        sub_userinfo_parts.append(f"total={total_bytes}")
+    if expire_unix > 0:
+        sub_userinfo_parts.append(f"expire={expire_unix}")
+    sub_userinfo = "; ".join(sub_userinfo_parts)
+
     headers = {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        # Подсказка sing-box / Happ как часто опрашивать
-        "Subscription-Userinfo": f"upload=0; download=0; total=0",
+        "Subscription-Userinfo": sub_userinfo,
         "Profile-Update-Interval": "12",
+        "Profile-Title": f"🌐 MAX VPN · {plan_name}",
+        "Profile-Web-Page-Url": "https://t.me/maxvpnesim_bot",
+        "Support-Url": "https://t.me/maxvpnesim_bot",
     }
     return web.Response(text=encoded, headers=headers)
 
@@ -828,8 +893,6 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 ALLOWED_ORIGINS = {
     "https://maxvpnesim.com",
     "https://www.maxvpnesim.com",
-    "https://maxvpn.shop",
-    "https://www.maxvpn.shop",
     "https://lemonov911.github.io",
     "http://localhost:5173",
     "http://localhost:4173",

@@ -60,13 +60,14 @@ func main() {
 				flow,
 			)
 			services[svcName] = service.NewVLESSService(xrayMgr, service.VLESSConnection{
-				Host:    cfg.XrayPublicHost,
-				Port:    tier.InboundPort,
-				SNI:     cfg.XraySNI,
-				PubKey:  cfg.XrayPubKey,
-				ShortID: cfg.XrayShortID,
-				FP:      cfg.XrayFingerprint,
-				Flow:    flow,
+				Host:      cfg.XrayPublicHost,
+				Port:      tier.InboundPort,
+				SNI:       cfg.XraySNI,
+				PubKey:    cfg.XrayPubKey,
+				ShortID:   cfg.XrayShortID,
+				FP:        cfg.XrayFingerprint,
+				Flow:      flow,
+				PeerLabel: cfg.XrayPeerLabel,
 			})
 			log.Printf("service: %s (built-in, inbound=%s, port=%d, host=%s, flow=%q)",
 				svcName, tier.InboundTag, tier.InboundPort, cfg.XrayPublicHost, flow)

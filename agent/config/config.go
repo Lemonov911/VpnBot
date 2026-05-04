@@ -37,6 +37,7 @@ type Config struct {
 	XrayShortID     string // Reality shortId (shared across tiers)
 	XraySNI         string // Reality dest, e.g. www.yahoo.com
 	XrayFingerprint string // utls fingerprint, default "chrome"
+	XrayPeerLabel   string // Human-friendly peer name (e.g. "🇩🇪 Frankfurt") for vless:// fragment
 
 	// Per-service tier params. Key = service name ("vless", "vless-base", "vless-max").
 	// Each tier has its own Xray inbound tag and first-port for adu JSON.
@@ -86,6 +87,7 @@ func Load() *Config {
 		XrayShortID:     env("XRAY_SHORT_ID", ""),
 		XraySNI:         env("XRAY_SNI", "www.yahoo.com"),
 		XrayFingerprint: env("XRAY_FINGERPRINT", "chrome"),
+		XrayPeerLabel:   env("XRAY_PEER_LABEL", ""),
 		XrayTiers:       map[string]TierConfig{},
 	}
 

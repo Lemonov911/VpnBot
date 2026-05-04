@@ -227,7 +227,7 @@ async def initiate_purchase(callback: CallbackQuery, bot: Bot):
             title=f"VPN {plan['name']}",
             description=(
                 f"Доступ к VPN на {plan['duration_days']} дней. "
-                "Протокол Amnezia WireGuard."
+                "Протокол VLESS-Reality. Маскируется под обычный сайт."
             ),
             payload=plan_key,
             stars=plan["stars"],
