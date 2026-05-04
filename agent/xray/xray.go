@@ -44,9 +44,8 @@ func NewManager(confPath, apiAddr, inboundTag, xrayBin string, inboundPort int, 
 	if inboundPort == 0 {
 		inboundPort = 8443
 	}
-	if flow == "" {
-		flow = "xtls-rprx-vision"
-	}
+	// Note: empty flow stays empty — vless-max / *-slow run plain VLESS
+	// without xtls-rprx-vision. Don't default it here.
 	return &Manager{
 		confPath:    confPath,
 		apiAddr:     apiAddr,

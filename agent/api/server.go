@@ -1,7 +1,14 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -69,12 +76,59 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
+// authMiddleware accepts EITHER a static `X-Agent-Token` header (legacy)
+// OR a HMAC-SHA256 signature: header `X-Agent-Sig: <ts>.<hex(hmac)>`
+// where `hmac = HMAC_SHA256(token, ts + ":" + method + path + ":" + body)`.
+//
+// HMAC bumps protection over a leaked token: signatures are bound to ts
+// (replay window 5 min) and request shape, so capturing a single header
+// cannot impersonate other endpoints / past requests.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Agent-Token") != s.token {
+		// Prefer HMAC if present
+		if sig := r.Header.Get("X-Agent-Sig"); sig != "" {
+			if s.verifyHMAC(r, sig) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Legacy static-token fallback
+		if r.Header.Get("X-Agent-Token") == s.token {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
+}
+
+func (s *Server) verifyHMAC(r *http.Request, sig string) bool {
+	parts := strings.SplitN(sig, ".", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	tsStr, gotHex := parts[0], parts[1]
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return false
+	}
+	now := time.Now().Unix()
+	if ts < now-300 || ts > now+300 {
+		return false // replay window: ±5 min
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+
+	mac := hmac.New(sha256.New, []byte(s.token))
+	mac.Write([]byte(tsStr))
+	mac.Write([]byte(":"))
+	mac.Write([]byte(r.Method))
+	mac.Write([]byte(r.URL.Path))
+	mac.Write([]byte(":"))
+	mac.Write(body)
+	want := hex.EncodeToString(mac.Sum(nil))
+
+	return subtle.ConstantTimeCompare([]byte(want), []byte(gotHex)) == 1
 }

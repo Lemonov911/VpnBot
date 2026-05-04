@@ -63,6 +63,130 @@ async def relay_support_reply(message: Message):
         await message.reply(f"❌ Не удалось отправить: {e}")
 
 
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    import aiosqlite
+    from services.database import DB_PATH
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Подписки по плану
+        rows_plan = await (await db.execute(
+            "SELECT plan, COUNT(*) c FROM subscriptions WHERE status='active' GROUP BY plan"
+        )).fetchall()
+        # Активные конфиги по протоколу
+        rows_proto = await (await db.execute(
+            "SELECT protocol, COUNT(*) c FROM configs WHERE status='active' GROUP BY protocol"
+        )).fetchall()
+        # Серверы
+        rows_srv = await (await db.execute(
+            "SELECT name, flag, protocol, active_peers, capacity, is_active FROM servers ORDER BY id"
+        )).fetchall()
+        # Throttled (config_data на slow-port)
+        thr_row = await (await db.execute(
+            """SELECT COUNT(*) c FROM configs
+               WHERE status='active' AND protocol='vless'
+                 AND (config_data LIKE '%:9443%' OR config_data LIKE '%:9448%'
+                      OR config_data LIKE '%:43200%' OR config_data LIKE '%:43300%')"""
+        )).fetchone()
+        # Сегодняшний доход (Stars + RUB)
+        rev_stars_row = await (await db.execute(
+            "SELECT COALESCE(SUM(stars),0) FROM payments WHERE date(created_at)=date('now')"
+        )).fetchone()
+        # Всего юзеров
+        users_row = await (await db.execute("SELECT COUNT(*) FROM users")).fetchone()
+        # Истекают за 3 дня
+        exp_row = await (await db.execute(
+            "SELECT COUNT(*) FROM subscriptions WHERE status='active' "
+            "AND expires_at <= datetime('now','+3 days')"
+        )).fetchone()
+
+    plans = "\n".join(f"  • {r['plan']}: <b>{r['c']}</b>" for r in rows_plan) or "  (нет)"
+    protos = "\n".join(f"  • {r['protocol']}: <b>{r['c']}</b>" for r in rows_proto) or "  (нет)"
+    srvs = "\n".join(
+        f"  {'🟢' if r['is_active'] else '⚫'} {r['flag'] or '🌍'} {r['name']:20s} "
+        f"{r['protocol']:7s} {r['active_peers']:>3}/{r['capacity']}"
+        for r in rows_srv
+    )
+    throttled = thr_row[0] if thr_row else 0
+    today_stars = rev_stars_row[0] if rev_stars_row else 0
+    total_users = users_row[0] if users_row else 0
+    expiring = exp_row[0] if exp_row else 0
+
+    text = (
+        "📊 <b>Stats</b>\n\n"
+        f"<b>Подписки активные</b>:\n{plans}\n\n"
+        f"<b>Конфиги активные</b>:\n{protos}\n\n"
+        f"<b>Серверы</b>:\n<code>{srvs}</code>\n\n"
+        f"🐢 Throttled: <b>{throttled}</b>\n"
+        f"⏳ Истекают за 3 дня: <b>{expiring}</b>\n"
+        f"⭐ Доход сегодня: <b>{today_stars}</b>\n"
+        f"👤 Всего юзеров: <b>{total_users}</b>"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(Command("trial"))
+async def cmd_trial(message: Message):
+    """Бесплатный пробный период — 1 GB / 24 часа."""
+    from datetime import datetime, timedelta
+    from services.database import (
+        DB_PATH, get_best_server, save_peer_to_config, create_subscription,
+        create_config_record, update_server_peer_count, get_or_create_sub_token,
+    )
+    from services.vpnctl_client import provision_peer, VpnctlError
+    import aiosqlite
+
+    user_id = message.from_user.id
+
+    # Проверка, что пользователь не использовал trial раньше
+    async with aiosqlite.connect(DB_PATH) as db:
+        existing = await (await db.execute(
+            "SELECT id FROM subscriptions WHERE user_id=? AND plan='vpn_trial' LIMIT 1",
+            (user_id,)
+        )).fetchone()
+    if existing:
+        await message.answer(
+            "🎁 Trial уже использован.\n\nДля продолжения — выбери тариф в /start"
+        )
+        return
+
+    # Создаём пробную подписку на 24 ч
+    expires = datetime.now() + timedelta(days=1)
+    sub_id = await create_subscription(user_id, "vpn_trial", "trial", 0, expires)
+    config_id = await create_config_record(sub_id, user_id, protocol="vless")
+
+    server = await get_best_server("vless")
+    if not server:
+        await message.answer("⚠️ Серверы пока недоступны, попробуй позже")
+        return
+
+    try:
+        peer = await provision_peer(server, f"trial_{user_id}_{config_id}", "vless-base")
+    except VpnctlError as e:
+        await message.answer(f"⚠️ Ошибка провижининга: {e}")
+        return
+
+    await save_peer_to_config(
+        config_id, server["id"], peer.id, "", peer.config, f"trial_{user_id}"
+    )
+    await update_server_peer_count(server["id"], +1)
+    sub_token = await get_or_create_sub_token(user_id)
+
+    await message.answer(
+        "🎁 <b>Trial 1 GB / 24 часа активирован</b>\n\n"
+        f"📅 До: <b>{expires.strftime('%d.%m.%Y %H:%M')}</b>\n"
+        f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
+        f"<b>Subscription URL</b> (импортируй в Happ):\n"
+        f"<code>https://maxvpnesim.com/sub/{sub_token}</code>\n\n"
+        f"📖 Инструкция: /howto\n"
+        f"💎 После trial — выбери постоянный тариф в /start",
+        parse_mode="HTML",
+    )
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if not _is_admin(message.from_user.id):

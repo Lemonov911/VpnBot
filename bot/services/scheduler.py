@@ -243,6 +243,45 @@ async def _sync_vless_active_uuids():
             logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e)
 
 
+async def _daily_backup(bot: Bot):
+    """Раз в сутки шлёт сжатый дамп bot.db админу в Telegram."""
+    import gzip
+    import shutil
+    from datetime import datetime
+    from aiogram.types import BufferedInputFile
+    from config import ADMIN_ID
+    from services.database import DB_PATH
+
+    state_file = "/tmp/.last_backup_date"
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        with open(state_file) as f:
+            if f.read().strip() == today:
+                return  # уже отправили сегодня
+    except FileNotFoundError:
+        pass
+
+    # snapshot — копируем перед сжатием, чтобы не блочить запись
+    snap = "/tmp/bot.db.snapshot"
+    shutil.copy2(DB_PATH, snap)
+    with open(snap, "rb") as src, gzip.open(snap + ".gz", "wb", compresslevel=9) as dst:
+        shutil.copyfileobj(src, dst)
+    with open(snap + ".gz", "rb") as f:
+        data = f.read()
+
+    try:
+        await bot.send_document(
+            ADMIN_ID,
+            BufferedInputFile(data, filename=f"bot-db-{today}.gz"),
+            caption=f"📦 Daily backup · {today} · {len(data)//1024} KB",
+        )
+        with open(state_file, "w") as f:
+            f.write(today)
+        logger.info("daily backup отправлен (%d KB)", len(data) // 1024)
+    except Exception as e:
+        logger.warning("daily backup не отправлен: %s", e)
+
+
 async def _send_expiry_reminders(bot: Bot):
     """Отправляет напоминания за 3 дня и за 1 день до истечения подписки."""
     for days in (3, 1):
@@ -280,5 +319,6 @@ async def run_scheduler(bot: Bot):
             await _sync_vless_stats()
             await _apply_quota_throttle(bot)
             await _sync_vless_active_uuids()
+            await _daily_backup(bot)
         except Exception as e:
             logger.error("Ошибка планировщика: %s", e)

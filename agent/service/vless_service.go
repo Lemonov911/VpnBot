@@ -61,6 +61,7 @@ func (s *VLESSService) buildURL(uuid, label string) string {
 	q.Set("sid", s.conn.ShortID)
 	q.Set("type", "tcp")
 	q.Set("headerType", "none")
+	q.Set("spx", "/")
 
 	frag := url.PathEscape(strings.ReplaceAll(label, " ", "-"))
 	return fmt.Sprintf("vless://%s@%s:%d?%s#%s", uuid, s.conn.Host, s.conn.Port, q.Encode(), frag)
