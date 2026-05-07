@@ -23,7 +23,7 @@ function filterEssential(pkgs: ESimPackage[]): ESimPackage[] {
     bucket = Object.values(byDuration).sort((a, b) => b.length - a.length)[0] ?? pkgs
   }
 
-  bucket.sort((a, b) => a.stars - b.stars)
+  bucket.sort((a, b) => a.priceRub - b.priceRub)
   if (bucket.length <= 5) return bucket
 
   const result: ESimPackage[] = []
@@ -34,10 +34,6 @@ function filterEssential(pkgs: ESimPackage[]): ESimPackage[] {
 
 function popularIndex(pkgs: ESimPackage[]): number {
   return Math.floor(pkgs.length / 2)
-}
-
-function priceToRub(price: number): number {
-  return Math.round(price / 10_000 * 1.45 * 90)
 }
 
 function PaymentSheet({
@@ -71,6 +67,11 @@ function PaymentSheet({
           <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-[3px]">
             {durationStr} · {pkg.speed}
           </div>
+          {isDaily && (
+            <div className="mt-2 text-[12px] text-warning leading-snug">
+              ⚠ Дневной лимит. После превышения скорость режется до 1 Mbps до конца суток.
+            </div>
+          )}
         </div>
 
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color)] uppercase tracking-wide mb-2">
@@ -82,9 +83,8 @@ function PaymentSheet({
             <span className="text-[22px] w-8 text-center shrink-0">⭐</span>
             <div className="flex-1">
               <div className="text-[15px] text-[var(--tg-theme-text-color)] font-medium">Telegram Stars</div>
-              <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">≈ {priceToRub(pkg.price)} {t('esim_rubles')}</div>
+              <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{pkg.priceRub} {t('esim_rubles')}</div>
             </div>
-            <span className="text-[13px] text-[var(--tg-theme-button-color,#2481cc)] font-semibold">{pkg.stars} ⭐</span>
             <div className="w-5 h-5 rounded-full shrink-0 border-2 border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)] flex items-center justify-center">
               <div className="w-2 h-2 rounded-full bg-white" />
             </div>
@@ -96,7 +96,7 @@ function PaymentSheet({
           disabled={paying}
           onClick={onPay}
         >
-          {paying ? '…' : `${t('esim_pay_btn')} ${pkg.stars} ⭐ · ≈${priceToRub(pkg.price)} ${t('esim_rubles')}`}
+          {paying ? '…' : `${t('esim_pay_btn')} · ${pkg.priceRub} ${t('esim_rubles')}`}
         </button>
       </div>
     </>
@@ -224,7 +224,7 @@ export default function ESimCountry() {
                     className="btn min-w-[84px] text-[13px] shrink-0"
                     onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setSheetPkg(pkg) }}
                   >
-                    {priceToRub(pkg.price)} {t('esim_rubles')}
+                    {pkg.priceRub} {t('esim_rubles')}
                   </button>
                 </div>
               )

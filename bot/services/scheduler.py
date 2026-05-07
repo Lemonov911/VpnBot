@@ -34,7 +34,10 @@ from services.database import (
     get_active_vless_uuids_by_server,
     get_active_vless_configs_with_plan,
     update_config_data,
+    get_esim_profiles_for_usage_sync,
+    update_esim_usage,
 )
+import services.esim_api as esim_api
 from services.vpnctl_client import suspend_peer, client_for_server, VpnctlError
 from handlers.vpn import (
     VPN_PLANS,
@@ -307,11 +310,49 @@ async def _send_expiry_reminders(bot: Bot):
             await mark_reminded(sub["id"], days)
 
 
+async def _sync_esim_usage():
+    """Раз в 3 часа батчем тянет /esim/usage/query для активных eSIM-профилей.
+    Лимит API: 10 esimTranNo за один запрос; rate limit 8 req/sec.
+    Юзедж у esimaccess обновляется раз в 2-3 ч, чаще опрашивать смысла нет."""
+    profiles = await get_esim_profiles_for_usage_sync(limit=200)
+    if not profiles:
+        return
+
+    tran_nos = [p["esim_tran_no"] for p in profiles if p["esim_tran_no"]]
+    BATCH = 10
+    updated = 0
+    for i in range(0, len(tran_nos), BATCH):
+        batch = tran_nos[i:i + BATCH]
+        try:
+            resp = await esim_api.usage_query(batch)
+        except Exception as e:
+            logger.warning("eSIM usage_query batch failed: %s", e)
+            continue
+        for u in (resp.get("obj") or {}).get("esimUsageList") or []:
+            tn = u.get("esimTranNo")
+            used = u.get("dataUsage", 0)
+            if tn:
+                await update_esim_usage(tn, used)
+                updated += 1
+        # Лёгкий throttle между батчами (rate limit 8 req/s)
+        await asyncio.sleep(0.2)
+
+    if updated:
+        logger.info("eSIM usage sync: обновлено %d профилей", updated)
+
+
+# Счётчик тиков шедулера для запуска редких задач (eSIM usage — раз в 3ч)
+_TICK = 0
+_ESIM_SYNC_EVERY_N_TICKS = 3  # CHECK_INTERVAL=1ч → раз в 3ч
+
+
 async def run_scheduler(bot: Bot):
     """Бесконечный цикл — запускать как asyncio background task из bot.py."""
+    global _TICK
     logger.info("Планировщик подписок запущен (интервал: %d сек)", CHECK_INTERVAL)
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
+        _TICK += 1
         try:
             await _process_expired_subscriptions(bot)
             await _process_expired_orders(bot)
@@ -320,5 +361,7 @@ async def run_scheduler(bot: Bot):
             await _apply_quota_throttle(bot)
             await _sync_vless_active_uuids()
             await _daily_backup(bot)
+            if _TICK % _ESIM_SYNC_EVERY_N_TICKS == 0:
+                await _sync_esim_usage()
         except Exception as e:
             logger.error("Ошибка планировщика: %s", e)

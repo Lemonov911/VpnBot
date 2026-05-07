@@ -569,8 +569,7 @@ async def handle_esim_invoice(request: web.Request) -> web.Response:
     if not pkg_code:
         return web.json_response({"error": "Invalid params"}, status=400)
 
-    packages = await esim.get_packages_for("")
-    pkg = next((p for p in packages if p.get("packageCode") == pkg_code), None)
+    pkg = await esim.find_package(pkg_code)
     if not pkg:
         return web.json_response({"error": "Package not found"}, status=404)
 
@@ -588,8 +587,106 @@ async def handle_esim_invoice(request: web.Request) -> web.Response:
         prices=[LabeledPrice(label=name, amount=stars)],
         provider_token="",
     )
-    logger.info("eSIM invoice: user=%s pkg=%s stars=%d", user.get("id"), pkg_code, stars)
+    logger.info("eSIM invoice: user=%s pkg=%s stars=%d rub=%d", user.get("id"), pkg_code, stars, pkg.get("priceRub", 0))
     return web.json_response({"invoice_url": url})
+
+
+# ── eSIM webhook (esimaccess → /api/esim/webhook) ─────────────────────────────
+
+async def handle_esim_webhook(request: web.Request) -> web.Response:
+    """esimaccess.com шлёт сюда уведомления о готовности eSIM, статусах и
+    низком балансе. Зарегистрировать URL у них через esim_api.set_webhook()
+    или в их веб-кабинете.
+
+    Ожидаемые типы (notifyType):
+      ORDER_STATUS  — заказ готов, профили аллоцированы (главный триггер!)
+      ESIM_STATUS   — обновление статуса eSIM (DOWNLOADED / ENABLED / DELETED)
+      SMDP_EVENT    — события на стороне SM-DP+ сервера
+      LOW_BALANCE   — баланс упал ниже 25% или 10%
+    """
+    from services.database import (
+        get_esim_by_order_no, fulfill_esim_profile, get_esim_by_tran_no,
+    )
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad JSON"}, status=400)
+
+    notify_type = data.get("notifyType") or ""
+    content     = data.get("content") or {}
+    logger.info("eSIM webhook: type=%s content_keys=%s", notify_type, list(content.keys())[:10])
+
+    bot: Bot = request.app["bot"]
+
+    if notify_type == "ORDER_STATUS":
+        order_no = content.get("orderNo") or data.get("orderNo")
+        if not order_no:
+            return web.json_response({"ok": True})
+        profile = await get_esim_by_order_no(order_no)
+        if not profile:
+            logger.warning("eSIM webhook: profile for order_no=%s not found", order_no)
+            return web.json_response({"ok": True})
+        try:
+            resp = await esim.query_by_order_no(order_no)
+        except Exception as e:
+            logger.error("eSIM webhook: query failed for %s: %s", order_no, e)
+            return web.json_response({"ok": True})
+        esim_list = (resp.get("obj") or {}).get("esimList") or []
+        if not esim_list:
+            return web.json_response({"ok": True})
+        if await fulfill_esim_profile(profile["id"], esim_list[0]):
+            from handlers.vpn import deliver_esim_to_user
+            await deliver_esim_to_user(bot, profile["id"])
+
+    elif notify_type == "LOW_BALANCE":
+        from config import ADMIN_ID
+        if ADMIN_ID:
+            level = content.get("level") or "?"
+            balance = content.get("balance", 0)
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ <b>eSIM low balance</b>\nLevel: {level}\nBalance: {balance / 10000:.2f} USD",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+    # ESIM_STATUS / SMDP_EVENT — пока просто логируем для аналитики.
+    return web.json_response({"ok": True})
+
+
+async def handle_my_esims(request: web.Request) -> web.Response:
+    """GET /api/esim/my — список eSIM-профилей пользователя для Mini App."""
+    from services.database import get_user_esim_profiles
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
+
+    profiles = await get_user_esim_profiles(user["id"])
+    out = []
+    for p in profiles:
+        used = p.get("used_volume") or 0
+        total = p.get("total_volume") or 0
+        out.append({
+            "id":            p["id"],
+            "status":        p["status"],          # pending / ready / failed
+            "packageName":   p.get("package_name", "eSIM"),
+            "locationCode":  p.get("location_code"),
+            "iccid":         p.get("iccid"),
+            "ac":            p.get("ac"),
+            "qrUrl":         p.get("qr_url"),
+            "shortUrl":      p.get("short_url"),
+            "smdpAddress":   p.get("smdp_address"),
+            "matchingId":    p.get("matching_id"),
+            "usedBytes":     used,
+            "totalBytes":    total,
+            "usedPct":       round(100 * used / total, 1) if total else 0,
+            "expireAt":      p.get("expire_at"),
+            "lastSyncAt":    p.get("last_sync_at"),
+            "createdAt":     p.get("created_at"),
+        })
+    return web.json_response(out)
 
 
 async def handle_vpn_subscription(request: web.Request) -> web.Response:
@@ -951,6 +1048,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_get ("/api/esim/countries",             handle_esim_countries)
     app.router.add_get ("/api/esim/packages",              handle_esim_packages)
     app.router.add_post("/api/esim/invoice",               handle_esim_invoice)
+    app.router.add_get ("/api/esim/my",                    handle_my_esims)
+    app.router.add_post("/api/esim/webhook",               handle_esim_webhook)
 
     # Поддержка
     app.router.add_post("/api/support/ticket",             handle_support_ticket)

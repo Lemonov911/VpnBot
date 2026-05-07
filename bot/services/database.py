@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 SQLite через aiosqlite.
 
@@ -93,6 +94,43 @@ async def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS esim_profiles (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id         INTEGER NOT NULL,
+                order_id        INTEGER,
+                order_no        TEXT NOT NULL,
+                tx_id           TEXT NOT NULL UNIQUE,
+                esim_tran_no    TEXT UNIQUE,
+                iccid           TEXT,
+                package_code    TEXT NOT NULL,
+                package_name    TEXT,
+                location_code   TEXT,
+                wholesale_price INTEGER,
+                ac              TEXT,
+                qr_url          TEXT,
+                short_url       TEXT,
+                smdp_address    TEXT,
+                matching_id     TEXT,
+                apn             TEXT,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                smdp_status     TEXT,
+                esim_status     TEXT,
+                total_volume    INTEGER,
+                used_volume     INTEGER NOT NULL DEFAULT 0,
+                expire_at       TIMESTAMP,
+                activated_at    TIMESTAMP,
+                last_sync_at    TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_esim_user ON esim_profiles(user_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_esim_order_no ON esim_profiles(order_no)"
+        )
         await _migrate(db)
         await db.commit()
 
@@ -786,5 +824,151 @@ async def add_referral_bonus(referrer_id: int, days: int):
         await db.execute(
             "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
             (modifier, referrer_id),
+        )
+        await db.commit()
+
+
+# ── eSIM profiles ─────────────────────────────────────────────────────────────
+
+async def create_esim_profile(user_id: int, order_id: int, tx_id: str,
+                                package_code: str, package_name: str,
+                                location_code: str, wholesale_price: int) -> int:
+    """Создаёт запись eSIM-профиля сразу после place_order. Статус='pending'."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """INSERT INTO esim_profiles
+               (user_id, order_id, order_no, tx_id, package_code, package_name,
+                location_code, wholesale_price, status)
+               VALUES (?, ?, '', ?, ?, ?, ?, ?, 'pending')""",
+            (user_id, order_id, tx_id, package_code, package_name, location_code, wholesale_price),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def set_esim_order_no(profile_id: int, order_no: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE esim_profiles SET order_no=? WHERE id=?",
+            (order_no, profile_id),
+        )
+        await db.commit()
+
+
+async def fulfill_esim_profile(profile_id: int, esim_data: dict) -> bool:
+    """Заполняет профиль данными от esimaccess (после получения /esim/query результата).
+    Идемпотентно: если уже fulfilled — возвращает False."""
+    ac          = esim_data.get("ac") or ""
+    if not ac:
+        return False
+    # Парсим AC: "LPA:1$smdp.example.com$MATCHING_ID"
+    smdp_addr, matching_id = "", ""
+    parts = ac.split("$")
+    if len(parts) == 3:
+        smdp_addr, matching_id = parts[1], parts[2]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """UPDATE esim_profiles SET
+                   esim_tran_no=?, iccid=?, ac=?, qr_url=?, short_url=?,
+                   smdp_address=?, matching_id=?, apn=?,
+                   smdp_status=?, esim_status=?,
+                   total_volume=?, expire_at=?,
+                   status='ready'
+               WHERE id=? AND status='pending'""",
+            (
+                esim_data.get("esimTranNo"),
+                esim_data.get("iccid"),
+                ac,
+                esim_data.get("qrCodeUrl"),
+                esim_data.get("shortUrl"),
+                smdp_addr,
+                matching_id,
+                esim_data.get("apn"),
+                esim_data.get("smdpStatus"),
+                esim_data.get("esimStatus"),
+                esim_data.get("totalVolume"),
+                esim_data.get("expiredTime"),
+                profile_id,
+            ),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def mark_esim_failed(profile_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE esim_profiles SET status='failed' WHERE id=?", (profile_id,)
+        )
+        await db.commit()
+
+
+async def get_esim_profile(profile_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM esim_profiles WHERE id=?", (profile_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_esim_by_order_no(order_no: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM esim_profiles WHERE order_no=? LIMIT 1", (order_no,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_esim_by_tran_no(esim_tran_no: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM esim_profiles WHERE esim_tran_no=? LIMIT 1",
+            (esim_tran_no,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_user_esim_profiles(user_id: int) -> list[dict]:
+    """Все eSIM-профили пользователя (новые сверху, не failed)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM esim_profiles
+               WHERE user_id=? AND status != 'failed'
+               ORDER BY created_at DESC""",
+            (user_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_esim_profiles_for_usage_sync(limit: int = 200) -> list[dict]:
+    """Активные профили с esim_tran_no — для batch-синка юзеджа."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, esim_tran_no, total_volume, used_volume FROM esim_profiles
+               WHERE status='ready' AND esim_tran_no IS NOT NULL
+                 AND (expire_at IS NULL OR expire_at > datetime('now'))
+               ORDER BY last_sync_at IS NULL DESC, last_sync_at ASC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_esim_usage(esim_tran_no: str, used_bytes: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE esim_profiles
+               SET used_volume=?, last_sync_at=CURRENT_TIMESTAMP
+               WHERE esim_tran_no=?""",
+            (used_bytes, esim_tran_no),
         )
         await db.commit()

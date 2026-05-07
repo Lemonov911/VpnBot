@@ -4,7 +4,9 @@ import WebApp from '@twa-dev/sdk'
 import { getESimCountries, type Country } from '../api'
 import { useT, usePlural } from '../i18n'
 
-function flagEmoji(code: string): string {
+function flagEmoji(code: string, fallback?: string): string {
+  if (fallback) return fallback
+  if (code === 'EU-42') return '🇪🇺'
   if (!/^[A-Z]{2}$/i.test(code)) return '🌐'
   return [...code.toUpperCase()].map(c => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65)).join('')
 }
@@ -151,7 +153,7 @@ export default function ESim() {
                 onClick={() => goToCountry(c.code, c.name)}
                 className={`py-[13px] px-4 flex items-center gap-[14px] cursor-pointer ${i < travelCountries.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}
               >
-                <span className="text-[30px] w-9 text-center shrink-0">{flagEmoji(c.code)}</span>
+                <span className="text-[30px] w-9 text-center shrink-0">{flagEmoji(c.code, c.flag)}</span>
                 <div className="flex-1">
                   <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">{c.name}</div>
                   <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{plural(c.count, { ru: ['пакет', 'пакета', 'пакетов'], en: ['package', 'packages'] })}</div>

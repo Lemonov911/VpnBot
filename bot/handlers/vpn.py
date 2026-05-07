@@ -38,6 +38,11 @@ from services.database import (
     save_peer_to_config,
     update_server_peer_count,
     record_payment,
+    create_esim_profile,
+    set_esim_order_no,
+    fulfill_esim_profile,
+    mark_esim_failed,
+    get_esim_profile,
 )
 import aiosqlite as _aiosqlite
 from pathlib import Path as _Path
@@ -191,13 +196,25 @@ async def back_to_start(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "menu:esim")
-async def esim_coming_soon(callback: CallbackQuery):
-    back_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:start")]
-    ])
+async def esim_menu(callback: CallbackQuery):
+    import os
+    from aiogram.types import WebAppInfo
+    webapp_url = os.getenv("WEBAPP_URL", "")
+    rows = []
+    if webapp_url:
+        rows.append([InlineKeyboardButton(
+            text="📱 Открыть каталог eSIM",
+            web_app=WebAppInfo(url=f"{webapp_url}/esim"),
+        )])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:start")])
     await callback.message.edit_text(
-        "📱 <b>eSIM — скоро!</b>\n\nПродажа зарубежных eSIM карт появится совсем скоро.",
-        reply_markup=back_kb,
+        "📱 <b>eSIM — мобильный интернет за рубежом</b>\n\n"
+        "Покупаешь, сканируешь QR — и через 30 сек у тебя интернет в Турции, "
+        "Грузии, ОАЭ, Таиланде, Вьетнаме или по всей Европе.\n\n"
+        "🇷🇺 Есть отдельный тариф для России — с зарубежным IP "
+        "(работает как VPN: открывает заблокированные сайты).\n\n"
+        "Оплата ⭐ или картой через Telegram.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -462,9 +479,17 @@ async def _apply_plan_upgrade(message: Message, payment):
 
 
 # ── eSIM delivery ──────────────────────────────────────────────────────────────
+# Поток:
+#   1. Юзер платит ⭐ → _deliver_esim() кладёт order + esim_profile (pending),
+#      зовёт place_order, сохраняет orderNo, спавнит фоновый poll.
+#   2. Фоновый poll опрашивает /esim/query до 60 сек.
+#   3. Параллельно может прилететь webhook ORDER_STATUS (см. webapp_api.handle_esim_webhook).
+#   4. Кто первый дошёл — fulfill_esim_profile() атомарно переводит статус в 'ready'
+#      и отправляет deliver_esim_to_user. Второй путь обнаруживает rowcount=0 и тихо выходит.
 
 async def _deliver_esim(message: Message, bot: Bot, payment):
     """Доставка eSIM после успешной оплаты Stars."""
+    import asyncio
     parts = payment.invoice_payload.split(":", 2)
     if len(parts) != 3:
         await message.answer("⚠️ Ошибка payload. Напиши в поддержку.")
@@ -475,6 +500,12 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
     user_id   = message.from_user.id
     charge_id = payment.telegram_payment_charge_id
 
+    pkg = await esim_api.find_package(pkg_code)
+    if not pkg:
+        logger.error("eSIM unknown package: %s", pkg_code)
+        await _esim_refund_and_notify(bot, user_id, charge_id, 0)
+        return
+
     order_id = await create_order(
         user_id=user_id,
         product_type="esim",
@@ -483,64 +514,139 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
     )
     await complete_order(order_id, payment_id=charge_id)
 
-    await message.answer("⏳ Оформляем eSIM, секунду...")
-
     tx_id = f"tg_{user_id}_{order_id}_{uuid.uuid4().hex[:8]}"
+    profile_id = await create_esim_profile(
+        user_id=user_id, order_id=order_id, tx_id=tx_id,
+        package_code=pkg_code, package_name=pkg["name"],
+        location_code=pkg["location"], wholesale_price=wholesale_price,
+    )
+
+    await message.answer(
+        "🛠️ <b>Заказываем eSIM...</b>\n"
+        "Обычно занимает 10–30 сек, QR придёт сюда автоматически.",
+        parse_mode="HTML",
+    )
+
     try:
         result = await esim_api.place_order(pkg_code, wholesale_price, tx_id)
     except Exception as e:
-        logger.error("eSIM order failed: %s", e)
+        logger.error("eSIM place_order failed: %s", e)
+        await mark_esim_failed(profile_id)
         await _esim_refund_and_notify(bot, user_id, charge_id, order_id)
         return
 
     if not result.get("success"):
         logger.error("eSIM API error: %s", result)
+        await mark_esim_failed(profile_id)
         await _esim_refund_and_notify(bot, user_id, charge_id, order_id)
         return
 
-    obj       = result.get("obj") or {}
-    esim_list = obj.get("esimList") or [obj]
-    esim_data = esim_list[0] if esim_list else {}
+    order_no = (result.get("obj") or {}).get("orderNo", "")
+    if not order_no:
+        logger.error("eSIM no orderNo in response: %s", result)
+        await mark_esim_failed(profile_id)
+        await _esim_refund_and_notify(bot, user_id, charge_id, order_id)
+        return
 
-    iccid   = esim_data.get("iccid", "")
-    ac_code = (esim_data.get("ac") or esim_data.get("activationCode")
-               or esim_data.get("lpa") or esim_data.get("qrCodeUrl") or "")
+    await set_esim_order_no(profile_id, order_no)
+    logger.info("eSIM order placed: profile=%d order=%s pkg=%s", profile_id, order_no, pkg_code)
 
-    logger.info("eSIM order #%d: iccid=%s", order_id, iccid)
-
-    caption = (
-        f"✅ <b>eSIM готов!</b>\n\n"
-        f"🆔 Заказ: #{order_id}\n"
-        f"📟 ICCID: <code>{iccid or '—'}</code>\n\n"
-        "📖 <b>iPhone:</b> Настройки → Сотовая связь → Добавить план → Сканируй QR\n"
-        "📖 <b>Android:</b> Настройки → SIM-карты → Добавить → Сканируй QR\n\n"
-        "⚡️ Активируется при первом подключении к сети."
+    # Фоновый poll-fallback на случай если webhook не настроен/упал.
+    asyncio.create_task(
+        _finalize_esim_via_polling(profile_id, order_no, bot, user_id)
     )
 
-    if ac_code and not ac_code.startswith("http"):
+
+async def _finalize_esim_via_polling(profile_id: int, order_no: str, bot: Bot, user_id: int):
+    """Опрашивает /esim/query до 60 сек и отдаёт пользователю.
+    Если webhook опередил — fulfill_esim_profile вернёт False, тихо выйдем."""
+    esim_data = await esim_api.poll_order_until_ready(order_no, max_wait_sec=60)
+    if not esim_data:
         try:
+            await bot.send_message(
+                user_id,
+                "⏳ <b>Заказ оформляется</b> — иногда SM-DP+ занимает пару минут. "
+                "QR придёт сюда автоматически как только будет готов.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return
+    fulfilled = await fulfill_esim_profile(profile_id, esim_data)
+    if not fulfilled:
+        return  # webhook опередил
+    await deliver_esim_to_user(bot, profile_id)
+
+
+async def deliver_esim_to_user(bot: Bot, profile_id: int):
+    """Отправляет готовый eSIM в чат пользователю.
+    Идемпотентно: вызывается и из polling-fallback, и из webhook handler."""
+    profile = await get_esim_profile(profile_id)
+    if not profile or profile["status"] != "ready":
+        return
+
+    user_id   = profile["user_id"]
+    ac        = profile["ac"]
+    qr_url    = profile["qr_url"]
+    short_url = profile["short_url"]
+    smdp      = profile["smdp_address"] or ""
+    matching  = profile["matching_id"] or ""
+    pkg_name  = profile["package_name"] or "eSIM"
+
+    caption_lines = [
+        "✅ <b>eSIM готова!</b>",
+        f"📦 <b>{pkg_name}</b>",
+        "",
+        "📲 <b>iPhone — самый простой путь:</b>",
+    ]
+    if short_url:
+        caption_lines.append(
+            f"1. <a href=\"{short_url}\">Открой эту ссылку с iPhone 17.4+</a> — "
+            "появится нативный диалог установки"
+        )
+        caption_lines.append("2. Или: Настройки → Сотовая связь → Добавить eSIM → Сканируй QR ниже")
+    else:
+        caption_lines.append("Настройки → Сотовая связь → Добавить eSIM → Сканируй QR ниже")
+
+    caption_lines += [
+        "",
+        "🤖 <b>Android:</b> Настройки → SIM-карты → Добавить eSIM → Сканируй QR",
+        "",
+        "📝 <b>Вручную</b> (если QR/ссылка не работают):",
+        f"   SM-DP+ адрес: <code>{smdp}</code>",
+        f"   Код активации: <code>{matching}</code>",
+        "",
+        "⚠️ <b>Установить можно только 1 раз</b> — сохрани QR до активации.",
+        "⚡ eSIM активируется при первом подключении к сети.",
+    ]
+    caption = "\n".join(caption_lines)
+
+    try:
+        if qr_url:
+            await bot.send_photo(user_id, qr_url, caption=caption, parse_mode="HTML")
+        elif ac:
             import qrcode as qr_lib
             qr = qr_lib.QRCode(box_size=10, border=4)
-            qr.add_data(ac_code)
+            qr.add_data(ac)
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
             buf = BytesIO()
             img.save(buf, format="PNG")
             buf.seek(0)
-            await message.answer_photo(
+            await bot.send_photo(
+                user_id,
                 BufferedInputFile(buf.read(), "esim_qr.png"),
                 caption=caption, parse_mode="HTML",
             )
-        except Exception as e:
-            logger.error("QR generation failed: %s", e)
-            await message.answer(caption + f"\n\n<code>{ac_code}</code>", parse_mode="HTML")
-    elif ac_code.startswith("http"):
-        await message.answer_photo(ac_code, caption=caption, parse_mode="HTML")
-    else:
-        await message.answer(
-            caption + "\n\n⚠️ QR-код будет отправлен отдельно в течение нескольких минут.",
-            parse_mode="HTML",
-        )
+        else:
+            await bot.send_message(user_id, caption, parse_mode="HTML")
+    except Exception as e:
+        logger.error("eSIM delivery failed for user=%d profile=%d: %s", user_id, profile_id, e)
+        try:
+            text = caption + (f"\n\nQR: {qr_url}" if qr_url else "")
+            await bot.send_message(user_id, text, parse_mode="HTML")
+        except Exception:
+            pass
 
 
 async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_id: int):
@@ -549,8 +655,9 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
         await bot.refund_star_payment(user_id, charge_id)
         await bot.send_message(
             user_id,
-            f"❌ <b>Не удалось оформить eSIM</b> (заказ #{order_id}).\n\n"
-            "Звёзды возвращены. Попробуй ещё раз или напиши в поддержку.",
+            f"❌ <b>Не удалось оформить eSIM</b>"
+            + (f" (заказ #{order_id})" if order_id else "")
+            + ".\n\nЗвёзды возвращены. Попробуй ещё раз или напиши в поддержку.",
             parse_mode="HTML",
         )
     except Exception as e:

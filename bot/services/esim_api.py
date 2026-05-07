@@ -1,12 +1,27 @@
+from __future__ import annotations
 """
 eSIM Access API client (esimaccess.com).
 
-Pricing:  price field is in 1/10000 USD units (18000 = $1.80 wholesale)
-Markup:   45% over wholesale
-Stars:    1 Star ≈ $0.013
+Pricing model:
+  wholesale price: целое число в 1/10000 USD (18000 = $1.80 wholesale)
+  markup        : 2.2× от wholesale (retail у esimaccess = ×2, +10% буфер на Stars-комиссию)
+  Stars         : 1⭐ ≈ $0.02 (текущий курс Telegram)
+  RUB           : фиксируем 95 ₽/$ — закладываем 14% буфер от рыночного
+
+  Примеры:
+    wholesale $2.30 (Turkey 5GB) → retail $5.06 → 480 ₽ → 253⭐
+
+eSIM async flow:
+  1. POST /esim/order → возвращает orderNo (профиль ещё не готов)
+  2. ~5–30 сек SM-DP+ аллоцирует профиль
+  3. либо webhook ORDER_STATUS, либо polling /esim/query?orderNo=
+  4. в ответе esimList[] с iccid / ac / qrCodeUrl / shortUrl
+
+Primary key для eSIM-профилей — esimTranNo (iccid переиспользуется операторами!).
 """
 
 import asyncio
+import json
 import logging
 import time
 from math import ceil
@@ -18,20 +33,25 @@ from config import ESIM_API_KEY
 logger = logging.getLogger(__name__)
 
 BASE = "https://api.esimaccess.com/api/v1/open"
-MARKUP   = 1.45
-UNIT2USD = 1 / 10_000
-STAR_USD = 0.013
 
-# In-memory package cache (refreshed every hour)
-_cache: list[dict] = []
-_cache_expires: float = 0.0
-# Lock: только один запрос к eSIM API одновременно — остальные ждут кеша
-_cache_lock = asyncio.Lock()
+# Pricing
+MARKUP       = 2.2
+UNIT2USD     = 1 / 10_000
+STAR_USD     = 0.02
+RUB_PER_USD  = 95.0
 
+# MVP-страны: только эти показываем в UI
+MVP_LOCATIONS = {"TR", "GE", "AE", "TH", "VN", "EU-42", "RU"}
+
+# Исключаем технические варианты — пусть пользователь видит только основной набор
+SKIP_SLUG_TOKENS = ("_nonhkip", "_1Mbps")
+
+
+# ── HTTP layer ────────────────────────────────────────────────────────────────
 
 async def _post(endpoint: str, body: dict, timeout: int = 60) -> dict:
     headers = {"RT-AccessCode": ESIM_API_KEY, "Content-Type": "application/json"}
-    # ssl=False: macOS Python missing system certs; use default ssl on Linux VPS
+    # ssl=False: macOS Python missing system certs; на Linux VPS это no-op (default ssl)
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as s:
         async with s.post(
@@ -39,27 +59,29 @@ async def _post(endpoint: str, body: dict, timeout: int = 60) -> dict:
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as r:
             text = await r.text()
-            import json as _json
             try:
-                return _json.loads(text)
+                return json.loads(text)
             except Exception as exc:
                 logger.error("eSIM API JSON parse error: %s | body: %.200s", exc, text)
                 return {}
 
 
+# ── Catalog cache ─────────────────────────────────────────────────────────────
+
+_cache: list[dict] = []
+_cache_expires: float = 0.0
+_cache_lock = asyncio.Lock()
+
+
 async def _all_packages() -> list[dict]:
     global _cache, _cache_expires
-    # Быстрый путь — кеш свежий, без блокировки
     if time.time() < _cache_expires and _cache:
         return _cache
-    # Медленный путь — идём в API, но только один запрос одновременно
     async with _cache_lock:
-        # Повторная проверка после получения лока (другой запрос мог уже заполнить кеш)
         if time.time() < _cache_expires and _cache:
             return _cache
         logger.info("eSIM: обновляем кеш пакетов...")
         data = await _post("/package/list", {})
-        logger.info("eSIM raw response: %s", str(data)[:300])
         _cache = (data.get("obj") or {}).get("packageList") or []
         _cache_expires = time.time() + 3600
         logger.info("eSIM: кеш обновлён, пакетов: %d", len(_cache))
@@ -67,18 +89,28 @@ async def _all_packages() -> list[dict]:
 
 
 async def warm_cache():
-    """Прогрев кеша при старте — вызывать из bot.py."""
     try:
         await _all_packages()
     except Exception as e:
         logger.warning("eSIM cache warm-up failed: %r", e)
 
 
-# ── Public helpers ─────────────────────────────────────────────────────────────
+# ── Pricing helpers ───────────────────────────────────────────────────────────
+
+def usd_for(price_units: int) -> float:
+    """Wholesale units → USD цена клиенту."""
+    return price_units * UNIT2USD * MARKUP
+
+
+def rub_for(price_units: int) -> int:
+    """Wholesale units → ₽ для клиента, округлено до 10."""
+    rub = usd_for(price_units) * RUB_PER_USD
+    return int(ceil(rub / 10) * 10)
+
 
 def stars_for(price_units: int) -> int:
-    """Wholesale units → Telegram Stars (with markup, rounded up)."""
-    return max(1, ceil(price_units * UNIT2USD * MARKUP / STAR_USD))
+    """Wholesale units → Telegram Stars (для invoice)."""
+    return max(1, ceil(usd_for(price_units) / STAR_USD))
 
 
 def fmt_bytes(b: int) -> str:
@@ -88,56 +120,174 @@ def fmt_bytes(b: int) -> str:
     return f"{int(gb)} GB" if gb == int(gb) else f"{gb:.1f} GB"
 
 
+def _is_visible_pkg(p: dict) -> bool:
+    """Скрываем технические варианты (HK-IP routing, FUP-1Mbps)."""
+    slug = p.get("slug", "")
+    return not any(tok in slug for tok in SKIP_SLUG_TOKENS)
+
+
+# ── Public catalog API ────────────────────────────────────────────────────────
+
+# Карта ISO-кодов → флаги/русские названия для красивого UI.
+COUNTRY_DISPLAY = {
+    "TR":    {"flag": "🇹🇷", "name_ru": "Турция",       "name_en": "Turkey"},
+    "GE":    {"flag": "🇬🇪", "name_ru": "Грузия",       "name_en": "Georgia"},
+    "AE":    {"flag": "🇦🇪", "name_ru": "ОАЭ",          "name_en": "UAE"},
+    "TH":    {"flag": "🇹🇭", "name_ru": "Таиланд",      "name_en": "Thailand"},
+    "VN":    {"flag": "🇻🇳", "name_ru": "Вьетнам",      "name_en": "Vietnam"},
+    "EU-42": {"flag": "🇪🇺", "name_ru": "Европа (42 страны)", "name_en": "Europe (42 countries)"},
+    "RU":    {"flag": "🇷🇺", "name_ru": "Россия",       "name_en": "Russia"},
+}
+
+
 async def get_countries() -> list[dict]:
-    """Unique countries sorted alphabetically, with package count."""
+    """MVP-страны с количеством доступных тарифов. RU помечена флагом is_russia."""
     pkgs = await _all_packages()
-    seen: dict[str, dict] = {}
+    counts: dict[str, int] = {}
     for p in pkgs:
-        code = p.get("locationCode", "")
-        if not code:
+        if not _is_visible_pkg(p):
             continue
-        nets = p.get("locationNetworkList", [])
-        name = nets[0]["locationName"] if nets else code
-        if code not in seen:
-            seen[code] = {"code": code, "name": name, "count": 0}
-        seen[code]["count"] += 1
-    return sorted(seen.values(), key=lambda x: x["name"])
+        code = p.get("location") or p.get("locationCode") or ""
+        if code in MVP_LOCATIONS:
+            counts[code] = counts.get(code, 0) + 1
+
+    out = []
+    for code in MVP_LOCATIONS:
+        if code not in counts:
+            continue
+        disp = COUNTRY_DISPLAY.get(code, {})
+        out.append({
+            "code":      code,
+            "name":      disp.get("name_ru", code),
+            "name_en":   disp.get("name_en", code),
+            "flag":      disp.get("flag", "🌍"),
+            "count":     counts[code],
+            "is_russia": code == "RU",
+        })
+    # Сортировка: сначала туристические, потом RU отдельной группой
+    out.sort(key=lambda c: (c["is_russia"], c["name"]))
+    return out
+
+
+def _enrich_pkg(p: dict) -> dict:
+    """Wholesale-пакет → структура для UI с RUB/USD/Stars."""
+    price = p.get("price", 0)
+    return {
+        "packageCode":  p["packageCode"],
+        "slug":         p.get("slug", ""),
+        "name":         p.get("name", ""),
+        "location":     p.get("location") or p.get("locationCode") or "",
+        "volume":       p.get("volume", 0),
+        "dataLabel":    fmt_bytes(p.get("volume", 0)),
+        "dataType":     p.get("dataType", 1),  # 1=Total, 2=Daily-FUP-slow
+        "duration":     p.get("duration", 0),
+        "durationUnit": (p.get("durationUnit") or "DAY").capitalize(),
+        "speed":        p.get("speed", ""),
+        "ipExport":     p.get("ipExport", ""),
+        "fupPolicy":    p.get("fupPolicy", ""),
+        # Цены
+        "price":        price,            # wholesale units (для invoice payload)
+        "priceRub":     rub_for(price),
+        "priceUsd":     round(usd_for(price), 2),
+        "stars":        stars_for(price),
+    }
 
 
 async def get_packages_for(location_code: str) -> list[dict]:
-    """All packages for a country, enriched with Stars price + human sizes."""
+    """Все видимые пакеты для страны, отсортированы по объёму/сроку."""
     pkgs = await _all_packages()
-    out = []
+    out = [
+        _enrich_pkg(p) for p in pkgs
+        if (p.get("location") or p.get("locationCode")) == location_code
+        and _is_visible_pkg(p)
+    ]
+    return sorted(out, key=lambda x: (x["dataType"], x["duration"], x["volume"]))
+
+
+async def find_package(package_code: str) -> dict | None:
+    """Поиск тарифа по packageCode (для invoice handler)."""
+    pkgs = await _all_packages()
     for p in pkgs:
-        if p.get("locationCode") != location_code:
-            continue
-        data_type = p.get("dataType", 1)
-        out.append({
-            "packageCode":  p["packageCode"],
-            "name":         p.get("name", ""),
-            "dataLabel":    fmt_bytes(p.get("volume", 0)),
-            "dataType":     data_type,       # 1=total, 2=daily (volume is per-day)
-            "duration":     p.get("duration", 0),
-            "durationUnit": p.get("durationUnit", "DAY").capitalize(),
-            "speed":        p.get("speed", ""),
-            "ipExport":     p.get("ipExport", ""),
-            "price":        p.get("price", 0),
-            "stars":        stars_for(p.get("price", 0)),
-        })
-    return sorted(out, key=lambda x: (x["price"], x["duration"]))
+        if p.get("packageCode") == package_code:
+            return _enrich_pkg(p)
+    return None
+
+
+# ── Order / fulfillment API ───────────────────────────────────────────────────
+
+async def get_balance() -> dict:
+    """Текущий баланс merchant-аккаунта в wholesale units (×10000)."""
+    return await _post("/balance/query", {})
 
 
 async def place_order(package_code: str, wholesale_price: int, tx_id: str) -> dict:
-    """Place eSIM order. Returns raw API response."""
+    """POST /esim/order. Идемпотентно по transactionId.
+    Возвращает {'success': bool, 'obj': {'orderNo': '...'}}."""
     return await _post("/esim/order", {
-        "transactionId": tx_id,
+        "transactionId":   tx_id,
         "packageInfoList": [{"packageCode": package_code, "count": 1, "price": wholesale_price}],
     })
 
 
-async def query_esim(iccid: str) -> dict:
-    """Query eSIM details by ICCID to get QR / activation code."""
+async def query_by_order_no(order_no: str) -> dict:
+    """Проверка статуса заказа. errorCode=200010 ⇒ профиль ещё аллоцируется."""
     return await _post("/esim/query", {
-        "iccid": iccid,
-        "pager": {"pageNum": 1, "pageSize": 1},
+        "orderNo": order_no,
+        "pager":   {"pageNum": 1, "pageSize": 50},
     })
+
+
+async def query_by_tran_no(esim_tran_no: str) -> dict:
+    """Детали одного eSIM-профиля по esimTranNo."""
+    # API не принимает esimTranNo напрямую как параметр query, но фильтрует по ICCID;
+    # здесь оставляем wrapper на случай нужды по orderNo→tran_no через query.
+    return await _post("/esim/query", {
+        "esimTranNo": esim_tran_no,
+        "pager":      {"pageNum": 1, "pageSize": 1},
+    })
+
+
+async def cancel_order(esim_tran_no: str) -> dict:
+    """Отмена eSIM (рефанд на наш баланс).
+    Доступно только пока smdpStatus=RELEASED & esimStatus=GOT_RESOURCE."""
+    return await _post("/esim/cancel", {"esimTranNo": esim_tran_no})
+
+
+async def usage_query(esim_tran_nos: list[str]) -> dict:
+    """Батчевый запрос юзеджа по esimTranNo (макс 10 за раз)."""
+    if not esim_tran_nos:
+        return {"success": True, "obj": {"esimUsageList": []}}
+    if len(esim_tran_nos) > 10:
+        esim_tran_nos = esim_tran_nos[:10]
+    return await _post("/esim/usage/query", {"esimTranNoList": esim_tran_nos})
+
+
+async def set_webhook(url: str) -> dict:
+    """Регистрация webhook URL у esimaccess (idempotent — перезаписывает)."""
+    return await _post("/webhook/save", {"webhook": url})
+
+
+# ── Polling helper для async fulfillment ──────────────────────────────────────
+
+async def poll_order_until_ready(order_no: str, max_wait_sec: int = 60) -> dict | None:
+    """Опрашивает /esim/query до получения профиля или таймаута.
+    Возвращает первый esim из esimList или None если не успело."""
+    delays = [3, 5, 7, 10, 15, 20]  # ~60 сек суммарно
+    waited = 0
+    for delay in delays:
+        if waited >= max_wait_sec:
+            break
+        await asyncio.sleep(delay)
+        waited += delay
+        try:
+            resp = await query_by_order_no(order_no)
+        except Exception as e:
+            logger.warning("eSIM poll error for %s: %r", order_no, e)
+            continue
+        # 200010 = SM-DP+ ещё аллоцирует
+        if resp.get("errorCode") == "200010":
+            continue
+        esim_list = (resp.get("obj") or {}).get("esimList") or []
+        if esim_list and esim_list[0].get("ac"):
+            return esim_list[0]
+    return None
