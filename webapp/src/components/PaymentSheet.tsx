@@ -6,28 +6,19 @@ export type PayMethod = 'stars' | 'crypto'
 
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
-  awg: number; vless: number; badge?: string
-  // v2: speed-based plans
-  speedMbps?: number
-  softCapGb?: number
-  throttleMbps?: number
-  legacy?: boolean   // hide from default UI but keep callbacks working
+  vless: number; badge?: string
+  speedMbps: number
+  softCapGb: number
+  throttleMbps: number
 }
 
 export const PLANS: Plan[] = [
-  // v2 — Reality, по скорости
-  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, awg: 0, vless: 5,  speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
-  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, awg: 0, vless: 10, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
-
-  // legacy — оставлены для уже-купивших, в новом UI скрыты
-  { key: 'vpn_start',   nameKey: 'vpn_plan_start',   stars: 128, rub: 180, usd: 2, awg: 1, vless: 0, legacy: true },
-  { key: 'vpn_popular', nameKey: 'vpn_plan_popular', stars: 214, rub: 270, usd: 3, awg: 2, vless: 0, legacy: true },
-  { key: 'vpn_pro',     nameKey: 'vpn_plan_pro',     stars: 342, rub: 450, usd: 5, awg: 3, vless: 1, legacy: true },
-  { key: 'vpn_family',  nameKey: 'vpn_plan_family',  stars: 513, rub: 640, usd: 7, awg: 7, vless: 1, legacy: true },
+  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 5,  speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 10, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
 ]
 
-// for default UI rendering (purchase / browse)
-export const VISIBLE_PLANS: Plan[] = PLANS.filter(p => !p.legacy)
+// alias for callers that imported VISIBLE_PLANS — keep backwards-compat for one cycle
+export const VISIBLE_PLANS: Plan[] = PLANS
 
 export default function PaymentSheet({
   plan, onClose, onPay,
@@ -54,9 +45,9 @@ export default function PaymentSheet({
           </div>
           <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
             {plan.rub} ₽ {t('pay_per_month')}
-            {plan.speedMbps ? ` · ${plan.speedMbps} Mbps` : ''}
+            {' · '}{plan.speedMbps} Mbps
             {' · '}
-            {p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
           </div>
         </div>
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">

@@ -25,19 +25,15 @@ const PLAN_KEY: Record<string, string> = {
 }
 
 const PROTO_BG: Record<string, string> = {
-  awg:   'bg-success',
   vless: 'bg-purple',
 }
 const PROTO_BG_DIM: Record<string, string> = {
-  awg:   'bg-success/20',
   vless: 'bg-purple/20',
 }
 const PROTO_TEXT: Record<string, string> = {
-  awg:   'text-success',
   vless: 'text-purple',
 }
 const PROTO_LABEL: Record<string, string> = {
-  awg:   'WireGuard',
   vless: 'VLESS',
 }
 
@@ -133,14 +129,7 @@ function ServerPicker({
   )
 }
 
-function ProtoIcon({ protocol }: { protocol: string }) {
-  if (protocol === 'awg') return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-      <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
-        stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  )
+function ProtoIcon({ protocol: _protocol }: { protocol: string }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <rect x="3" y="3" width="18" height="18" rx="3" stroke="#fff" strokeWidth="2"/>
@@ -430,8 +419,7 @@ export default function Configs() {
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
       <div className="px-1 pt-1.5 pb-0.5">
         <div className="text-[13px] text-[var(--tg-theme-hint-color)] flex gap-3">
-          <span className="text-success">{t('configs_legend_vpn')}</span>
-          <span className="text-purple">{t('configs_legend_tv')}</span>
+          <span className="text-purple">{t('configs_legend_vpn')}</span>
         </div>
       </div>
 

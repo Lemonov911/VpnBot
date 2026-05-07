@@ -162,7 +162,7 @@ export default function VPN() {
             const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
             const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_base
             const isHit = plan.badge === 'hit'
-            const deviceWord = p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
+            const deviceWord = p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
             return (
               <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
                 isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
@@ -181,9 +181,8 @@ export default function VPN() {
                     <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
                     <span className="opacity-40 mx-1">·</span>
                     <span className="text-xs">
-                      {plan.speedMbps ? <>⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span></> : null}
-                      📱 {plan.vless || plan.awg} {deviceWord}
-                      {!plan.speedMbps && plan.vless > 0 ? ' · 📺 TV' : ''}
+                      ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
+                      📱 {plan.vless} {deviceWord}
                     </span>
                   </div>
                 </div>
@@ -199,8 +198,7 @@ export default function VPN() {
           })}
 
           <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-3 px-4 text-xs text-[var(--tg-theme-hint-color,#707579)] leading-[1.7]">
-            <span className="text-success font-semibold">{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}<br />
-            <span className="text-purple font-semibold">{t('plans_legend_tv')}</span> {t('plans_legend_tv_s')}
+            <span className="text-success font-semibold">{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}
           </div>
 
           <div className="section-title">
@@ -239,8 +237,6 @@ export default function VPN() {
   const pendingName = sub.pending_plan ? (PLAN_NAMES[sub.pending_plan] ?? sub.pending_plan) : null
   const isExpiring  = sub.days_remaining <= 7
 
-  const awgTotal    = configs?.filter(c => c.protocol === 'awg').length ?? 0
-  const awgActive   = configs?.filter(c => c.protocol === 'awg' && c.status === 'active').length ?? 0
   const vlessTotal  = configs?.filter(c => c.protocol === 'vless').length ?? 0
   const vlessActive = configs?.filter(c => c.protocol === 'vless' && c.status === 'active').length ?? 0
 
@@ -275,22 +271,11 @@ export default function VPN() {
           <span className="bg-success/13 text-success text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0">{t('vpn_active_badge')}</span>
         </div>
 
-        {(awgTotal > 0 || vlessTotal > 0) && (
-          <div className="mt-3.5 flex gap-4">
-            {awgTotal > 0 && (
-              <div>
-                <div className="text-[10px] text-[var(--tg-theme-hint-color,#707579)] mb-1 uppercase tracking-[0.4px]">{t('vpn_slots_devs')}</div>
-                <SlotDots active={awgActive} total={awgTotal} color="#27ae60" />
-                <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">{awgActive} / {awgTotal} {t('vpn_connected')}</div>
-              </div>
-            )}
-            {vlessTotal > 0 && (
-              <div>
-                <div className="text-[10px] text-[var(--tg-theme-hint-color,#707579)] mb-1 uppercase tracking-[0.4px]">{t('vpn_slots_tv')}</div>
-                <SlotDots active={vlessActive} total={vlessTotal} color="#8e44ad" />
-                <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">{vlessActive} / {vlessTotal} {t('vpn_connected')}</div>
-              </div>
-            )}
+        {vlessTotal > 0 && (
+          <div className="mt-3.5">
+            <div className="text-[10px] text-[var(--tg-theme-hint-color,#707579)] mb-1 uppercase tracking-[0.4px]">{t('vpn_slots_devs')}</div>
+            <SlotDots active={vlessActive} total={vlessTotal} color="#8e44ad" />
+            <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">{vlessActive} / {vlessTotal} {t('vpn_connected')}</div>
           </div>
         )}
 

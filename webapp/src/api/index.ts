@@ -52,7 +52,7 @@ export function createVpnInvoiceCrypto(
 
 export interface VpnConfig {
   id:          number
-  protocol:    'awg' | 'vless'
+  protocol:    'vless'
   peer_name:   string | null
   label:       string | null
   status:      string

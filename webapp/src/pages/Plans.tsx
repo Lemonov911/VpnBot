@@ -122,9 +122,8 @@ function PlanCard({
           <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
           <span className="opacity-40 mx-1">·</span>
           <span className="text-xs">
-            {plan.speedMbps ? <>⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span></> : null}
-            📱 {p(plan.vless || plan.awg, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
-            {!plan.speedMbps && plan.vless > 0 ? ` · ${t('plans_smarttv')}` : ''}
+            ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
+            📱 {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
           </span>
         </div>
       </div>
@@ -252,12 +251,8 @@ export default function Plans() {
           ))
         ) : (
           (() => {
-            const curPlan = PLANS.find(p => p.key === sub.plan)!
-            // Always show v2 plans + the user's current plan (even if it's legacy)
-            const planList = [
-              ...VISIBLE_PLANS,
-              ...(curPlan.legacy ? [curPlan] : []),
-            ]
+            const curPlan = PLANS.find(p => p.key === sub.plan) ?? VISIBLE_PLANS[0]
+            const planList = VISIBLE_PLANS
             return planList.map((plan, i) => {
               const isPending = sub.pending_plan === plan.key
               let mode: 'current' | 'upgrade' | 'downgrade' | 'pending'
@@ -297,8 +292,7 @@ function Legend() {
   const t = useT()
   return (
     <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-xl py-3 px-4 mt-2 text-xs text-[var(--tg-theme-hint-color,#707579)] leading-[1.7]">
-      <span className="text-success font-semibold">{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}<br />
-      <span className="text-purple font-semibold">{t('plans_legend_tv')}</span> {t('plans_legend_tv_s')}
+      <span className="text-success font-semibold">{t('plans_legend_dev')}</span> {t('plans_legend_dev_s')}
     </div>
   )
 }

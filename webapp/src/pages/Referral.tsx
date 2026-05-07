@@ -40,8 +40,8 @@ export default function Referral() {
     if (!stats) return
     WebApp.HapticFeedback.impactOccurred('light')
     const text = encodeURIComponent(lang === 'ru'
-      ? `🛡 VPN без блокировок — Amnezia WireGuard\nПопробуй по моей ссылке: ${stats.ref_link}`
-      : `🛡 VPN without blocks — Amnezia WireGuard\nTry it with my link: ${stats.ref_link}`
+      ? `🛡 MAX VPN — открывает Instagram, YouTube, ChatGPT в России\nПопробуй: ${stats.ref_link}`
+      : `🛡 MAX VPN — unblocks Instagram, YouTube and ChatGPT in Russia\nTry it: ${stats.ref_link}`
     )
     WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(stats.ref_link)}&text=${text}`)
   }
