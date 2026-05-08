@@ -108,8 +108,8 @@ func main() {
 	httpServer := &http.Server{
 		Addr:         cfg.ListenAddr,
 		Handler:      srv.Handler(),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	quit := make(chan os.Signal, 1)

@@ -51,7 +51,7 @@ class VpnctlClient:
         return urlsplit(url).path or "/"
 
     async def _request(
-        self, method: str, path: str, body: dict | None = None, *, timeout_s: int = 10,
+        self, method: str, path: str, body: dict | None = None, *, timeout_s: int = 30,
     ) -> tuple[int, dict | list | None]:
         body_bytes = b"" if body is None else _json.dumps(body, separators=(",", ":")).encode()
         headers = self._sign(method, path, body_bytes)
@@ -74,13 +74,13 @@ class VpnctlClient:
 
     async def health(self) -> dict:
         # /health не требует auth, но всё равно подпишем — не повредит
-        st, data = await self._request("GET", "/health", timeout_s=5)
+        st, data = await self._request("GET", "/health", timeout_s=10)
         if st != 200:
             raise VpnctlError(f"health: {st}")
         return data
 
     async def list_services(self) -> list:
-        st, data = await self._request("GET", "/services", timeout_s=5)
+        st, data = await self._request("GET", "/services", timeout_s=10)
         if st != 200:
             raise VpnctlError(f"list_services: {st}")
         return data

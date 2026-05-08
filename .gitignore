@@ -36,3 +36,18 @@ screenshot*.png
 # Admin build
 admin/.next/
 admin/node_modules/
+
+# Session test artifacts (don't push)
+amnezia*
+amnezia*.png
+amnezia*.json
+test_peer_*.png
+test_*.txt
+wg.conf
+wg_client.conf
+ovz_*.conf
+new_server_wg*.conf
+gen_*.py
+maxvpn.vpn
+qr_*.png
+scripts/
