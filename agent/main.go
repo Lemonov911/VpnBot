@@ -11,6 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"vpnctl/api"
+	awgpkg "vpnctl/awg"
 	"vpnctl/config"
 	"vpnctl/fairshare"
 	"vpnctl/service"
@@ -38,6 +39,21 @@ func main() {
 			wgMgr = mgr
 			services["wg"] = service.NewWGService(mgr)
 			log.Printf("service: wg (built-in, interface=%s)", cfg.WGInterface)
+
+		case "awg":
+			// AmneziaWG — server params (Jc/H1-H4/S1-S4) generated once by
+			// agent/scripts/awg-install.sh and saved to JSON file.
+			paramsPath := os.Getenv("AWG_PARAMS_FILE")
+			if paramsPath == "" {
+				paramsPath = "/etc/amnezia/amneziawg/server-params.json"
+			}
+			mgr, err := awgpkg.NewManager(paramsPath)
+			if err != nil {
+				log.Fatalf("awg init: %v", err)
+			}
+			services["awg"] = service.NewAWGService(mgr)
+			log.Printf("service: awg (built-in, interface=%s, endpoint=%s)",
+				mgr.Interface(), mgr.Endpoint())
 
 		case "vless", "vless-base", "vless-max", "vless-base-slow", "vless-max-slow":
 			tier, ok := cfg.XrayTiers[svcName]
