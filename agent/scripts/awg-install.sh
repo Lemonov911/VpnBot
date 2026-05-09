@@ -27,10 +27,26 @@ if ! command -v awg >/dev/null; then
 fi
 
 # ── Генерация случайных DPI-обходных параметров ──────────────────────────────
-# H1-H4 должны быть unique uint32 ≥ 5 (чтобы не коллидировать с MessageType WG)
+# AmneziaWG 2.0 поддерживает ДИАПАЗОНЫ H1-H4 (формат "low-high") — клиент
+# рандомизирует значения в каждой сессии. Это критично против MTS DPI:
+# при статичных H1-H4 фингерпринт выучивается за 2-3 handshake. С диапазонами
+# DPI видит разные magic-байты каждый раз и не может построить шаблон.
+#
+# H1-H4: 4 непересекающихся диапазона в [5..4294967295]. Делим uint32 на
+# 4 равные четверти, в каждой берём случайное окно — диапазоны гарантированно
+# уникальны и не пересекаются.
 # S1-S4 (paddings) — 0..1280, S1+S2 ≤ 1280
-gen_h() { echo $((RANDOM*RANDOM % 4000000000 + 5)); }
 gen_s() { echo $((RANDOM % 256 + 30)); }
+
+# Генератор пары low-high внутри [base..base+span], min ширина диапазона ~20%
+gen_h_range() {
+    local base=$1 span=$2
+    local low=$((base + RANDOM * RANDOM % (span / 2)))
+    local width=$((span / 5 + RANDOM * RANDOM % (span / 2)))
+    local high=$((low + width))
+    if (( high > base + span )); then high=$((base + span)); fi
+    echo "${low}-${high}"
+}
 
 JC=$((RANDOM % 9 + 2))      # 2-10 junk packets
 JMIN=$((RANDOM % 30 + 10))  # 10-40 min size
@@ -39,11 +55,38 @@ S1=$(gen_s)
 S2=$(gen_s)
 S3=$(gen_s)
 S4=$(gen_s)
-H1=$(gen_h); H2=$(gen_h); H3=$(gen_h); H4=$(gen_h)
-# Гарантируем уникальность H
-while [[ "$H1" == "$H2" || "$H2" == "$H3" || "$H3" == "$H4" || "$H1" == "$H3" || "$H1" == "$H4" || "$H2" == "$H4" ]]; do
-    H1=$(gen_h); H2=$(gen_h); H3=$(gen_h); H4=$(gen_h)
-done
+
+# 4 четверти uint32: [5..1073741823], [1073741824..2147483647],
+#                    [2147483648..3221225471], [3221225472..4294967294]
+QUARTER=1073741819
+H1=$(gen_h_range 5 $QUARTER)
+H2=$(gen_h_range 1073741824 $QUARTER)
+H3=$(gen_h_range 2147483648 $QUARTER)
+H4=$(gen_h_range 3221225472 $QUARTER)
+
+# ── I1: handshake-маска под DNS-запрос к РФ-домену ───────────────────────────
+# Без I1 МТС DPI режет 99% AmneziaWG transport-трафика — даже handshake проходит
+# (короткий, обфусцированный), но дальнейшие data-пакеты палятся по эвристике
+# UDP-flow. С I1 первые байты UDP-payload выглядят как DNS-query, DPI помечает
+# flow как доверенный и не инспектирует последующие пакеты.
+#
+# Каждый сервер получает СВОЙ домен и СВОЙ TXID — DPI не может построить
+# фингерпринт на статичном I1.
+I1_DOMAINS=(mail.ru yandex.ru vk.com ok.ru rambler.ru lenta.ru rbc.ru gosuslugi.ru)
+I1_DOMAIN="${I1_DOMAINS[$RANDOM % ${#I1_DOMAINS[@]}]}"
+I1_TXID_HEX=$(printf "%04x" $((RANDOM % 0xFFFF)))
+# Собираем DNS-query байтами: header(12) + qname(label-encoded) + qtype/qclass
+I1_HEX=$(python3 -c "
+import struct
+domain = '$I1_DOMAIN'
+txid = int('$I1_TXID_HEX', 16)
+header = struct.pack('>HHHHHH', txid, 0x0100, 1, 0, 0, 0)
+qname = b''.join(bytes([len(l)])+l.encode() for l in domain.split('.')) + b'\x00'
+question = qname + struct.pack('>HH', 1, 1)  # A, IN
+print((header + question).hex())
+")
+I1_VALUE="<b 0x${I1_HEX}>"
+echo "    I1 mask: DNS-query to ${I1_DOMAIN} (txid=0x${I1_TXID_HEX})"
 
 # ── Ключи сервера ────────────────────────────────────────────────────────────
 mkdir -p /etc/amnezia/amneziawg
@@ -73,12 +116,15 @@ H1 = $H1
 H2 = $H2
 H3 = $H3
 H4 = $H4
+I1 = $I1_VALUE
 
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
 EOF
 
 # ── Сохраняем параметры в JSON для агента ────────────────────────────────────
+# H1-H4 — строки-диапазоны "low-high" (формат AmneziaWG 2.0). Агент
+# отдаёт их клиенту as-is, клиент сам рандомизирует значения в диапазоне.
 cat > "$PARAMS_FILE" <<EOF
 {
   "interface": "$IFACE",
@@ -90,7 +136,8 @@ cat > "$PARAMS_FILE" <<EOF
   "obfuscation": {
     "jc": $JC, "jmin": $JMIN, "jmax": $JMAX,
     "s1": $S1, "s2": $S2, "s3": $S3, "s4": $S4,
-    "h1": $H1, "h2": $H2, "h3": $H3, "h4": $H4
+    "h1": "$H1", "h2": "$H2", "h3": "$H3", "h4": "$H4",
+    "i1": "$I1_VALUE"
   }
 }
 EOF

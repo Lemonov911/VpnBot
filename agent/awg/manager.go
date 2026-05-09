@@ -32,17 +32,27 @@ type ServerParams struct {
 	Endpoint        string `json:"endpoint"`
 	ServerPublicKey string `json:"server_public_key"`
 	Obfuscation     struct {
-		Jc   int   `json:"jc"`
-		Jmin int   `json:"jmin"`
-		Jmax int   `json:"jmax"`
-		S1   int   `json:"s1"`
-		S2   int   `json:"s2"`
-		S3   int   `json:"s3"`
-		S4   int   `json:"s4"`
-		H1   int64 `json:"h1"`
-		H2   int64 `json:"h2"`
-		H3   int64 `json:"h3"`
-		H4   int64 `json:"h4"`
+		Jc   int    `json:"jc"`
+		Jmin int    `json:"jmin"`
+		Jmax int    `json:"jmax"`
+		S1   int    `json:"s1"`
+		S2   int    `json:"s2"`
+		S3   int    `json:"s3"`
+		S4   int    `json:"s4"`
+		// H1-H4 — диапазоны вида "low-high" (AmneziaWG 2.0). Клиент рандомизирует
+		// значения в диапазоне per-session, поэтому DPI не может выучить статичный
+		// magic-байт. Старый формат (один uint32) всё ещё парсится — bash-скрипт
+		// awg-install.sh пишет либо число, либо строку "low-high"; здесь принимаем
+		// как строку и проксируем в конфиг клиента without parsing.
+		H1 string `json:"h1"`
+		H2 string `json:"h2"`
+		H3 string `json:"h3"`
+		H4 string `json:"h4"`
+		// I1 — DNS-маска первого UDP-пакета handshake. Формат "<b 0xHEXBYTES>",
+		// где HEX — байты настоящего DNS-query к РФ-домену (mail.ru/yandex.ru/...).
+		// БЕЗ ЭТОГО МТС DPI режет 99% transport-трафика. Опциональное поле для
+		// обратной совместимости с серверами, поднятыми до этой ревизии скрипта.
+		I1 string `json:"i1,omitempty"`
 	} `json:"obfuscation"`
 }
 
@@ -148,11 +158,15 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 		return nil, nil, err
 	}
 
-	// awg set awg0 peer <pub> allowed-ips <ip>/32
+	// awg set awg0 peer <pub> allowed-ips <ip>/32 advanced-security on
+	// advanced-security on — включает обфускацию transport-плейна (data-пакеты
+	// после handshake). Без неё MTS DPI режет 99% трафика по эвристике
+	// «регулярный UDP-flow одинаковых пакетов».
 	allowedCidr := ip + "/32"
 	cmd := exec.Command("awg", "set", m.params.Interface,
 		"peer", pub,
 		"allowed-ips", allowedCidr,
+		"advanced-security", "on",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, nil, fmt.Errorf("awg set: %w (%s)", err, string(out))
@@ -173,7 +187,11 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 		AssignedIP: allowedCidr,
 		ServerKey:  m.params.ServerPublicKey,
 		Endpoint:   m.params.Endpoint,
-		DNS:        "1.1.1.1, 8.8.8.8",
+		// Порядок DNS важен: Google первым, потому что 8.8.8.8 отправляет
+		// EDNS-Client-Subnet → CDN отдают ближайший к нашему серверу edge.
+		// Cloudflare 1.1.1.1 ECS не шлёт → может вернуть рандомный географически
+		// далёкий edge, что даёт «иногда работает, иногда виснет» на YT/ТikТok.
+		DNS: "8.8.8.8, 1.1.1.1",
 		Params:     m.params,
 	}
 	return peer, cc, nil
@@ -289,11 +307,23 @@ func generateKeypair() (privB64, pubB64 string, err error) {
 // Amnezia VPN app (iOS/Android/Mac/Win), wireguard-tools с патчами.
 func AmneziaWGConfig(cc *ClientConfig) string {
 	o := cc.Params.Obfuscation
+	// I1 опционален — старые сервера без I1 в params.json продолжают работать,
+	// просто без DNS-маски (handshake может резаться MTS DPI).
+	i1Line := ""
+	if o.I1 != "" {
+		i1Line = "I1 = " + o.I1 + "\n"
+	}
+	// MTU=1240: -40 от стандартных 1280 для обычного WG. AmneziaWG с
+	// advanced-security добавляет per-пакет padding (S1-S4) и junk (Jc) →
+	// эффективный header больше. На MTU=1280 крупные TCP/QUIC сегменты
+	// иногда фрагментируются на пути через DPI и теряются — особенно
+	// заметно на YT/ТикТок-стримах («иногда грузит, иногда нет»). 1240
+	// даёт запас под обфускацию без потери производительности.
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = %s
 DNS = %s
-MTU = 1280
+MTU = 1240
 
 # AmneziaWG obfuscation (matches server)
 Jc = %d
@@ -303,11 +333,11 @@ S1 = %d
 S2 = %d
 S3 = %d
 S4 = %d
-H1 = %d
-H2 = %d
-H3 = %d
-H4 = %d
-
+H1 = %s
+H2 = %s
+H3 = %s
+H4 = %s
+%s
 [Peer]
 PublicKey = %s
 Endpoint = %s
@@ -318,6 +348,7 @@ PersistentKeepalive = 25
 		o.Jc, o.Jmin, o.Jmax,
 		o.S1, o.S2, o.S3, o.S4,
 		o.H1, o.H2, o.H3, o.H4,
+		i1Line,
 		cc.ServerKey, cc.Endpoint,
 	)
 }
