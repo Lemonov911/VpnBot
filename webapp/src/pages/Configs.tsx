@@ -24,17 +24,29 @@ const PLAN_KEY: Record<string, string> = {
   vpn_1y:      'configs_plan_1y',
 }
 
+// Цветовая палитра по протоколам:
+//   vless — фиолетовый (Reality / Xray)
+//   wg    — изумрудно-зелёный (plain WireGuard, без обфускации)
+//   awg   — синий cyan (AmneziaWG, с обфускацией под МТС DPI)
 const PROTO_BG: Record<string, string> = {
   vless: 'bg-purple',
+  wg:    'bg-emerald-500',
+  awg:   'bg-cyan-500',
 }
 const PROTO_BG_DIM: Record<string, string> = {
   vless: 'bg-purple/20',
+  wg:    'bg-emerald-500/20',
+  awg:   'bg-cyan-500/20',
 }
 const PROTO_TEXT: Record<string, string> = {
   vless: 'text-purple',
+  wg:    'text-emerald-500',
+  awg:   'text-cyan-500',
 }
 const PROTO_LABEL: Record<string, string> = {
   vless: 'VLESS',
+  wg:    'WireGuard',
+  awg:   'AmneziaWG',
 }
 
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
