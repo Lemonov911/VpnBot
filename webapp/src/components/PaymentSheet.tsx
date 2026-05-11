@@ -7,14 +7,15 @@ export type PayMethod = 'stars' | 'crypto'
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
   vless: number; badge?: string
+  wg?: number   // plain WireGuard slots (для роутеров / клиентов без поддержки AWG)
   speedMbps: number
   softCapGb: number
   throttleMbps: number
 }
 
 export const PLANS: Plan[] = [
-  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 5,  speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
-  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 10, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
+  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 5,  wg: 5, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 10, wg: 5, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
 ]
 
 // alias for callers that imported VISIBLE_PLANS — keep backwards-compat for one cycle
@@ -48,6 +49,7 @@ export default function PaymentSheet({
             {' · '}{plan.speedMbps} Mbps
             {' · '}
             {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            {plan.wg ? ` · ${plan.wg} WireGuard` : ''}
           </div>
         </div>
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">

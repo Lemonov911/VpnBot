@@ -124,6 +124,12 @@ function PlanCard({
           <span className="text-xs">
             ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
             📱 {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            {plan.wg ? (
+              <>
+                <span className="opacity-40 mx-1">·</span>
+                🔐 {plan.wg} WireGuard
+              </>
+            ) : null}
           </span>
         </div>
       </div>
