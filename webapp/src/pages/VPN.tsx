@@ -162,7 +162,6 @@ export default function VPN() {
             const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
             const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_base
             const isHit = plan.badge === 'hit'
-            const deviceWord = p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })
             return (
               <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
                 isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
@@ -182,7 +181,13 @@ export default function VPN() {
                     <span className="opacity-40 mx-1">·</span>
                     <span className="text-xs">
                       ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
-                      📱 {plan.vless} {deviceWord}
+                      📱 {plan.vless} VLESS
+                      {plan.wg ? (
+                        <>
+                          <span className="opacity-40 mx-1">·</span>
+                          🔐 {plan.wg} WireGuard
+                        </>
+                      ) : null}
                     </span>
                   </div>
                 </div>
