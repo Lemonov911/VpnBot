@@ -15,8 +15,20 @@ SERVER_IP="${AWG_SERVER_IP:-10.66.66.1}"
 ENDPOINT_IP="${AWG_ENDPOINT_IP:-$(curl -s -4 ifconfig.co)}"
 PARAMS_FILE="/etc/amnezia/amneziawg/server-params.json"
 
+# Внешний интерфейс для MASQUERADE — авто-детект по default-маршруту.
+# На разных VPS бывает eth0 / ens3 / eno1 / enp1s0 — захардкодить нельзя.
+EXT_IFACE="${AWG_EXT_IFACE:-$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')}"
+EXT_IFACE="${EXT_IFACE:-eth0}"  # fallback на eth0 если detection не удался
+
+# MSS clamp на TCP-пакетах через awg0 — обязательно для Windows-клиентов
+# через Amnezia VPN-большое приложение (userspace wireguard-go не делает
+# корректный PMTU discovery → крупные CDN не грузятся). На iPhone не нужно,
+# но и не мешает. См. AWG_DEPLOYMENT.md.
+MSS_CLAMP="${AWG_MSS_CLAMP:-1200}"
+
 echo "==> AmneziaWG installer"
 echo "    iface=$IFACE port=$PORT subnet=$SUBNET endpoint=$ENDPOINT_IP"
+echo "    ext_iface=$EXT_IFACE mss_clamp=$MSS_CLAMP"
 
 # ── Установка ────────────────────────────────────────────────────────────────
 if ! command -v awg >/dev/null; then
@@ -118,8 +130,8 @@ H3 = $H3
 H4 = $H4
 I1 = $I1_VALUE
 
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o $EXT_IFACE -j MASQUERADE; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS_CLAMP; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS_CLAMP
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o $EXT_IFACE -j MASQUERADE; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS_CLAMP; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS_CLAMP
 EOF
 
 # ── Сохраняем параметры в JSON для агента ────────────────────────────────────

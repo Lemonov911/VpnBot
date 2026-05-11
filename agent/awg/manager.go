@@ -23,37 +23,61 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// ServerParams — параметры обфускации, генерируемые один раз при установке.
+// Дефолты клиентского конфига. Менять осторожно — все клиенты пересоберутся.
+const (
+	// clientMTU=1240: -40 от стандартных 1280 для обычного WG. AmneziaWG с
+	// advanced-security добавляет per-пакет padding (S1-S4) и junk (Jc) →
+	// эффективный header больше. На MTU=1280 крупные TCP/QUIC сегменты
+	// иногда фрагментируются и теряются — особенно заметно на YT/ТикТок-
+	// стримах. 1240 даёт запас без потери производительности.
+	clientMTU = 1240
+
+	// Порядок DNS важен: Google первым, потому что 8.8.8.8 отправляет
+	// EDNS-Client-Subnet → CDN отдают ближайший к нашему серверу edge.
+	// Cloudflare 1.1.1.1 ECS не шлёт → может вернуть рандомный географически
+	// далёкий edge, что даёт «иногда работает, иногда виснет» на YT/TikTok.
+	clientDNS = "8.8.8.8, 1.1.1.1"
+
+	clientAllowedIPs    = "0.0.0.0/0, ::/0"
+	clientKeepaliveSecs = 25
+)
+
+// Obfuscation — параметры AmneziaWG DPI-обхода, генерируемые один раз
+// при установке сервера и общие для всех клиентов.
+type Obfuscation struct {
+	Jc   int `json:"jc"`
+	Jmin int `json:"jmin"`
+	Jmax int `json:"jmax"`
+	S1   int `json:"s1"`
+	S2   int `json:"s2"`
+	S3   int `json:"s3"`
+	S4   int `json:"s4"`
+	// H1-H4 — диапазоны вида "low-high" (AmneziaWG 2.0). Клиент рандомизирует
+	// значения в диапазоне per-session, поэтому DPI не может выучить статичный
+	// magic-байт. Старый формат (один uint32) тоже валиден — bash-скрипт
+	// пишет либо число, либо строку "low-high"; здесь принимаем как строку
+	// и проксируем в конфиг клиента without parsing.
+	H1 string `json:"h1"`
+	H2 string `json:"h2"`
+	H3 string `json:"h3"`
+	H4 string `json:"h4"`
+	// I1 — DNS-маска первого UDP-пакета handshake. Формат "<b 0xHEXBYTES>",
+	// где HEX — байты настоящего DNS-query к РФ-домену (mail.ru/yandex.ru/...).
+	// БЕЗ ЭТОГО МТС DPI режет 99% transport-трафика. Опциональное поле для
+	// обратной совместимости с серверами поднятыми до этой ревизии скрипта.
+	I1 string `json:"i1,omitempty"`
+}
+
+// ServerParams читается из /etc/amnezia/amneziawg/server-params.json,
+// генерируется bash-скриптом awg-install.sh при подъёме сервера.
 type ServerParams struct {
-	Interface       string `json:"interface"`
-	Port            int    `json:"port"`
-	Subnet          string `json:"subnet"`
-	ServerIP        string `json:"server_ip"`
-	Endpoint        string `json:"endpoint"`
-	ServerPublicKey string `json:"server_public_key"`
-	Obfuscation     struct {
-		Jc   int    `json:"jc"`
-		Jmin int    `json:"jmin"`
-		Jmax int    `json:"jmax"`
-		S1   int    `json:"s1"`
-		S2   int    `json:"s2"`
-		S3   int    `json:"s3"`
-		S4   int    `json:"s4"`
-		// H1-H4 — диапазоны вида "low-high" (AmneziaWG 2.0). Клиент рандомизирует
-		// значения в диапазоне per-session, поэтому DPI не может выучить статичный
-		// magic-байт. Старый формат (один uint32) всё ещё парсится — bash-скрипт
-		// awg-install.sh пишет либо число, либо строку "low-high"; здесь принимаем
-		// как строку и проксируем в конфиг клиента without parsing.
-		H1 string `json:"h1"`
-		H2 string `json:"h2"`
-		H3 string `json:"h3"`
-		H4 string `json:"h4"`
-		// I1 — DNS-маска первого UDP-пакета handshake. Формат "<b 0xHEXBYTES>",
-		// где HEX — байты настоящего DNS-query к РФ-домену (mail.ru/yandex.ru/...).
-		// БЕЗ ЭТОГО МТС DPI режет 99% transport-трафика. Опциональное поле для
-		// обратной совместимости с серверами, поднятыми до этой ревизии скрипта.
-		I1 string `json:"i1,omitempty"`
-	} `json:"obfuscation"`
+	Interface       string      `json:"interface"`
+	Port            int         `json:"port"`
+	Subnet          string      `json:"subnet"`
+	ServerIP        string      `json:"server_ip"`
+	Endpoint        string      `json:"endpoint"`
+	ServerPublicKey string      `json:"server_public_key"`
+	Obfuscation     Obfuscation `json:"obfuscation"`
 }
 
 type Peer struct {
@@ -106,27 +130,51 @@ func NewManager(paramsPath string) (*Manager, error) {
 	return m, nil
 }
 
-// syncFromKernel читает текущие пиры через `awg show <iface>`.
-func (m *Manager) syncFromKernel() error {
-	out, err := exec.Command("awg", "show", m.params.Interface, "dump").Output()
+// awgCmd выполняет `awg <args...>` и возвращает stdout. На ошибке — stderr в %w.
+func awgCmd(args ...string) ([]byte, error) {
+	out, err := exec.Command("awg", args...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("awg show: %w", err)
+		return out, fmt.Errorf("awg %s: %w (%s)", strings.Join(args, " "), err, string(out))
 	}
-	// Format: первая строка — server, дальше peer per line
-	// peer: pub_key  preshared_key  endpoint  allowed_ips  latest_handshake  rx  tx  keepalive
+	return out, nil
+}
+
+// awgSetPeer вызывает `awg set <iface> peer <pub> <extra...>`.
+func (m *Manager) awgSetPeer(pub string, extra ...string) error {
+	args := append([]string{"set", m.params.Interface, "peer", pub}, extra...)
+	_, err := awgCmd(args...)
+	return err
+}
+
+// dumpPeers выполняет `awg show <iface> dump` и возвращает строки пиров.
+// Первая строка `awg show ... dump` — это заголовок интерфейса, его пропускаем.
+// Каждая строка пира: pub_key  preshared_key  endpoint  allowed_ips  latest_handshake  rx  tx  keepalive
+func (m *Manager) dumpPeers() ([]string, error) {
+	out, err := awgCmd("show", m.params.Interface, "dump")
+	if err != nil {
+		return nil, err
+	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) < 2 {
-		return nil // no peers
+		return nil, nil
 	}
-	for _, line := range lines[1:] {
+	return lines[1:], nil
+}
+
+// syncFromKernel импортирует существующие пиры (например, оставшиеся
+// после перезапуска агента) в in-memory state.
+func (m *Manager) syncFromKernel() error {
+	peerLines, err := m.dumpPeers()
+	if err != nil {
+		return err
+	}
+	for _, line := range peerLines {
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
 			continue
 		}
-		pub := fields[0]
-		allowed := fields[3]
-		ip := strings.SplitN(allowed, "/", 2)[0]
-		if ip != "" {
+		pub, allowed := fields[0], fields[3]
+		if ip := strings.SplitN(allowed, "/", 2)[0]; ip != "" {
 			m.usedIPs[ip] = true
 		}
 		m.peers[pub] = &Peer{
@@ -143,7 +191,9 @@ func (m *Manager) Interface() string       { return m.params.Interface }
 func (m *Manager) ServerPublicKey() string { return m.params.ServerPublicKey }
 func (m *Manager) Endpoint() string        { return m.params.Endpoint }
 
-// AddPeer создаёт нового пира с авто-IP.
+// AddPeer создаёт нового пира с авто-IP. advanced-security включает обфускацию
+// transport-плейна (data-пакеты после handshake) — без неё MTS DPI режет 99%
+// трафика по эвристике «регулярный UDP-flow одинаковых пакетов».
 func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -157,19 +207,13 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-
-	// awg set awg0 peer <pub> allowed-ips <ip>/32 advanced-security on
-	// advanced-security on — включает обфускацию transport-плейна (data-пакеты
-	// после handshake). Без неё MTS DPI режет 99% трафика по эвристике
-	// «регулярный UDP-flow одинаковых пакетов».
 	allowedCidr := ip + "/32"
-	cmd := exec.Command("awg", "set", m.params.Interface,
-		"peer", pub,
+
+	if err := m.awgSetPeer(pub,
 		"allowed-ips", allowedCidr,
 		"advanced-security", "on",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, nil, fmt.Errorf("awg set: %w (%s)", err, string(out))
+	); err != nil {
+		return nil, nil, err
 	}
 
 	peer := &Peer{
@@ -187,11 +231,7 @@ func (m *Manager) AddPeer(label string) (*Peer, *ClientConfig, error) {
 		AssignedIP: allowedCidr,
 		ServerKey:  m.params.ServerPublicKey,
 		Endpoint:   m.params.Endpoint,
-		// Порядок DNS важен: Google первым, потому что 8.8.8.8 отправляет
-		// EDNS-Client-Subnet → CDN отдают ближайший к нашему серверу edge.
-		// Cloudflare 1.1.1.1 ECS не шлёт → может вернуть рандомный географически
-		// далёкий edge, что даёт «иногда работает, иногда виснет» на YT/ТikТok.
-		DNS: "8.8.8.8, 1.1.1.1",
+		DNS:        clientDNS,
 		Params:     m.params,
 	}
 	return peer, cc, nil
@@ -201,15 +241,11 @@ func (m *Manager) RemovePeer(pubkey string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cmd := exec.Command("awg", "set", m.params.Interface,
-		"peer", pubkey, "remove",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("awg set remove: %w (%s)", err, string(out))
+	if err := m.awgSetPeer(pubkey, "remove"); err != nil {
+		return err
 	}
 	if p, ok := m.peers[pubkey]; ok {
-		ip, _, _ := net.ParseCIDR(p.AssignedIP)
-		if ip != nil {
+		if ip, _, _ := net.ParseCIDR(p.AssignedIP); ip != nil {
 			delete(m.usedIPs, ip.String())
 		}
 		delete(m.peers, pubkey)
@@ -222,18 +258,16 @@ func (m *Manager) Stats() ([]*Peer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out, err := exec.Command("awg", "show", m.params.Interface, "dump").Output()
+	peerLines, err := m.dumpPeers()
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	for _, line := range lines[1:] {
+	for _, line := range peerLines {
 		fields := strings.Fields(line)
 		if len(fields) < 8 {
 			continue
 		}
-		pub := fields[0]
-		p, ok := m.peers[pub]
+		p, ok := m.peers[fields[0]]
 		if !ok {
 			continue
 		}
@@ -244,14 +278,16 @@ func (m *Manager) Stats() ([]*Peer, error) {
 		p.RxBytes, _ = strconv.ParseInt(fields[5], 10, 64)
 		p.TxBytes, _ = strconv.ParseInt(fields[6], 10, 64)
 	}
-	out2 := make([]*Peer, 0, len(m.peers))
+	out := make([]*Peer, 0, len(m.peers))
 	for _, p := range m.peers {
 		cp := *p
-		out2 = append(out2, &cp)
+		out = append(out, &cp)
 	}
-	return out2, nil
+	return out, nil
 }
 
+// nextFreeIP перебирает подсеть начиная с третьего адреса (.2), пропуская
+// серверный IP. Первые два адреса (.0 network, .1 server) зарезервированы.
 func (m *Manager) nextFreeIP() (string, error) {
 	_, network, err := net.ParseCIDR(m.params.Subnet)
 	if err != nil {
@@ -259,7 +295,7 @@ func (m *Manager) nextFreeIP() (string, error) {
 	}
 	ip := cloneIP(network.IP)
 	inc(ip)
-	inc(ip) // skip network and server (.1)
+	inc(ip)
 
 	for network.Contains(ip) {
 		s := ip.String()
@@ -286,7 +322,7 @@ func cloneIP(ip net.IP) net.IP {
 	return c
 }
 
-// generateKeypair — Curve25519 ключи для WireGuard формата.
+// generateKeypair — Curve25519 ключи в base64 (WireGuard формат).
 func generateKeypair() (privB64, pubB64 string, err error) {
 	var priv [32]byte
 	if _, err := rand.Read(priv[:]); err != nil {
@@ -305,25 +341,20 @@ func generateKeypair() (privB64, pubB64 string, err error) {
 
 // AmneziaWGConfig — клиентский конфиг с обфускацией. Понимают:
 // Amnezia VPN app (iOS/Android/Mac/Win), wireguard-tools с патчами.
+//
+// I1 опционален — старые сервера без I1 в params.json продолжают работать,
+// просто без DNS-маски (handshake может резаться MTS DPI).
 func AmneziaWGConfig(cc *ClientConfig) string {
 	o := cc.Params.Obfuscation
-	// I1 опционален — старые сервера без I1 в params.json продолжают работать,
-	// просто без DNS-маски (handshake может резаться MTS DPI).
 	i1Line := ""
 	if o.I1 != "" {
 		i1Line = "I1 = " + o.I1 + "\n"
 	}
-	// MTU=1240: -40 от стандартных 1280 для обычного WG. AmneziaWG с
-	// advanced-security добавляет per-пакет padding (S1-S4) и junk (Jc) →
-	// эффективный header больше. На MTU=1280 крупные TCP/QUIC сегменты
-	// иногда фрагментируются на пути через DPI и теряются — особенно
-	// заметно на YT/ТикТок-стримах («иногда грузит, иногда нет»). 1240
-	// даёт запас под обфускацию без потери производительности.
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = %s
 DNS = %s
-MTU = 1240
+MTU = %d
 
 # AmneziaWG obfuscation (matches server)
 Jc = %d
@@ -341,14 +372,15 @@ H4 = %s
 [Peer]
 PublicKey = %s
 Endpoint = %s
-AllowedIPs = 0.0.0.0/0, ::/0
-PersistentKeepalive = 25
+AllowedIPs = %s
+PersistentKeepalive = %d
 `,
-		cc.PrivateKey, cc.AssignedIP, cc.DNS,
+		cc.PrivateKey, cc.AssignedIP, cc.DNS, clientMTU,
 		o.Jc, o.Jmin, o.Jmax,
 		o.S1, o.S2, o.S3, o.S4,
 		o.H1, o.H2, o.H3, o.H4,
 		i1Line,
 		cc.ServerKey, cc.Endpoint,
+		clientAllowedIPs, clientKeepaliveSecs,
 	)
 }

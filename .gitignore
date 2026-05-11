@@ -51,3 +51,4 @@ gen_*.py
 maxvpn.vpn
 qr_*.png
 scripts/
+*.conf
