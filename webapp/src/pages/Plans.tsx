@@ -1,4 +1,3 @@
-// auto-deploy smoke test 2026-05-11
 import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
