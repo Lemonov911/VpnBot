@@ -29,8 +29,20 @@ chmod +x awg-install.sh
 1. Устанавливает `amneziawg` + `amneziawg-tools` из PPA
 2. Генерирует **случайные** Jc/H1-H4/S1-S4 (уникальные для каждого сервера!)
 3. Применяет sysctl-тюнинг (BBR, fq, большие буферы, ip_forward)
-4. Поднимает `awg0` интерфейс с MASQUERADE
+4. Поднимает `awg0` интерфейс с MASQUERADE + **TCP MSS clamp 1200 в обе стороны** (см. ниже)
 5. Сохраняет конфиг в `/etc/amnezia/amneziawg/server-params.json`
+
+### Зачем MSS clamp 1200
+
+Это **критично для Windows-клиентов** через Amnezia VPN-большое приложение. Без MSS clamp на FORWARD-цепочке awg0 происходит фрагментация ответов от крупных CDN (Google/YouTube/Cloudflare) внутри туннеля — userspace `wireguard-go` на Windows не делает корректный PMTU discovery, TLS-handshakes повисают, маленькие сайты грузятся, большие нет.
+
+Точное значение **1200** (не 1240 и не PMTU) — оставляет запас под AmneziaWG-обфускацию (Jc + S1-S4 + advanced-security overhead). На iPhone клампе не требуется — kernel-нативный AWG сам разбирается.
+
+В PostUp/PostDown awg0.conf:
+```
+iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200
+iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200
+```
 
 После установки видно:
 ```
