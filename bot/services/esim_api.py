@@ -238,12 +238,15 @@ async def query_by_order_no(order_no: str) -> dict:
 
 
 async def query_by_tran_no(esim_tran_no: str) -> dict:
-    """Детали одного eSIM-профиля по esimTranNo."""
-    # API не принимает esimTranNo напрямую как параметр query, но фильтрует по ICCID;
-    # здесь оставляем wrapper на случай нужды по orderNo→tran_no через query.
+    """Детали одного eSIM-профиля по esimTranNo.
+
+    API требует pageSize в [5, 500] (упал с 1: errorCode=000105). Просим
+    минимально допустимое 5 — фильтра по tran_no достаточно чтобы вернулась
+    одна запись.
+    """
     return await _post("/esim/query", {
         "esimTranNo": esim_tran_no,
-        "pager":      {"pageNum": 1, "pageSize": 1},
+        "pager":      {"pageNum": 1, "pageSize": 5},
     })
 
 
