@@ -15,6 +15,8 @@ function formatDate(iso: string, lang: string): string {
 }
 
 const PLAN_KEY: Record<string, string> = {
+  vpn_base:    'vpn_plan_base',
+  vpn_max:     'vpn_plan_max',
   vpn_start:   'vpn_plan_start',
   vpn_popular: 'vpn_plan_popular',
   vpn_pro:     'vpn_plan_pro',
