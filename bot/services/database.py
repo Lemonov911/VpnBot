@@ -496,29 +496,26 @@ async def get_active_subscription(user_id: int) -> dict | None:
 
 
 async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
-                                    awg_delta: int, vless_delta: int):
+                                    awg_delta: int, vless_delta: int,
+                                    wg_delta: int = 0):
     """
     Немедленно меняет план подписки (апгрейд).
-    Добавляет новые пустые слоты если awg_delta/vless_delta > 0.
-    Снимает pending_plan если он был.
+    Добавляет новые пустые слоты если awg_delta/vless_delta/wg_delta > 0.
+    Снимает pending_plan если он был. wg_delta дефолтится в 0 для backward
+    compatibility со старыми callers.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "UPDATE subscriptions SET plan=?, pending_plan=NULL WHERE id=?",
             (new_plan, sub_id),
         )
-        for _ in range(max(0, awg_delta)):
-            await db.execute(
-                "INSERT INTO configs (subscription_id, user_id, protocol, status) "
-                "VALUES (?, ?, 'awg', 'empty')",
-                (sub_id, user_id),
-            )
-        for _ in range(max(0, vless_delta)):
-            await db.execute(
-                "INSERT INTO configs (subscription_id, user_id, protocol, status) "
-                "VALUES (?, ?, 'vless', 'empty')",
-                (sub_id, user_id),
-            )
+        for proto, delta in (("awg", awg_delta), ("vless", vless_delta), ("wg", wg_delta)):
+            for _ in range(max(0, delta)):
+                await db.execute(
+                    "INSERT INTO configs (subscription_id, user_id, protocol, status) "
+                    "VALUES (?, ?, ?, 'empty')",
+                    (sub_id, user_id, proto),
+                )
         await db.commit()
 
 

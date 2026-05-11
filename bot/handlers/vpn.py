@@ -319,6 +319,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     expiry_str  = expires_at.strftime("%d.%m.%Y")
     awg_slots   = plan.get("awg_slots", 1)
     vless_slots = plan.get("vless_slots", 0)
+    wg_slots    = plan.get("wg_slots", 0)
 
     # Записываем платёж в историю
     await record_payment(
@@ -375,12 +376,39 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             except VpnctlError as e:
                 logger.warning("vpnctl VLess peer error: %s", e)
 
-    slots_desc = f"{awg_slots} WireGuard"
-    if vless_slots:
-        slots_desc += f" + {vless_slots} VLess"
+    # Plain WireGuard слоты (без AmneziaWG-обфускации) — для роутеров и клиентов
+    # которым DPI не страшен / не нужна обфускация. Серверная часть — отдельный
+    # `wg`-интерфейс в agent/wg/, выбирается через get_best_server("wg").
+    created_plain_wg = 0
+    for i in range(wg_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="wg")
+        server = await get_best_server("wg")
+        if not server:
+            continue
+        try:
+            label = f"user_{user_id}_plainwg_{i+1}"
+            peer = await provision_peer(server, label, "wg")
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                config_id, server["id"], peer.id,
+                peer_ip, peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            created_plain_wg += 1
+        except VpnctlError as e:
+            logger.warning("vpnctl plain-WG peer error: %s", e)
 
-    delivered = created_wg + created_vless
-    total     = awg_slots + vless_slots
+    parts_desc = []
+    if awg_slots:
+        parts_desc.append(f"{awg_slots} AmneziaWG")
+    if vless_slots:
+        parts_desc.append(f"{vless_slots} VLess")
+    if wg_slots:
+        parts_desc.append(f"{wg_slots} WireGuard")
+    slots_desc = " + ".join(parts_desc) or "0 слотов"
+
+    delivered = created_wg + created_vless + created_plain_wg
+    total     = awg_slots + vless_slots + wg_slots
 
     if delivered == total:
         note = "Конфиги отправлены выше 👆"
@@ -449,27 +477,36 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
 async def _apply_plan_upgrade(message: Message, payment):
     """Применяет апгрейд тарифа после успешной оплаты."""
     parts = payment.invoice_payload.split(":")
-    # plan_upgrade:{sub_id}:{plan_key}:{awg_delta}:{vless_delta}
-    if len(parts) != 5:
+    # plan_upgrade:{sub_id}:{plan_key}:{awg_delta}:{vless_delta}[:{wg_delta}]
+    # wg_delta — опциональный 6-й элемент (added after launch). Старые in-flight
+    # invoice'ы без него парсятся с wg_delta=0.
+    if len(parts) not in (5, 6):
         await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
         return
 
-    _, sub_id_str, plan_key, awg_delta_str, vless_delta_str = parts
-    sub_id     = int(sub_id_str)
-    awg_delta  = int(awg_delta_str)
+    _, sub_id_str, plan_key, awg_delta_str, vless_delta_str = parts[:5]
+    wg_delta_str = parts[5] if len(parts) == 6 else "0"
+    sub_id      = int(sub_id_str)
+    awg_delta   = int(awg_delta_str)
     vless_delta = int(vless_delta_str)
-    user_id    = message.from_user.id
+    wg_delta    = int(wg_delta_str)
+    user_id     = message.from_user.id
 
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         await message.answer("⚠️ Неизвестный тариф. Напиши в поддержку.")
         return
 
-    await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta)
+    await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)
 
-    slots_desc = f"{plan['awg_slots']} AWG"
+    parts_desc = []
+    if plan["awg_slots"]:
+        parts_desc.append(f"{plan['awg_slots']} AWG")
     if plan["vless_slots"]:
-        slots_desc += f" + {plan['vless_slots']} VLESS"
+        parts_desc.append(f"{plan['vless_slots']} VLESS")
+    if plan.get("wg_slots"):
+        parts_desc.append(f"{plan['wg_slots']} WireGuard")
+    slots_desc = " + ".join(parts_desc) or "0"
 
     await message.answer(
         f"✅ <b>Тариф изменён на «{plan['name']}»!</b>\n\n"

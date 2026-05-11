@@ -44,9 +44,11 @@ logger = logging.getLogger(__name__)
 VPN_PLANS: dict[str, dict] = {
     # ── v2 тарифы по скорости (Reality) ──
     "vpn_base": {"name": "База", "stars": 145, "rub": "200", "usd": "2.20", "duration_days": 30,
-                 "awg_slots": 0, "vless_slots": 5,  "speed_mbps": 60,  "soft_cap_gb": 500,  "throttle_mbps": 5},
+                 "awg_slots": 0, "vless_slots": 5,  "wg_slots": 5,
+                 "speed_mbps": 60,  "soft_cap_gb": 500,  "throttle_mbps": 5},
     "vpn_max":  {"name": "Макс", "stars": 360, "rub": "500", "usd": "5.50", "duration_days": 30,
-                 "awg_slots": 0, "vless_slots": 10, "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15},
+                 "awg_slots": 0, "vless_slots": 10, "wg_slots": 5,
+                 "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15},
 
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
     "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},
@@ -524,6 +526,8 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="awg")
     for _ in range(plan["vless_slots"]):
         await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="vless")
+    for _ in range(plan.get("wg_slots", 0)):
+        await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="wg")
 
     # Уведомляем пользователя в Telegram
     try:
@@ -755,6 +759,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
 
         awg_delta   = new_plan["awg_slots"]   - cur_plan["awg_slots"]
         vless_delta = new_plan["vless_slots"] - cur_plan["vless_slots"]
+        wg_delta    = new_plan.get("wg_slots", 0) - cur_plan.get("wg_slots", 0)
 
         if not CRYPTOBOT_TOKEN:
             return web.json_response({"error": "Оплата апгрейда временно недоступна"}, status=503)
@@ -762,7 +767,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         from services.cryptobot import create_invoice
         bot: Bot = request.app["bot"]
         bot_info = await bot.get_me()
-        payload  = f"plan_upgrade:{sub['id']}:{plan_key}:{awg_delta}:{vless_delta}"
+        payload  = f"plan_upgrade:{sub['id']}:{plan_key}:{awg_delta}:{vless_delta}:{wg_delta}"
 
         try:
             invoice = await create_invoice(
