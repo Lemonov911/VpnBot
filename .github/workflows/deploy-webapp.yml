@@ -37,10 +37,12 @@ jobs:
         run: npm ci
         working-directory: webapp
 
-      - name: Build
+      # ── BUILD #1: для GitHub Pages (base=/VpnBot/) ────────────────────
+      - name: Build for GitHub Pages
         run: npm run build
         working-directory: webapp
         env:
+          VITE_BASE_PATH: /VpnBot/
           VITE_BOT_USERNAME: ${{ secrets.VITE_BOT_USERNAME }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
@@ -55,10 +57,19 @@ jobs:
       - uses: actions/deploy-pages@v4
         id: deployment
 
-      # Параллельный деплой на production (maxvpnesim.com).
-      # GitHub Pages — превью/зеркало; production Mini App обслуживается
-      # nginx на бот-сервере из /opt/vpnbot/webapp/dist/. Без этого шага
-      # Pages обновлялся, но юзеры не видели изменений.
+      # ── BUILD #2: для production maxvpnesim.com (base=/) ──────────────
+      # nginx обслуживает корень домена, поэтому абсолютные пути типа
+      # /assets/... должны не иметь префикса /VpnBot/.
+      - name: Build for production server
+        run: |
+          rm -rf webapp/dist
+          npm run build
+        working-directory: webapp
+        env:
+          VITE_BASE_PATH: /
+          VITE_BOT_USERNAME: ${{ secrets.VITE_BOT_USERNAME }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
       - name: Deploy to production server (rsync)
         run: |
           mkdir -p ~/.ssh
