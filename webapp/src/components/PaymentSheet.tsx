@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import WebApp from '@twa-dev/sdk'
-import { useT, usePlural } from '../i18n'
+import { useT } from '../i18n'
 
 export type PayMethod = 'stars' | 'crypto'
 
@@ -29,7 +29,6 @@ export default function PaymentSheet({
   onPay: (method: PayMethod) => void
 }) {
   const t      = useT()
-  const p      = usePlural()
   const [method, setMethod] = useState<PayMethod>('stars')
 
   return (
@@ -47,8 +46,7 @@ export default function PaymentSheet({
           <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
             {plan.rub} ₽ {t('pay_per_month')}
             {' · '}{plan.speedMbps} Mbps
-            {' · '}
-            {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            {' · '}{plan.vless} VLESS
             {plan.wg ? ` · ${plan.wg} WireGuard` : ''}
           </div>
         </div>

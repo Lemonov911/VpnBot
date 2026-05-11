@@ -6,7 +6,7 @@ import {
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
-import { useT, usePlural } from '../i18n'
+import { useT } from '../i18n'
 import type { TKey } from '../i18n'
 
 function calcUpgradePrice(curRub: number, newRub: number, daysLeft: number): number {
@@ -51,7 +51,6 @@ function PlanCard({
   onClick: () => void; animDelay?: number
 }) {
   const t = useT()
-  const p = usePlural()
   const isHit = plan.badge === 'hit' && mode === 'buy'
   const isCurrent = mode === 'current'
   const planIcon = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
@@ -123,7 +122,7 @@ function PlanCard({
           <span className="opacity-40 mx-1">·</span>
           <span className="text-xs">
             ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
-            📱 {p(plan.vless, { ru: ['устройство', 'устройства', 'устройств'], en: ['device', 'devices'] })}
+            📱 {plan.vless} VLESS
             {plan.wg ? (
               <>
                 <span className="opacity-40 mx-1">·</span>
