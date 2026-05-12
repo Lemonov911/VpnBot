@@ -288,7 +288,7 @@ async def handle_public_status(request: web.Request) -> web.Response:
     import aiosqlite as _aiosqlite
     from services.database import DB_PATH as _DB_PATH
     async with _aiosqlite.connect(_DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+        db.row_factory = _aiosqlite.Row
         async with db.execute(
             "SELECT * FROM servers WHERE is_active=1 ORDER BY protocol, id"
         ) as cur:
