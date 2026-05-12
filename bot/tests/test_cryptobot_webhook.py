@@ -25,14 +25,24 @@ def _sign(body: bytes, token: str) -> str:
 
 
 def _build_invoice_paid_body(*, user_id: int, plan_key: str, invoice_id: int,
-                              paid_amount: str, paid_asset: str = "USDT") -> bytes:
-    """Builds a realistic CryptoBot invoice_paid webhook body."""
+                              paid_amount: str, paid_asset: str = "USDT",
+                              fiat: str = "RUB", amount: str | None = None) -> bytes:
+    """Builds a realistic CryptoBot invoice_paid webhook body.
+
+    For fiat invoices CryptoBot echoes back the original `fiat` currency code
+    (RUB/USD) and the `amount` we requested at create_invoice time. The fix
+    (commit 66ea8f8) cross-checks these two fields against VPN_PLANS before
+    granting a subscription, so tests must populate them.
+    """
     body = {
         "update_id": 12345,
         "update_type": "invoice_paid",
         "payload": {
             "invoice_id": invoice_id,
             "status": "paid",
+            "currency_type": "fiat",
+            "fiat": fiat,
+            "amount": amount if amount is not None else "",
             "payload": f"vpn:{user_id}:{plan_key}",
             "paid_amount": paid_amount,
             "paid_asset": paid_asset,
@@ -92,6 +102,7 @@ async def test_C1_valid_invoice_paid_vpn_base_creates_subscription_and_configs(
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_base", invoice_id=1001,
         paid_amount=plan["rub"], paid_asset="RUB",
+        fiat="RUB", amount=plan["rub"],
     )
     sig = _sign(body, test_cryptobot_token)
 
@@ -104,13 +115,16 @@ async def test_C1_valid_invoice_paid_vpn_base_creates_subscription_and_configs(
 
     assert await _count_subs(fresh_db) == 1
     cfgs = await _configs_for(fresh_db, user_id)
-    expected = plan["awg_slots"] + plan["vless_slots"]
+    expected = (plan["awg_slots"] + plan["vless_slots"]
+                + plan.get("wg_slots", 0))
     assert len(cfgs) == expected, f"expected {expected} configs, got {len(cfgs)}"
     # All should be the right protocol mix and status=empty
     vless = [c for c in cfgs if c["protocol"] == "vless"]
     awg = [c for c in cfgs if c["protocol"] == "awg"]
+    wg = [c for c in cfgs if c["protocol"] == "wg"]
     assert len(vless) == plan["vless_slots"]
     assert len(awg) == plan["awg_slots"]
+    assert len(wg) == plan.get("wg_slots", 0)
     assert all(c["status"] == "empty" for c in cfgs)
 
     # Telegram notification fired exactly once
@@ -127,6 +141,7 @@ async def test_C2_valid_invoice_paid_vpn_max_creates_more_slots(
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_max", invoice_id=2002,
         paid_amount=plan["rub"], paid_asset="RUB",
+        fiat="RUB", amount=plan["rub"],
     )
     sig = _sign(body, test_cryptobot_token)
 
@@ -138,7 +153,9 @@ async def test_C2_valid_invoice_paid_vpn_max_creates_more_slots(
     assert resp.status == 200
     assert await _count_subs(fresh_db) == 1
     cfgs = await _configs_for(fresh_db, user_id)
-    assert len(cfgs) == plan["awg_slots"] + plan["vless_slots"]
+    expected = (plan["awg_slots"] + plan["vless_slots"]
+                + plan.get("wg_slots", 0))
+    assert len(cfgs) == expected
     assert sum(1 for c in cfgs if c["protocol"] == "vless") == plan["vless_slots"]
 
 
@@ -192,6 +209,7 @@ async def test_C5_replay_same_invoice_id_is_idempotent(
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_base", invoice_id=5555,
         paid_amount=plan["rub"], paid_asset="RUB",
+        fiat="RUB", amount=plan["rub"],
     )
     sig = _sign(body, test_cryptobot_token)
 
@@ -208,7 +226,9 @@ async def test_C5_replay_same_invoice_id_is_idempotent(
 
     assert await _count_subs(fresh_db) == 1
     cfgs = await _configs_for(fresh_db, user_id)
-    assert len(cfgs) == plan["awg_slots"] + plan["vless_slots"]
+    expected = (plan["awg_slots"] + plan["vless_slots"]
+                + plan.get("wg_slots", 0))
+    assert len(cfgs) == expected
 
 
 @pytest.mark.asyncio
@@ -226,3 +246,82 @@ async def test_C6_bad_signature_returns_401(
     )
     assert resp.status == 401
     assert await _count_subs(fresh_db) == 0
+
+
+@pytest.mark.asyncio
+async def test_C7_amount_mismatch_rejected(
+    app_client, fresh_db, test_cryptobot_token,
+):
+    """C7. Post-fix: invoice `amount` below plan price → 400, no DB rows.
+
+    Even with a valid signature and matching payload, paying 100 RUB for a
+    200 RUB plan must be refused — otherwise an attacker could create an
+    invoice for 1 RUB and unlock vpn_base.
+    """
+    user_id = 77
+    body = _build_invoice_paid_body(
+        user_id=user_id, plan_key="vpn_base", invoice_id=7007,
+        paid_amount="100", paid_asset="RUB",
+        fiat="RUB", amount="100",
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 400
+    assert await _count_subs(fresh_db) == 0
+    assert await _count_configs(fresh_db) == 0
+
+
+@pytest.mark.asyncio
+async def test_C8_wrong_fiat_rejected(
+    app_client, fresh_db, test_cryptobot_token,
+):
+    """C8. Post-fix: fiat other than RUB/USD → 400, no DB rows.
+
+    EUR is not a currency we ever invoice in, so the plan's expected_amount
+    can't be looked up safely. Reject outright.
+    """
+    plan = VPN_PLANS["vpn_base"]
+    body = _build_invoice_paid_body(
+        user_id=88, plan_key="vpn_base", invoice_id=8008,
+        paid_amount=plan["rub"], paid_asset="RUB",
+        fiat="EUR", amount=plan["rub"],
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 400
+    assert await _count_subs(fresh_db) == 0
+    assert await _count_configs(fresh_db) == 0
+
+
+@pytest.mark.asyncio
+async def test_C9_payload_user_id_overridden_by_attacker_still_needs_correct_amount(
+    app_client, fresh_db, test_cryptobot_token,
+):
+    """C9. Abuse case: payload says vpn_max (500 RUB) but invoice amount is the
+    base-tier 200 RUB. Signature is valid (attacker creates a vpn_base invoice
+    and rewrites the payload), so without amount cross-check they'd get the
+    vpn_max upgrade for cheap. Must be rejected.
+    """
+    plan_base = VPN_PLANS["vpn_base"]
+    body = _build_invoice_paid_body(
+        user_id=99, plan_key="vpn_max", invoice_id=9009,
+        paid_amount=plan_base["rub"], paid_asset="RUB",
+        fiat="RUB", amount=plan_base["rub"],
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 400
+    assert await _count_subs(fresh_db) == 0
+    assert await _count_configs(fresh_db) == 0

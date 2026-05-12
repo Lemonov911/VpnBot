@@ -216,6 +216,153 @@ async def cmd_admin(message: Message):
     )
 
 
+@router.message(Command("esim_test"))
+async def cmd_esim_test(message: Message):
+    """Админская команда: тестовый заказ eSIM напрямую через esimaccess API.
+    Списывается с merchant-баланса (не Stars). Только для админов.
+
+    Usage:
+      /esim_test            — показать список slug + цены + текущий баланс
+      /esim_test <slug>     — заказать eSIM (например /esim_test RU_0.1_7)
+    """
+    import logging as _log
+    _log.getLogger(__name__).info(
+        "/esim_test called by user_id=%s username=%s args=%r",
+        message.from_user.id, message.from_user.username, message.text,
+    )
+    if not _is_admin(message.from_user.id):
+        _log.getLogger(__name__).warning(
+            "/esim_test rejected: user_id=%s NOT in ADMIN_IDS=%s",
+            message.from_user.id, ADMIN_IDS,
+        )
+        return
+
+    import uuid
+    import services.esim_api as esim_api
+    from services.database import (
+        create_order, complete_order, create_esim_profile, set_esim_order_no,
+        fulfill_esim_profile, mark_esim_failed,
+    )
+    from handlers.vpn import deliver_esim_to_user
+
+    parts = message.text.split(maxsplit=1)
+
+    # ── без аргумента: показать список ────────────────────────────────────────
+    if len(parts) < 2:
+        bal = await esim_api.get_balance()
+        balance_usd = (bal.get('obj', {}) or {}).get('balance', 0) / 10000
+        lines = [
+            f"💳 <b>esimaccess balance:</b> ${balance_usd:.2f}",
+            "",
+            "📦 <b>Самые дешёвые тарифы по странам:</b>",
+            "",
+        ]
+        for code in ['RU', 'TR', 'GE', 'AE', 'TH', 'VN', 'EU-42']:
+            try:
+                pkgs = await esim_api.get_packages_for(code)
+            except Exception:
+                continue
+            if not pkgs:
+                continue
+            cheapest = min(pkgs, key=lambda p: p['price'])
+            lines.append(
+                f"<code>/esim_test {cheapest['slug']}</code>\n"
+                f"   {cheapest['name']} · ${cheapest['priceUsd']:.2f} · "
+                f"{cheapest['ipExport'] or '?'}-IP"
+            )
+        lines += [
+            "",
+            "⚠ Списание с merchant-баланса esimaccess (не Stars).",
+            "QR придёт сюда через 10–60 сек.",
+        ]
+        await message.answer("\n".join(lines), parse_mode="HTML",
+                              disable_web_page_preview=True)
+        return
+
+    # ── со slug: заказать ─────────────────────────────────────────────────────
+    slug = parts[1].strip()
+    pkg = await esim_api.find_package(slug)
+    if not pkg:
+        await message.answer(
+            f"❌ Пакет <code>{slug}</code> не найден.\n"
+            "Без аргумента <code>/esim_test</code> покажет доступные.",
+            parse_mode="HTML",
+        )
+        return
+
+    user_id = message.from_user.id
+
+    await message.answer(
+        f"🛠️ <b>Заказываю тестовую eSIM...</b>\n"
+        f"📦 {pkg['name']}\n"
+        f"💸 wholesale ${pkg['priceUsd']:.2f}\n"
+        f"🌐 IP-эксит: {pkg['ipExport'] or '?'}\n"
+        f"⏳ 10–60 сек, QR придёт сюда автоматом",
+        parse_mode="HTML",
+    )
+
+    # Order/profile записи для трассировки (но stars_paid=0)
+    order_id = await create_order(
+        user_id=user_id, product_type="esim",
+        plan=pkg['packageCode'], stars_paid=0,
+    )
+    await complete_order(order_id, payment_id=f"admin_test_{int(time.time())}")
+
+    tx_id = f"admin_{user_id}_{order_id}_{uuid.uuid4().hex[:8]}"
+    profile_id = await create_esim_profile(
+        user_id=user_id, order_id=order_id, tx_id=tx_id,
+        package_code=pkg['packageCode'], package_name=pkg['name'],
+        location_code=pkg['location'], wholesale_price=pkg['price'],
+    )
+
+    try:
+        result = await esim_api.place_order(pkg['packageCode'], pkg['price'], tx_id)
+    except Exception as e:
+        await mark_esim_failed(profile_id)
+        await message.answer(f"❌ <b>place_order error:</b>\n<code>{e}</code>",
+                              parse_mode="HTML")
+        return
+
+    if not result.get('success'):
+        await mark_esim_failed(profile_id)
+        err = result.get('errorCode') or '?'
+        msg = result.get('errorMsg') or '?'
+        await message.answer(
+            f"❌ <b>esimaccess error {err}:</b> {msg}\n"
+            f"<code>{str(result)[:300]}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    order_no = (result.get('obj') or {}).get('orderNo', '')
+    if not order_no:
+        await mark_esim_failed(profile_id)
+        await message.answer(
+            f"❌ Нет orderNo в ответе:\n<code>{str(result)[:300]}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    await set_esim_order_no(profile_id, order_no)
+    await message.answer(f"✅ Order <code>#{order_no}</code> создан, жду профиль...",
+                          parse_mode="HTML")
+
+    bot = message.bot
+    esim_data = await esim_api.poll_order_until_ready(order_no, max_wait_sec=60)
+    if not esim_data:
+        await message.answer(
+            "⏳ Профиль не готов через 60s. Жду webhook ORDER_STATUS — QR придёт автоматом.",
+        )
+        return
+
+    fulfilled = await fulfill_esim_profile(profile_id, esim_data)
+    if not fulfilled:
+        await message.answer("ℹ️ Webhook опередил polling — eSIM уже отправлен.")
+        return
+
+    await deliver_esim_to_user(bot, profile_id)
+
+
 @router.message(Command("gift"))
 async def cmd_gift(message: Message):
     """Выдать себе бесплатный VPN: /gift vpn_pro"""
