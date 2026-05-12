@@ -249,6 +249,63 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
     return web.json_response(safe)
 
 
+async def handle_public_status(request: web.Request) -> web.Response:
+    """Публичный статус всех сервисов. Без auth — для status-страницы.
+
+    Возвращает агрегат:
+      {
+        "bot":      "up",  // мы отвечаем, значит up
+        "updated":  ISO timestamp,
+        "servers":  [{ name, flag, location, protocol, status, latency_ms }],
+        "summary":  { up: N, total: M, all_ok: bool }
+      }
+    Статус сервера: 'up' (агент ответил на /health), 'down' (timeout/ошибка),
+    'unknown' (нет agent_url в БД — legacy запись).
+    """
+    import asyncio
+    import time
+    from datetime import datetime
+    from services.vpnctl_client import client_for_server, VpnctlError
+
+    async def _check(server: dict) -> dict:
+        base = {
+            "name":     server["name"],
+            "flag":     server.get("flag") or "🌍",
+            "location": server.get("location", ""),
+            "protocol": server.get("protocol", ""),
+        }
+        if not server.get("agent_url") or not server.get("agent_token"):
+            return {**base, "status": "unknown", "latency_ms": None}
+        client = client_for_server(server)
+        t0 = time.perf_counter()
+        try:
+            await asyncio.wait_for(client.health(), timeout=4.0)
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            return {**base, "status": "up", "latency_ms": latency_ms}
+        except (VpnctlError, asyncio.TimeoutError, Exception):
+            return {**base, "status": "down", "latency_ms": None}
+
+    import aiosqlite as _aiosqlite
+    from services.database import DB_PATH as _DB_PATH
+    async with _aiosqlite.connect(_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM servers WHERE is_active=1 ORDER BY protocol, id"
+        ) as cur:
+            servers = [dict(r) for r in await cur.fetchall()]
+
+    results = await asyncio.gather(*[_check(s) for s in servers])
+    up = sum(1 for r in results if r["status"] == "up")
+    total = len(results)
+
+    return web.json_response({
+        "bot":     "up",
+        "updated": datetime.utcnow().isoformat() + "Z",
+        "servers": results,
+        "summary": {"up": up, "total": total, "all_ok": up == total and total > 0},
+    })
+
+
 async def handle_vpn_status(request: web.Request) -> web.Response:
     """Проверка доступности серверов. Требует авторизацию."""
     user = _resolve_user(request)
@@ -1143,6 +1200,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_get ("/api/vpn/configs",                handle_vpn_configs)
     app.router.add_get ("/api/vpn/servers",                handle_vpn_servers)
     app.router.add_get ("/api/vpn/status",                 handle_vpn_status)
+    # Public — no auth, for /status page
+    app.router.add_get ("/api/status",                     handle_public_status)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)

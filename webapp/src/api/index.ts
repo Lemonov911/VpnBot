@@ -162,6 +162,32 @@ export function claimTrial(): Promise<TrialClaim> {
   return post('/api/vpn/trial/claim', {})
 }
 
+// ── Public status — no auth ───────────────────────────────────────────────────
+
+export interface PublicServerStatus {
+  name:        string
+  flag:        string
+  location:    string
+  protocol:    string
+  status:      'up' | 'down' | 'unknown'
+  latency_ms:  number | null
+}
+
+export interface PublicStatus {
+  bot:      'up'
+  updated:  string
+  servers:  PublicServerStatus[]
+  summary:  { up: number; total: number; all_ok: boolean }
+}
+
+export async function getPublicStatus(): Promise<PublicStatus> {
+  // No auth headers — endpoint is public and is reachable from a browser
+  // tab that has no Telegram initData.
+  const res = await fetch((import.meta.env.VITE_API_URL ?? '') + '/api/status')
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 // ── eSIM ──────────────────────────────────────────────────────────────────────
 
 export interface Country {

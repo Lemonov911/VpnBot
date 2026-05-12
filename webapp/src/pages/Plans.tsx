@@ -244,6 +244,33 @@ export default function Plans() {
 
   if (sub === undefined) return <SkeletonPage />
 
+  // Если страница открыта вне Telegram (нет initData) — не показываем прайс.
+  // У конкурентов цены доступны только после `/start` в боте — это и сигнал
+  // о "не палёво" (анти-сканер рекламы 149-ФЗ), и lock-in воронки.
+  if (!WebApp.initData) {
+    return (
+      <div className="page pt-2">
+        <div className="rounded-[20px] p-6 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] text-center">
+          <div className="text-4xl mb-3">🔒</div>
+          <div className="text-base font-bold text-[var(--tg-theme-text-color)] mb-2">
+            {t('plans_gated_title')}
+          </div>
+          <div className="text-[13px] text-[var(--tg-theme-hint-color)] leading-snug mb-4">
+            {t('plans_gated_sub')}
+          </div>
+          <a
+            href="https://t.me/maxvpnesim_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block px-5 py-2.5 rounded-[12px] bg-gradient-to-br from-primary to-[#5856d6] text-white text-sm font-bold no-underline"
+          >
+            {t('plans_gated_btn')}
+          </a>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">

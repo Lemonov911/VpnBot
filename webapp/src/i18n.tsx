@@ -345,6 +345,25 @@ const T = {
     home_support:      'Поддержка',
 
     // Trial CTA
+    // Plans gated when opened outside Telegram
+    plans_gated_title:    'Тарифы доступны в боте',
+    plans_gated_sub:      'Открой @maxvpnesim_bot — он подберёт тариф по твоей задаче и даст 3-дневный триал бесплатно.',
+    plans_gated_btn:      'Открыть бота →',
+
+    // Status page
+    status_all_ok:        'Все системы работают',
+    status_partial:       'Частичный простой',
+    status_up_count:      'сервисов в строю',
+    status_updated:       'обновлено',
+    status_bot:           'Telegram-бот и Mini App',
+    status_servers:       'VPN-серверы',
+    status_up:            'UP',
+    status_down:          'DOWN',
+    status_unknown:       'нет данных',
+    status_empty:         'Список серверов пуст',
+    status_autorefresh:   'Обновляется каждые 30 секунд',
+    status_load_err:      'Не удалось загрузить статус',
+
     trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
     trial_banner_sub:     'AmneziaWG который правда работает на МТС. Без карты, без подписки.',
     trial_banner_btn:     'Активировать триал',
@@ -705,6 +724,25 @@ const T = {
     home_support:      'Support',
 
     // Trial CTA
+    // Plans gated when opened outside Telegram
+    plans_gated_title:    'Plans available in the bot',
+    plans_gated_sub:      'Open @maxvpnesim_bot — it will suggest a plan and give you a free 3-day trial.',
+    plans_gated_btn:      'Open the bot →',
+
+    // Status page
+    status_all_ok:        'All systems operational',
+    status_partial:       'Partial outage',
+    status_up_count:      'services up',
+    status_updated:       'updated',
+    status_bot:           'Telegram bot & Mini App',
+    status_servers:       'VPN servers',
+    status_up:            'UP',
+    status_down:          'DOWN',
+    status_unknown:       'unknown',
+    status_empty:         'No servers configured',
+    status_autorefresh:   'Refreshes every 30 seconds',
+    status_load_err:      'Failed to load status',
+
     trial_banner_title:   '🎁 Try free — 3 days',
     trial_banner_sub:     "AmneziaWG that actually works around Russian DPI. No card, no sub.",
     trial_banner_btn:     'Activate trial',
