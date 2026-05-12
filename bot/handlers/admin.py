@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from config import ADMIN_ID, BOT_TOKEN, WEBAPP_URL
 from services.database import (
@@ -128,9 +128,10 @@ async def cmd_stats(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
-@router.message(Command("trial"))
-async def cmd_trial(message: Message):
-    """Бесплатный пробный период — 3 дня VLESS-base."""
+async def _trial_response(user_id: int) -> tuple[str, dict]:
+    """Запускает provision_trial и возвращает (text, send_kwargs) для ответа юзеру.
+    Единый код для /trial команды и для callback "trial:claim" из /start меню.
+    """
     from services.trial import (
         provision_trial,
         TrialAlreadyClaimed,
@@ -140,35 +141,43 @@ async def cmd_trial(message: Message):
     from services.vpnctl_client import VpnctlError
 
     try:
-        result = await provision_trial(message.from_user.id)
+        result = await provision_trial(user_id)
     except TrialBlockedByActiveSub:
-        await message.answer(
-            "У тебя уже активная подписка. Trial доступен только новым пользователям."
-        )
-        return
+        return ("У тебя уже активная подписка. Trial доступен только новым пользователям.", {})
     except TrialAlreadyClaimed:
-        await message.answer(
-            "🎁 Trial уже использован.\n\nДля продолжения — выбери тариф в /start"
-        )
-        return
+        return ("🎁 Trial уже использован.\n\nДля продолжения — выбери тариф в /start", {})
     except TrialNoServer:
-        await message.answer("⚠️ Серверы пока недоступны, попробуй позже")
-        return
+        return ("⚠️ Серверы пока недоступны, попробуй позже", {})
     except VpnctlError as e:
-        await message.answer(f"⚠️ Ошибка провижининга: {e}")
-        return
+        return (f"⚠️ Ошибка провижининга: {e}", {})
 
     expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
-    await message.answer(
+    text = (
         f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
         f"📅 До: <b>{expires_str}</b>\n"
         f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
         f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
         f"<code>{result['sub_url']}</code>\n\n"
         f"📖 Инструкция: /howto\n"
-        f"💎 После trial — выбери постоянный тариф в /start",
-        parse_mode="HTML",
+        f"💎 После trial — выбери постоянный тариф в /start"
     )
+    return (text, {"parse_mode": "HTML"})
+
+
+@router.message(Command("trial"))
+async def cmd_trial(message: Message):
+    """Бесплатный пробный период — 3 дня VLESS-base."""
+    text, kwargs = await _trial_response(message.from_user.id)
+    await message.answer(text, **kwargs)
+
+
+@router.callback_query(F.data == "trial:claim")
+async def cb_trial_claim(callback: CallbackQuery):
+    """Callback с кнопки «🎁 Попробуй бесплатно» из /start меню."""
+    await callback.answer()  # снять "thinking" индикатор
+    text, kwargs = await _trial_response(callback.from_user.id)
+    if callback.message:
+        await callback.message.answer(text, **kwargs)
 
 
 @router.message(Command("admin"))

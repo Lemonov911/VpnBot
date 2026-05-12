@@ -10,6 +10,7 @@ from aiogram.types import (
 
 from config import ADMIN_ID
 from services.database import upsert_user, set_referred_by, get_referral_stats, add_referral_bonus
+from services.trial import can_claim_trial, TRIAL_DAYS
 
 router = Router()
 
@@ -17,8 +18,19 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 REFERRAL_BONUS_DAYS = 7  # дней бонуса рефереру за первую покупку реферала
 
 
-def _main_menu(start_param: str = "") -> InlineKeyboardMarkup:
+def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
+
+    # Триал — самый верх меню для тех кому он доступен. Это first-screen
+    # call-to-action, выводит юзера в активацию за один клик без захода в
+    # Mini App.
+    if trial_eligible:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"🎁 Попробуй бесплатно — {TRIAL_DAYS} дня",
+                callback_data="trial:claim",
+            )
+        ])
 
     if WEBAPP_URL:
         url = WEBAPP_URL
@@ -63,15 +75,32 @@ async def cmd_start(message: Message):
         except ValueError:
             pass
 
-    if WEBAPP_URL:
-        text = "👋 Привет! Нажми кнопку ниже, чтобы открыть магазин VPN & eSIM."
+    # Триал first-screen: если юзеру он доступен — упоминаем в тексте +
+    # вешаем верхней кнопкой меню. Если уже есть подписка или недавно был
+    # триал — нейтральное приветствие.
+    trial_eligible = await can_claim_trial(user_id)
+
+    if trial_eligible:
+        text = (
+            "👋 Привет! Я помогу обойти блокировки.\n\n"
+            f"🎁 <b>Первые {TRIAL_DAYS} дня бесплатно</b> — без карты, без подписки. "
+            "Просто нажми кнопку «Попробуй бесплатно» ниже, и через 30 секунд у тебя "
+            "будет личный VPN.\n\n"
+            "Дальше — тарифы от 200 ₽/мес."
+        )
+    elif WEBAPP_URL:
+        text = "👋 С возвращением! Открывай магазин VPN & eSIM кнопкой ниже."
     else:
         text = (
             "👋 Привет! Я помогу тебе получить доступ к интернету без ограничений.\n\n"
             "Выбери, что тебя интересует:"
         )
 
-    await message.answer(text, reply_markup=_main_menu(start_param))
+    await message.answer(
+        text,
+        reply_markup=_main_menu(start_param, trial_eligible=trial_eligible),
+        parse_mode="HTML",
+    )
 
 
 @router.message(lambda m: m.text and m.text.strip() == "/referral")
