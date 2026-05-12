@@ -855,6 +855,44 @@ async def add_referral_bonus(referrer_id: int, days: int):
         await db.commit()
 
 
+async def try_award_referral_bonus(user_id: int, days: int) -> int | None:
+    """Если у юзера был приглашающий И это его первая ПЛАТНАЯ подписка —
+    начисляет рефереру `days` дней бонуса и возвращает referrer_id.
+    Иначе None.
+
+    Триал (`plan='vpn_trial'`) не считается «первой покупкой».
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT referred_by FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        referrer_id = row[0] if row and row[0] else None
+        if not referrer_id:
+            return None
+
+        async with db.execute(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id=? AND plan!='vpn_trial'",
+            (user_id,),
+        ) as cur:
+            paid_count = (await cur.fetchone())[0]
+
+        if paid_count != 1:
+            return None
+
+        # Bonus + extend в одной транзакции
+        await db.execute(
+            "UPDATE users SET ref_bonus_days=ref_bonus_days+? WHERE id=?",
+            (days, referrer_id),
+        )
+        await db.execute(
+            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
+            (f"+{days} days", referrer_id),
+        )
+        await db.commit()
+        return referrer_id
+
+
 # ── eSIM profiles ─────────────────────────────────────────────────────────────
 
 async def create_esim_profile(user_id: int, order_id: int, tx_id: str,

@@ -44,10 +44,8 @@ from services.database import (
     mark_esim_failed,
     get_esim_profile,
 )
-import aiosqlite as _aiosqlite
-from pathlib import Path as _Path
-_DB_PATH = _Path(__file__).parent.parent / "bot.db"
 from services.payments import stars_invoice_kwargs
+from services.plans import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan  # noqa: F401
 from services.vpnctl_client import provision_peer, VpnctlError
 import services.esim_api as esim_api
 
@@ -55,44 +53,7 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# ── Тарифы ─────────────────────────────────────────────────────────────────────
-
-VPN_PLANS: dict[str, dict] = {
-    # ── v2 тарифы по скорости (Reality only) ──
-    # speed_mbps — гарантированная скорость, soft_cap_gb — мягкий лимит трафика,
-    # после которого скорость падает до throttle_mbps до конца месяца.
-    "vpn_base": {
-        "name":           "База",
-        "stars":          145,            # ≈ 200 ₽
-        "duration_days":  30,
-        "awg_slots":      0,
-        "vless_slots":    5,
-        "speed_mbps":     60,
-        "soft_cap_gb":    500,
-        "throttle_mbps":  5,
-        "description":    "2 человека в 4K + телефоны в фоне",
-    },
-    "vpn_max": {
-        "name":           "Макс",
-        "stars":          360,            # ≈ 500 ₽
-        "duration_days":  30,
-        "awg_slots":      0,
-        "vless_slots":    10,
-        "speed_mbps":     120,
-        "soft_cap_gb":    1000,
-        "throttle_mbps":  15,
-        "description":    "Семья 3+ чел / стриминг + торренты",
-    },
-
-    # ── Legacy тарифы (для уже-купивших, в UI скрыты) ──
-    "vpn_start":   {"name": "Старт",      "stars": 128,  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_popular": {"name": "Популярный", "stars": 214,  "duration_days": 30, "awg_slots": 2, "vless_slots": 0, "legacy": True},
-    "vpn_pro":     {"name": "Про",        "stars": 342,  "duration_days": 30, "awg_slots": 3, "vless_slots": 1, "legacy": True},
-    "vpn_family":  {"name": "Семейный",   "stars": 513,  "duration_days": 30, "awg_slots": 7, "vless_slots": 1, "legacy": True},
-    "vpn_1m":      {"name": "1 месяц",    "stars": 299,  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_3m":      {"name": "3 месяца",   "stars": 699,  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_1y":      {"name": "1 год",      "stars": 1990, "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
-}
+# Тарифы импортируются из services.plans — единственный источник истины.
 
 PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⭐ База — 145 ⭐️ · 60 Mbps · 5 устройств",     callback_data="vpn:buy:vpn_base")],
@@ -117,42 +78,8 @@ HOWTO_TEXT = (
     "напиши в поддержку, добавим в исключения."
 )
 
-def vless_service_for_plan(plan_key: str) -> str:
-    """Resolves vpnctl service-name for a given plan_key.
-    New v2 plans map to speed-tier services; legacy/unknown fallback to 'vless'."""
-    if plan_key == "vpn_base":
-        return "vless-base"
-    if plan_key == "vpn_max":
-        return "vless-max"
-    return "vless"
-
-
-def vless_slow_service_for_plan(plan_key: str) -> str | None:
-    """Throttled service for a plan, used after soft-cap is exceeded.
-    Returns None for legacy plans without a slow-tier."""
-    if plan_key == "vpn_base":
-        return "vless-base-slow"
-    if plan_key == "vpn_max":
-        return "vless-max-slow"
-    return None
-
-
-MOCK_CONFIG_TEMPLATE = """\
-# ТЕСТОВЫЙ КОНФИГ — сервер ещё не подключён
-# Рабочий файл придёт автоматически когда сервер будет готов
-
-[Interface]
-PrivateKey = PLACEHOLDER
-Address = 10.8.0.X/32
-DNS = 1.1.1.1, 1.0.0.1
-
-[Peer]
-PublicKey = PLACEHOLDER
-PresharedKey = PLACEHOLDER
-AllowedIPs = 0.0.0.0/0, ::/0
-Endpoint = VPN_SERVER:51820
-PersistentKeepalive = 25
-"""
+# vless_service_for_plan / vless_slow_service_for_plan вынесены в services.plans.
+# Старый MOCK_CONFIG_TEMPLATE удалён (был мёртвым кодом — нигде не использовался).
 
 
 # ── Меню ───────────────────────────────────────────────────────────────────────
@@ -442,38 +369,23 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         parse_mode="HTML",
     )
 
-    # Реферальный бонус: считается только на первую ПЛАТНУЮ покупку.
-    # Бесплатные триалы (plan='vpn_trial') не учитываем — иначе юзер берёт
-    # триал → реферер получает бонус → юзер уходит, не платив ни рубля.
+    # Реферальный бонус: try_award_referral_bonus сам проверяет (а) есть ли
+    # реферер у юзера, (б) это ли первая ПЛАТНАЯ подписка (триалы не считаются).
+    # Возвращает referrer_id если бонус начислен, иначе None.
     try:
-        from services.trial import TRIAL_PLAN
-        async with _aiosqlite.connect(_DB_PATH) as _db:
-            async with _db.execute(
-                "SELECT referred_by FROM users WHERE id=?", (user_id,)
-            ) as _cur:
-                _row = await _cur.fetchone()
-            referrer_id = _row[0] if _row and _row[0] else None
-
-            if referrer_id:
-                # Сколько ПЛАТНЫХ подписок (включая текущую) уже у юзера?
-                async with _db.execute(
-                    "SELECT COUNT(*) FROM subscriptions WHERE user_id=? AND plan!=?",
-                    (user_id, TRIAL_PLAN),
-                ) as _cur:
-                    paid_count = (await _cur.fetchone())[0]
-
-                if paid_count == 1:
-                    from handlers.start import REFERRAL_BONUS_DAYS
-                    await add_referral_bonus(referrer_id, REFERRAL_BONUS_DAYS)
-                    try:
-                        await message.bot.send_message(
-                            referrer_id,
-                            f"🎁 <b>+{REFERRAL_BONUS_DAYS} дней к подписке!</b>\n\n"
-                            "Твой друг купил VPN по твоей реферальной ссылке.",
-                            parse_mode="HTML",
-                        )
-                    except Exception:
-                        pass
+        from services.database import try_award_referral_bonus
+        from handlers.start import REFERRAL_BONUS_DAYS
+        referrer_id = await try_award_referral_bonus(user_id, REFERRAL_BONUS_DAYS)
+        if referrer_id:
+            try:
+                await message.bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>+{REFERRAL_BONUS_DAYS} дней к подписке!</b>\n\n"
+                    "Твой друг купил VPN по твоей реферальной ссылке.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.warning("Ошибка реферального бонуса: %s", e)
 

@@ -39,26 +39,8 @@ from services.database import (
 
 logger = logging.getLogger(__name__)
 
-# ── VPN тарифы ─────────────────────────────────────────────────────────────────
-
-VPN_PLANS: dict[str, dict] = {
-    # ── v2 тарифы по скорости (Reality) ──
-    "vpn_base": {"name": "База", "stars": 145, "rub": "200", "usd": "2.20", "duration_days": 30,
-                 "awg_slots": 0, "vless_slots": 5,  "wg_slots": 5,
-                 "speed_mbps": 60,  "soft_cap_gb": 500,  "throttle_mbps": 5},
-    "vpn_max":  {"name": "Макс", "stars": 360, "rub": "500", "usd": "5.50", "duration_days": 30,
-                 "awg_slots": 0, "vless_slots": 10, "wg_slots": 5,
-                 "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15},
-
-    # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
-    "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30, "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_popular": {"name": "Популярный", "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30, "awg_slots": 2, "vless_slots": 0, "legacy": True},
-    "vpn_pro":     {"name": "Про",        "stars": 342,  "rub": "450",  "usd": "5.00",  "duration_days": 30, "awg_slots": 3, "vless_slots": 1, "legacy": True},
-    "vpn_family":  {"name": "Семейный",   "stars": 513,  "rub": "640",  "usd": "7.00",  "duration_days": 30, "awg_slots": 7, "vless_slots": 1, "legacy": True},
-    "vpn_1m":      {"name": "1 месяц",    "stars": 299,  "rub": "299",  "usd": "3.50",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_3m":      {"name": "3 месяца",   "stars": 699,  "rub": "699",  "usd": "8.00",  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_1y":      {"name": "1 год",      "stars": 1990, "rub": "1990", "usd": "22.00", "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
-}
+# Тарифы — services.plans (единственный источник истины).
+from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
 
 # ── Авторизация ────────────────────────────────────────────────────────────────
 

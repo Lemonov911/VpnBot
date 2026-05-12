@@ -39,7 +39,7 @@ from services.database import (
 )
 import services.esim_api as esim_api
 from services.vpnctl_client import suspend_peer, client_for_server, VpnctlError
-from handlers.vpn import (
+from services.plans import (
     VPN_PLANS,
     vless_service_for_plan,
     vless_slow_service_for_plan,
