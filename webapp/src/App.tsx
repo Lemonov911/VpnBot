@@ -16,7 +16,6 @@ import ESimFAQ      from './pages/ESimFAQ'
 import Support      from './pages/Support'
 import Referral     from './pages/Referral'
 import Status       from './pages/Status'
-import LegalDoc     from './pages/LegalDoc'
 
 function GlobalHeader() {
   const t    = useT()
@@ -33,8 +32,6 @@ function GlobalHeader() {
     '/support':      { title: t('support_title'),    sub: t('support_sub') },
     '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
     '/status':       { title: 'Статус сервисов',     sub: '' },
-    '/legal/privacy':    { title: 'Политика конфиденциальности', sub: '' },
-    '/legal/disclaimer': { title: 'Уведомление 149-ФЗ',          sub: '' },
   }
 
   const page = info[pathname] ?? info['/']
@@ -108,9 +105,6 @@ export default function App() {
 
           {/* Public status page — no auth */}
           <Route path="/status"       element={<Status />} />
-
-          {/* Legal docs — Privacy Policy и 149-ФЗ дисклеймер */}
-          <Route path="/legal/:slug"  element={<LegalDoc />} />
 
           {/* Главная */}
           <Route path="/"             element={<Home />} />

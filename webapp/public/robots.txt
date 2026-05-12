@@ -1,7 +1,6 @@
 User-agent: *
 Allow: /
 Allow: /status
-Allow: /legal/
 
 # Mini App routes — пользы от индексирования нет, скрываем
 Disallow: /vpn

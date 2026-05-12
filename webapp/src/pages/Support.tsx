@@ -185,14 +185,6 @@ export default function Support() {
         {state === 'sending' ? t('support_sending') : t('support_send')}
       </button>
 
-      <div className="text-center text-[11px] text-[var(--tg-theme-hint-color)] mt-4 pb-4">
-        <a href="/legal/privacy"    className="text-[var(--tg-theme-link-color)] underline mx-1">{t('legal_privacy')}</a>
-        <span>·</span>
-        <a href="/legal/disclaimer" className="text-[var(--tg-theme-link-color)] underline mx-1">{t('legal_disclaimer')}</a>
-        <span>·</span>
-        <a href="https://maxvpnesim.com/oferta.pdf" target="_blank" rel="noopener noreferrer" className="text-[var(--tg-theme-link-color)] underline mx-1">{t('legal_oferta')}</a>
-      </div>
-
     </div>
   )
 }

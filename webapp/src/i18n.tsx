@@ -366,11 +366,6 @@ const T = {
     status_incidents:     'Последние инциденты',
     status_inc_ongoing:   'идёт',
 
-    // Legal docs
-    legal_privacy:        'Политика конфиденциальности',
-    legal_disclaimer:     'Уведомление 149-ФЗ',
-    legal_oferta:         'Оферта',
-
     trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
     trial_banner_sub:     'AmneziaWG который правда работает на МТС. Без карты, без подписки.',
     trial_banner_btn:     'Активировать триал',
@@ -751,11 +746,6 @@ const T = {
     status_load_err:      'Failed to load status',
     status_incidents:     'Recent incidents',
     status_inc_ongoing:   'ongoing',
-
-    // Legal docs
-    legal_privacy:        'Privacy Policy',
-    legal_disclaimer:     '149-FZ Notice',
-    legal_oferta:         'Offer (RU)',
 
     trial_banner_title:   '🎁 Try free — 3 days',
     trial_banner_sub:     "AmneziaWG that actually works around Russian DPI. No card, no sub.",
