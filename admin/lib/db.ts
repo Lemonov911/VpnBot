@@ -71,3 +71,106 @@ export function searchUsers(query: string) {
     LIMIT 20
   `).all(q, q, q)
 }
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+// Lightweight read-only queries для админ-дашборда. Никаких внешних трекеров —
+// всё считается из SQLite на лету.
+
+export function analyticsSummary() {
+  const d = db()
+  const r = (sql: string, ...params: unknown[]) => (d.prepare(sql).get(...params) as { n: number }).n
+  return {
+    users_total:          r('SELECT COUNT(*) as n FROM users'),
+    users_30d:            r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-30 days')"),
+    users_7d:             r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-7 days')"),
+    subs_active:          r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active'"),
+    subs_paid_30d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
+    subs_trial_30d:       r("SELECT COUNT(*) as n FROM subscriptions WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days')"),
+    revenue_stars_30d:    r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
+    revenue_stars_7d:     r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days')"),
+    expired_30d:          r("SELECT COUNT(*) as n FROM subscriptions WHERE status='expired' AND expires_at > datetime('now','-30 days')"),
+  }
+}
+
+export function dailyRevenueLast30() {
+  return db().prepare(`
+    SELECT date(created_at) as day,
+           COUNT(*)                    as paid_subs,
+           COALESCE(SUM(stars_paid),0) as stars
+    FROM subscriptions
+    WHERE plan != 'vpn_trial'
+      AND created_at > datetime('now','-30 days')
+    GROUP BY day
+    ORDER BY day ASC
+  `).all() as Array<{ day: string; paid_subs: number; stars: number }>
+}
+
+export function planMix30d() {
+  return db().prepare(`
+    SELECT plan,
+           COUNT(*) as count,
+           COALESCE(SUM(stars_paid),0) as stars
+    FROM subscriptions
+    WHERE created_at > datetime('now','-30 days')
+    GROUP BY plan
+    ORDER BY count DESC
+  `).all() as Array<{ plan: string; count: number; stars: number }>
+}
+
+export function trialFunnel30d() {
+  // Воронка: сколько юзеров пришло → взяли триал → купили платный после триала.
+  const d = db()
+  const new_users = (d.prepare(
+    "SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-30 days')"
+  ).get() as { n: number }).n
+
+  const trial_users = (d.prepare(
+    `SELECT COUNT(DISTINCT user_id) as n FROM subscriptions
+     WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days')`
+  ).get() as { n: number }).n
+
+  // Юзеры, у которых был триал И ПОТОМ платная подписка
+  const trial_then_paid = (d.prepare(`
+    SELECT COUNT(DISTINCT t.user_id) as n FROM subscriptions t
+    JOIN subscriptions p ON p.user_id = t.user_id
+                         AND p.plan != 'vpn_trial'
+                         AND p.created_at > t.created_at
+    WHERE t.plan = 'vpn_trial'
+      AND t.created_at > datetime('now','-30 days')
+  `).get() as { n: number }).n
+
+  // Платные юзеры, у которых триала не было
+  const direct_paid = (d.prepare(`
+    SELECT COUNT(DISTINCT user_id) as n FROM subscriptions s
+    WHERE s.plan != 'vpn_trial'
+      AND s.created_at > datetime('now','-30 days')
+      AND NOT EXISTS (
+        SELECT 1 FROM subscriptions t
+        WHERE t.user_id = s.user_id AND t.plan = 'vpn_trial'
+      )
+  `).get() as { n: number }).n
+
+  return {
+    new_users,
+    trial_users,
+    trial_then_paid,
+    direct_paid,
+    trial_conversion: trial_users > 0 ? Math.round((trial_then_paid / trial_users) * 100) : 0,
+    register_to_paid: new_users > 0 ? Math.round(((trial_then_paid + direct_paid) / new_users) * 100) : 0,
+  }
+}
+
+export function topReferrers(limit = 10) {
+  return db().prepare(`
+    SELECT u.id, u.username, u.first_name,
+           COUNT(r.id) as invited,
+           COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' THEN 1 ELSE 0 END), 0) as invited_paid
+    FROM users u
+    JOIN users r       ON r.referred_by = u.id
+    LEFT JOIN subscriptions s ON s.user_id = r.id
+    WHERE u.id IN (SELECT DISTINCT referred_by FROM users WHERE referred_by IS NOT NULL)
+    GROUP BY u.id
+    ORDER BY invited_paid DESC, invited DESC
+    LIMIT ?
+  `).all(limit) as Array<{ id: number; username: string | null; first_name: string | null; invited: number; invited_paid: number }>
+}
