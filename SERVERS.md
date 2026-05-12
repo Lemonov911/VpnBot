@@ -7,7 +7,7 @@
 | IP | 151.243.113.31 |
 | ОС | Ubuntu 24.04 |
 | Ресурсы | 1 vCPU / 2GB RAM / 80GB SSD |
-| Домен | maxvpn.shop |
+| Домен | maxvpnesim.com |
 | SSL | `/etc/ssl/certs/maxvpn.crt` |
 | Nginx | `/etc/nginx/sites-enabled/maxvpn` |
 | Бот | порт 8080 |

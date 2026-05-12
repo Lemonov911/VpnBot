@@ -11,7 +11,7 @@
 - **VPS**: 151.243.113.31 (Ubuntu 24.04, 1vCpu/2GB/80GB)
 - **Project path on server**: `/opt/vpnbot/`
 - **Nginx config**: `/etc/nginx/sites-enabled/maxvpn`
-- **Domain**: `maxvpn.shop` (SSL via `/etc/ssl/certs/maxvpn.crt`)
+- **Domain**: `maxvpnesim.com` (SSL via `/etc/ssl/certs/maxvpn.crt`)
 - **Bot runs on**: port 8080
 
 ## Deploy Steps

@@ -32,7 +32,7 @@ type Config struct {
 	XrayAPIAddr     string // 127.0.0.1:10085
 	XrayBin         string // /usr/local/bin/xray
 	XrayFlow        string // "xtls-rprx-vision" or empty
-	XrayPublicHost  string // host to embed in vless:// URLs (e.g. fr.maxvpn.shop or IP)
+	XrayPublicHost  string // host to embed in vless:// URLs (e.g. fr.maxvpnesim.com or IP)
 	XrayPubKey      string // Reality publicKey (shared across tiers)
 	XrayShortID     string // Reality shortId (shared across tiers)
 	XraySNI         string // Reality dest, e.g. www.yahoo.com

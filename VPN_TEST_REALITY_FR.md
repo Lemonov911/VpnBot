@@ -107,10 +107,10 @@ net.ipv4.tcp_mtu_probing=1
 | AmneziaWG c дефолтными пресетами (Jc=4 и т.д.) | то же | Не помогло — РКН детектит дефолтный AWG |
 | AmneziaWG агрессивные пресеты (Jc=10, Jmin=50, Jmax=1000) | то же | ~20 кбит/с, фактически нерабочее |
 | VLESS+Reality на DO :443 | то же | "failed to read client hello" — ТСПУ режет TLS-ClientHello от iOS |
-| VLESS+WS+TLS на `cdn.maxvpn.shop` через **Cloudflare** | прод `151.243.113.31` через CF | Работало, но CF free-tier шейпит WS до 1–4 Mbps. Также периодически "умирало" из-за CF idle-timeout |
+| VLESS+WS+TLS на `cdn.maxvpnesim.com` через **Cloudflare** | прод `151.243.113.31` через CF | Работало, но CF free-tier шейпит WS до 1–4 Mbps. Также периодически "умирало" из-за CF idle-timeout |
 | VLESS+gRPC через Cloudflare на `:2096` | прод | Ещё медленнее WS — CF тротлит gRPC сильнее |
 | VLESS+WS без CF (DNS only / grey) на `151.243.113.31` | прод | Полный timeout — ТСПУ режет любой TCP к этому RU-сайту, нужен CF как маска |
-| VLESS+WS на `fr.maxvpn.shop` (DO 207.154.x) **без CF** | DO Frankfurt | Caddy + Let's Encrypt отлично, TLS+WS upgrade пробивается, но iPhone после WS-upgrade не отправляет VLESS payload — TCP открыт, данных 0. Не работает с Happ, который зависает |
+| VLESS+WS на `fr.maxvpnesim.com` (DO 207.154.x) **без CF** | DO Frankfurt | Caddy + Let's Encrypt отлично, TLS+WS upgrade пробивается, но iPhone после WS-upgrade не отправляет VLESS payload — TCP открыт, данных 0. Не работает с Happ, который зависает |
 | **VLESS+Reality :8443 на DO Frankfurt** | DO Frankfurt | ✅ Работает в Happ, скорость нормальная. V2Box чудит на этом же URL |
 
 ### Ключевой вывод

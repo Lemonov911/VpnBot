@@ -12,7 +12,7 @@ import (
 
 // VLESSConnection holds the public-facing parameters needed to build vless:// URLs.
 type VLESSConnection struct {
-	Host       string // public host or IP, e.g. "fr.maxvpn.shop" or "207.154.214.108"
+	Host       string // public host or IP, e.g. "fr.maxvpnesim.com" or "207.154.214.108"
 	Port       int    // 8443 (or first port from a multi-port range)
 	SNI        string // www.yahoo.com (Reality dest)
 	PubKey     string // Reality publicKey
