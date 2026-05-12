@@ -56,8 +56,8 @@ router = Router()
 # Тарифы импортируются из services.plans — единственный источник истины.
 
 PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⭐ База — 145 ⭐️ · 60 Mbps · 5 устройств",     callback_data="vpn:buy:vpn_base")],
-    [InlineKeyboardButton(text="🚀 Макс — 360 ⭐️ · 120 Mbps · 10 устройств",   callback_data="vpn:buy:vpn_max")],
+    [InlineKeyboardButton(text="⭐ База — 145 ⭐ (≈200 ₽) · 60 Mbps · 5 устройств",   callback_data="vpn:buy:vpn_base")],
+    [InlineKeyboardButton(text="🚀 Макс — 360 ⭐ (≈500 ₽) · 120 Mbps · 10 устройств", callback_data="vpn:buy:vpn_max")],
     [InlineKeyboardButton(text="📖 Как настроить?",                              callback_data="vpn:howto")],
     [InlineKeyboardButton(text="◀️ Назад",                                       callback_data="menu:start")],
 ])

@@ -9,14 +9,39 @@ SQLite через aiosqlite.
 """
 
 import aiosqlite
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "bot.db"
 
 
+@asynccontextmanager
+async def _connect():
+    """aiosqlite.connect + busy_timeout 5s.
+
+    `journal_mode=WAL` ставится один раз в `init_db()` (это persistent
+    pragma — переживает рестарт SQLite). `busy_timeout` — per-connection,
+    поэтому ставится здесь на каждом подключении.
+
+    Все вызовы в этом модуле и снаружи должны идти через `_connect()`
+    (или прямой `aiosqlite.connect(DB_PATH)` для legacy-кода, но WAL+
+    persistent journal-mode и так на месте).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA busy_timeout=5000")
+        yield db
+
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # WAL — persistent, переживает рестарт; устанавливается один раз.
+        # synchronous=NORMAL — fsync только при checkpoint, +производительность,
+        # минимальный risk на современных SSD (worst case — теряется последняя
+        # 1-2 минуты транзакций при power-loss).
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INTEGER PRIMARY KEY,

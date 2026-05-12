@@ -247,9 +247,19 @@ async def _sync_vless_active_uuids():
 
 
 async def _daily_backup(bot: Bot):
-    """Раз в сутки шлёт сжатый дамп bot.db админу в Telegram."""
+    """Раз в сутки шлёт сжатый дамп bot.db админу в Telegram.
+
+    Безопасность:
+      - SQLite-aware snapshot через `sqlite3.Connection.backup()` —
+        корректно для WAL-режима (учитывает WAL/SHM, в отличие от
+        `shutil.copy2` который мог терять свежие транзакции).
+      - sub_token и payment_id затираются NULL'ами в snapshot — это
+        самые чувствительные колонки. Утечка backup'а в TG = потеря
+        самого backup'а, но не прямой доступ к VPN-конфигам юзеров.
+    """
     import gzip
-    import shutil
+    import os
+    import sqlite3
     from datetime import datetime
     from aiogram.types import BufferedInputFile
     from config import ADMIN_ID
@@ -264,11 +274,37 @@ async def _daily_backup(bot: Bot):
     except FileNotFoundError:
         pass
 
-    # snapshot — копируем перед сжатием, чтобы не блочить запись
     snap = "/tmp/bot.db.snapshot"
-    shutil.copy2(DB_PATH, snap)
-    with open(snap, "rb") as src, gzip.open(snap + ".gz", "wb", compresslevel=9) as dst:
-        shutil.copyfileobj(src, dst)
+    if os.path.exists(snap):
+        os.unlink(snap)
+    if os.path.exists(snap + ".gz"):
+        os.unlink(snap + ".gz")
+
+    # SQLite-aware backup (учитывает WAL+SHM, в отличие от shutil.copy)
+    src = sqlite3.connect(str(DB_PATH))
+    try:
+        dst = sqlite3.connect(snap)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+
+    # Redact sensitive columns на копии — sub_token даёт постоянный
+    # доступ к VLESS-конфигам через /sub/{token}, payment_id может
+    # быть переиспользован в анализе.
+    conn = sqlite3.connect(snap)
+    try:
+        conn.execute("UPDATE users SET sub_token=NULL")
+        # payment_id оставляем — он нужен для идемпотентности при restore
+        conn.commit()
+    finally:
+        conn.close()
+
+    with open(snap, "rb") as src_f, gzip.open(snap + ".gz", "wb", compresslevel=9) as dst_f:
+        for chunk in iter(lambda: src_f.read(64 * 1024), b""):
+            dst_f.write(chunk)
     with open(snap + ".gz", "rb") as f:
         data = f.read()
 
@@ -276,13 +312,20 @@ async def _daily_backup(bot: Bot):
         await bot.send_document(
             ADMIN_ID,
             BufferedInputFile(data, filename=f"bot-db-{today}.gz"),
-            caption=f"📦 Daily backup · {today} · {len(data)//1024} KB",
+            caption=f"📦 Daily backup · {today} · {len(data)//1024} KB · sub_tokens redacted",
         )
         with open(state_file, "w") as f:
             f.write(today)
         logger.info("daily backup отправлен (%d KB)", len(data) // 1024)
     except Exception as e:
         logger.warning("daily backup не отправлен: %s", e)
+    finally:
+        # cleanup
+        for p in (snap, snap + ".gz"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 async def _send_expiry_reminders(bot: Bot):
@@ -349,6 +392,19 @@ _ESIM_SYNC_EVERY_N_TICKS = 3  # CHECK_INTERVAL=1ч → раз в 3ч
 HEALTH_PROBE_INTERVAL_SEC = 60
 HEALTH_CLEANUP_INTERVAL_SEC = 24 * 3600  # раз в сутки чистим логи старше 31 дня
 
+# Фоновые таски удерживаются здесь — без этого `asyncio.create_task()` может
+# быть собран GC, и task незаметно умрёт (классический asyncio-footgun).
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Запускает фоновую корутину и удерживает ссылку. Снимает её
+    после завершения, чтобы set не рос бесконечно."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
 
 async def _run_health_loop():
     """Independent loop: probe servers every 60s, write to server_health_log."""
@@ -376,8 +432,9 @@ async def run_scheduler(bot: Bot):
     global _TICK
     logger.info("Планировщик подписок запущен (интервал: %d сек)", CHECK_INTERVAL)
 
-    # Запускаем health-probe отдельным таском — он бьёт каждые 60с независимо
-    asyncio.create_task(_run_health_loop())
+    # Запускаем health-probe отдельным таском — он бьёт каждые 60с независимо.
+    # `_spawn_bg` удерживает ссылку, чтобы GC не убил task.
+    _spawn_bg(_run_health_loop())
 
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
