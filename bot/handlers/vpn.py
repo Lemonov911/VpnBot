@@ -348,8 +348,8 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     sub_url = ""
     if vless_slots > 0 and created_vless > 0:
         try:
-            from services.database import get_or_create_sub_token
-            tok = await get_or_create_sub_token(user_id)
+            from services.database import rotate_sub_token
+            tok = await rotate_sub_token(user_id)
             sub_url = f"https://maxvpnesim.com/sub/{tok}"
         except Exception as e:
             logger.warning("sub_token gen failed for user %d: %s", user_id, e)

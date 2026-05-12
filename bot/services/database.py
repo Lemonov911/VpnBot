@@ -805,6 +805,16 @@ async def get_or_create_sub_token(user_id: int) -> str:
         return token
 
 
+async def rotate_sub_token(user_id: int) -> str:
+    """Issues a new sub_token, invalidating the previous subscription URL."""
+    import secrets
+    token = secrets.token_urlsafe(24)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET sub_token=? WHERE id=?", (token, user_id))
+        await db.commit()
+    return token
+
+
 async def get_user_by_sub_token(token: str) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

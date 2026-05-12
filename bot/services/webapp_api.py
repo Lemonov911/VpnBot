@@ -27,7 +27,7 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.types import LabeledPrice
 
-from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL
+from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET
 from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
@@ -721,6 +721,12 @@ async def handle_esim_webhook(request: web.Request) -> web.Response:
       SMDP_EVENT    — события на стороне SM-DP+ сервера
       LOW_BALANCE   — баланс упал ниже 25% или 10%
     """
+    if ESIM_WEBHOOK_SECRET:
+        incoming = request.headers.get("X-Api-Key", "") or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        if incoming != ESIM_WEBHOOK_SECRET:
+            logger.warning("eSIM webhook: bad secret from %s", request.remote)
+            return web.json_response({"error": "unauthorized"}, status=401)
+
     from services.database import (
         get_esim_by_order_no, fulfill_esim_profile, get_esim_by_tran_no,
     )

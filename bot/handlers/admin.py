@@ -9,7 +9,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-from config import ADMIN_ID, BOT_TOKEN, WEBAPP_URL
+from config import ADMIN_ID, ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
 from services.database import (
     get_stats,
     create_order,
@@ -25,8 +25,6 @@ from services.vpnctl_client import client_for_server, VpnctlError
 from handlers.vpn import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan
 
 router = Router()
-
-ADMIN_IDS = {ADMIN_ID, 594024866}
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS

@@ -33,7 +33,9 @@ export async function GET(req: NextRequest) {
   if (!isAdmin(payload.userId)) return NextResponse.json({ error: 'Access denied' }, { status: 403 })
 
   const session = await createSession(payload.userId, payload.username)
-  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'maxvpnesim.com'
+  const ALLOWED_HOSTS = new Set(['maxvpnesim.com', 'maxvpn.shop'])
+  const rawHost = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? ''
+  const host = ALLOWED_HOSTS.has(rawHost) ? rawHost : 'maxvpnesim.com'
   const proto = req.headers.get('x-forwarded-proto') ?? 'https'
   const res = NextResponse.redirect(`${proto}://${host}/admin`)
   res.cookies.set(COOKIE_NAME, session, {

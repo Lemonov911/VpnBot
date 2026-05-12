@@ -6,10 +6,14 @@ load_dotenv(Path(__file__).parent / ".env")
 
 BOT_TOKEN        = os.getenv("BOT_TOKEN", "")
 ADMIN_ID         = int(os.getenv("ADMIN_ID") or 0)
+# Comma-separated list of additional admin Telegram IDs (besides ADMIN_ID)
+_extra_ids       = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS: set[int] = {ADMIN_ID} | {int(x) for x in _extra_ids.split(",") if x.strip().isdigit()}
 WEBAPP_URL       = os.getenv("WEBAPP_URL", "")
 API_PORT         = int(os.getenv("API_PORT") or 8080)
 DEBUG            = os.getenv("DEBUG", "").lower() == "true"
 ESIM_API_KEY     = os.getenv("ESIM_ACCESS_API_KEY", "")
+ESIM_WEBHOOK_SECRET = os.getenv("ESIM_WEBHOOK_SECRET", "")
 VPN_SERVER_HOST  = os.getenv("VPN_SERVER_HOST", "")
 VPN_SERVER_USER  = os.getenv("VPN_SERVER_USER", "root")
 VPN_SERVER_KEY   = os.getenv("VPN_SERVER_KEY_PATH", "~/.ssh/id_rsa")
