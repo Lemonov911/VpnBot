@@ -138,3 +138,18 @@ body::before {
 .tg-btn    { background: var(--tg-theme-button-color, #2481cc); }
 .tg-btn-text { color: var(--tg-theme-button-text-color, #fff); }
 .tg-section { background: var(--tg-theme-section-bg-color, #f1f1f1); }
+/* ── Legal prose: для статических markdown-страниц /legal/* ──────── */
+.legal-prose h1 { font-size: 1.4rem; font-weight: 800; margin: 0.5em 0 0.4em; letter-spacing: -0.2px; }
+.legal-prose h2 { font-size: 1.1rem; font-weight: 700; margin: 1.2em 0 0.4em; }
+.legal-prose h3 { font-size: 0.95rem; font-weight: 700; margin: 1em 0 0.3em; }
+.legal-prose p { margin: 0.6em 0; }
+.legal-prose ul, .legal-prose ol { margin: 0.6em 0 0.6em 1.2em; padding: 0; }
+.legal-prose li { margin: 0.25em 0; }
+.legal-prose table { border-collapse: collapse; margin: 0.8em 0; font-size: 0.85em; width: 100%; }
+.legal-prose th, .legal-prose td { border: 1px solid var(--card-border); padding: 0.4em 0.6em; text-align: left; }
+.legal-prose th { background: var(--tg-theme-section-bg-color, rgba(0,0,0,0.04)); font-weight: 600; }
+.legal-prose strong { font-weight: 700; }
+.legal-prose hr { border: 0; border-top: 1px solid var(--card-border); margin: 1.2em 0; }
+.legal-prose code { background: rgba(0,0,0,0.05); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+.legal-prose blockquote { border-left: 3px solid var(--color-primary); padding-left: 0.8em; margin: 0.8em 0; color: var(--tg-theme-hint-color); }
+.legal-prose a { color: var(--tg-theme-link-color, #2481cc); text-decoration: underline; }

@@ -406,14 +406,16 @@ def _spawn_bg(coro) -> asyncio.Task:
     return task
 
 
-async def _run_health_loop():
-    """Independent loop: probe servers every 60s, write to server_health_log."""
+async def _run_health_loop(bot: Bot | None = None):
+    """Independent loop: probe servers every 60s, write to server_health_log.
+    Передаём bot чтобы health.py мог слать alert админу при auto-(de)activate.
+    """
     from services.health import probe_all_servers, cleanup_old_logs
     cleanup_counter = 0
     logger.info("Health-probe запущен (интервал: %d сек)", HEALTH_PROBE_INTERVAL_SEC)
     while True:
         try:
-            await probe_all_servers()
+            await probe_all_servers(bot)
         except Exception as e:
             logger.warning("health probe error: %s", e)
         cleanup_counter += HEALTH_PROBE_INTERVAL_SEC
@@ -434,7 +436,7 @@ async def run_scheduler(bot: Bot):
 
     # Запускаем health-probe отдельным таском — он бьёт каждые 60с независимо.
     # `_spawn_bg` удерживает ссылку, чтобы GC не убил task.
-    _spawn_bg(_run_health_loop())
+    _spawn_bg(_run_health_loop(bot))
 
     while True:
         await asyncio.sleep(CHECK_INTERVAL)

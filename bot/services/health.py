@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 # Сколько ждать /health перед тем как пометить down.
 PROBE_TIMEOUT_S = 4.0
 
+# Авто-деактивация: сколько подряд проб down должно быть чтобы выключить
+# сервер. При интервале пробит 60с → 10 минут consecutive downtime.
+AUTO_DEACTIVATE_AFTER_DOWN = 10
+
+# Авто-реактивация: сколько подряд проб up чтобы вернуть deactivated-сервер
+# назад в is_active=1. Анти-flapping: 5 минут стабильности.
+AUTO_REACTIVATE_AFTER_UP = 5
+
 
 Status = Literal["up", "down", "unknown"]
 
@@ -96,12 +104,110 @@ async def _record_probe(db: aiosqlite.Connection, server_id: int,
             logger.info("health: server %d UP (incident #%d closed)", server_id, inc_id)
 
 
-async def probe_all_servers():
-    """Главный тик: пробит все is_active=1 серверы и пишет результаты."""
+async def _consecutive_status_count(db: aiosqlite.Connection,
+                                     server_id: int, status: Status,
+                                     limit: int) -> int:
+    """Сколько последних подряд проб имели данный статус (max `limit`).
+    Используется для auto-deactivate/reactivate.
+    """
+    async with db.execute(
+        """SELECT status FROM server_health_log
+           WHERE server_id=? ORDER BY id DESC LIMIT ?""",
+        (server_id, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+    count = 0
+    for row in rows:
+        if row[0] == status:
+            count += 1
+        else:
+            break
+    return count
+
+
+async def _maybe_deactivate(db: aiosqlite.Connection, server: dict, bot) -> bool:
+    """Если сервер `is_active=1` и последние AUTO_DEACTIVATE_AFTER_DOWN проб
+    подряд = down → деактивирует и шлёт alert админу. Возвращает True если
+    действительно деактивировали."""
+    if not server.get("is_active"):
+        return False
+    consec_down = await _consecutive_status_count(
+        db, server["id"], "down", AUTO_DEACTIVATE_AFTER_DOWN,
+    )
+    if consec_down < AUTO_DEACTIVATE_AFTER_DOWN:
+        return False
+    await db.execute(
+        "UPDATE servers SET is_active=0 WHERE id=?", (server["id"],),
+    )
+    logger.warning(
+        "health: AUTO-DEACTIVATED server #%d %s (%d consecutive down probes)",
+        server["id"], server.get("name", ""), consec_down,
+    )
+    if bot:
+        try:
+            from config import ADMIN_ID
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ <b>Server auto-deactivated</b>\n\n"
+                    f"{server.get('flag', '🌍')} <b>{server.get('name', '?')}</b> "
+                    f"({server.get('host', '?')}) — {consec_down} проб подряд down "
+                    f"(~{consec_down} мин).\n\n"
+                    f"Новые пиры на этот сервер не пойдут. Реактивация авто после "
+                    f"{AUTO_REACTIVATE_AFTER_UP} проб up подряд, или вручную "
+                    f"<code>UPDATE servers SET is_active=1 WHERE id={server['id']}</code>.",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.warning("health: failed to notify admin about deactivation: %s", e)
+    return True
+
+
+async def _maybe_reactivate(db: aiosqlite.Connection, server: dict, bot) -> bool:
+    """Если сервер `is_active=0` и последние AUTO_REACTIVATE_AFTER_UP проб
+    подряд = up → реактивирует и шлёт alert. Возвращает True если реактивировали."""
+    if server.get("is_active"):
+        return False
+    consec_up = await _consecutive_status_count(
+        db, server["id"], "up", AUTO_REACTIVATE_AFTER_UP,
+    )
+    if consec_up < AUTO_REACTIVATE_AFTER_UP:
+        return False
+    await db.execute(
+        "UPDATE servers SET is_active=1 WHERE id=?", (server["id"],),
+    )
+    logger.info(
+        "health: AUTO-REACTIVATED server #%d %s (%d consecutive up probes)",
+        server["id"], server.get("name", ""), consec_up,
+    )
+    if bot:
+        try:
+            from config import ADMIN_ID
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"✅ <b>Server auto-reactivated</b>\n\n"
+                    f"{server.get('flag', '🌍')} <b>{server.get('name', '?')}</b> "
+                    f"({server.get('host', '?')}) — {consec_up} проб up подряд, вернули в строй.",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.warning("health: failed to notify admin about reactivation: %s", e)
+    return True
+
+
+async def probe_all_servers(bot=None):
+    """Главный тик: пробит ВСЕ серверы (включая is_active=0 для возможности
+    auto-reactivate), пишет результаты, авто-(де)активирует по N consecutive
+    проб.
+
+    bot: aiogram Bot для alert'ов админу. Если None — alert'ы не уходят.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        # ВКЛЮЧАЕМ is_active=0 серверы тоже — иначе reactivate невозможна
         async with db.execute(
-            "SELECT * FROM servers WHERE is_active=1 ORDER BY id"
+            "SELECT * FROM servers ORDER BY id"
         ) as cur:
             servers = [dict(r) for r in await cur.fetchall()]
 
@@ -114,6 +220,17 @@ async def probe_all_servers():
                 await _record_probe(db, server["id"], status, latency, error)
             except Exception as e:
                 logger.warning("health: failed to record probe for server %d: %s",
+                               server["id"], e)
+
+        # Авто-деактивация/реактивация после записи проб.
+        for server, (status, _, _) in zip(servers, results):
+            try:
+                if status == "down":
+                    await _maybe_deactivate(db, server, bot)
+                elif status == "up":
+                    await _maybe_reactivate(db, server, bot)
+            except Exception as e:
+                logger.warning("health: auto-(de)activate error for server %d: %s",
                                server["id"], e)
         await db.commit()
 
