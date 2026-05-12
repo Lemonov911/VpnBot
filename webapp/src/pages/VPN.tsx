@@ -83,6 +83,7 @@ export default function VPN() {
   const PLAN_NAMES: Record<string, string> = {
     vpn_base:    t('vpn_plan_base'),
     vpn_max:     t('vpn_plan_max'),
+    vpn_trial:   t('vpn_plan_trial'),
     vpn_start:   t('vpn_plan_start'),
     vpn_popular: t('vpn_plan_popular'),
     vpn_pro:     t('vpn_plan_pro'),

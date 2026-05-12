@@ -442,8 +442,11 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         parse_mode="HTML",
     )
 
-    # Реферальный бонус: если это первая покупка и у юзера есть реферер
+    # Реферальный бонус: считается только на первую ПЛАТНУЮ покупку.
+    # Бесплатные триалы (plan='vpn_trial') не учитываем — иначе юзер берёт
+    # триал → реферер получает бонус → юзер уходит, не платив ни рубля.
     try:
+        from services.trial import TRIAL_PLAN
         async with _aiosqlite.connect(_DB_PATH) as _db:
             async with _db.execute(
                 "SELECT referred_by FROM users WHERE id=?", (user_id,)
@@ -452,13 +455,14 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             referrer_id = _row[0] if _row and _row[0] else None
 
             if referrer_id:
-                # Первая покупка = ровно одна подписка (только что созданная)
+                # Сколько ПЛАТНЫХ подписок (включая текущую) уже у юзера?
                 async with _db.execute(
-                    "SELECT COUNT(*) FROM subscriptions WHERE user_id=?", (user_id,)
+                    "SELECT COUNT(*) FROM subscriptions WHERE user_id=? AND plan!=?",
+                    (user_id, TRIAL_PLAN),
                 ) as _cur:
-                    sub_count = (await _cur.fetchone())[0]
+                    paid_count = (await _cur.fetchone())[0]
 
-                if sub_count == 1:
+                if paid_count == 1:
                     from handlers.start import REFERRAL_BONUS_DAYS
                     await add_referral_bonus(referrer_id, REFERRAL_BONUS_DAYS)
                     try:

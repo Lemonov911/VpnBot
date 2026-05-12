@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 # DPI на своём операторе.
 TRIAL_DAYS = 3
 
+# Cooldown между триалами. Один раз в месяц на аккаунт — не «никогда».
+# С одной стороны защищаем от халявы (один и тот же юзер не сидит на цикле
+# триалов), с другой — даём вернуться людям, которые попробовали и забыли.
+TRIAL_COOLDOWN_DAYS = 30
+
 TRIAL_PLAN = "vpn_trial"
 
 
@@ -51,13 +56,17 @@ class TrialNoServer(TrialError):
 
 
 async def can_claim_trial(user_id: int) -> bool:
-    """True если юзер ещё не использовал trial и у него нет активной подписки.
+    """True если у юзера нет активной подписки и последний триал был
+    больше TRIAL_COOLDOWN_DAYS назад (или вообще не было).
     Используется для показа/скрытия trial-CTA в UI."""
     if await has_active_subscription(user_id):
         return False
     async with aiosqlite.connect(DB_PATH) as db:
         row = await (await db.execute(
-            "SELECT 1 FROM subscriptions WHERE user_id=? AND plan=? LIMIT 1",
+            f"""SELECT 1 FROM subscriptions
+                WHERE user_id=? AND plan=?
+                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()
     return row is None
@@ -85,8 +94,13 @@ async def provision_trial(user_id: int) -> dict:
         raise TrialBlockedByActiveSub()
 
     async with aiosqlite.connect(DB_PATH) as db:
+        # Триал доступен раз в TRIAL_COOLDOWN_DAYS дней — не «никогда».
+        # Старые истёкшие триалы > 30 дней назад не блокируют новый.
         existing = await (await db.execute(
-            "SELECT id FROM subscriptions WHERE user_id=? AND plan=? LIMIT 1",
+            f"""SELECT id FROM subscriptions
+                WHERE user_id=? AND plan=?
+                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()
     if existing:

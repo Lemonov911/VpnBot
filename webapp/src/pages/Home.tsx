@@ -54,6 +54,7 @@ export default function Home() {
     const map: Record<string, string> = {
       vpn_base:    t('vpn_plan_base'),
       vpn_max:     t('vpn_plan_max'),
+      vpn_trial:   t('vpn_plan_trial'),
       vpn_start:   t('vpn_plan_start'),
       vpn_popular: t('vpn_plan_popular'),
       vpn_pro:     t('vpn_plan_pro'),
@@ -124,7 +125,13 @@ export default function Home() {
         {trialDone && (
           <div className="fade-in rounded-[20px] p-4 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
             <div className="text-base font-bold mb-1 text-[var(--tg-theme-text-color)]">{t('trial_success_title')}</div>
-            <div className="text-[12px] text-[var(--tg-theme-hint-color)] leading-snug">{t('trial_success_sub')}</div>
+            <div className="text-[12px] text-[var(--tg-theme-hint-color)] leading-snug mb-3">{t('trial_success_sub')}</div>
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/plans') }}
+              className="w-full py-2 rounded-[10px] border-none bg-primary/[0.13] text-primary text-xs font-bold cursor-pointer"
+            >
+              {t('trial_success_upgrade')}
+            </button>
           </div>
         )}
 
