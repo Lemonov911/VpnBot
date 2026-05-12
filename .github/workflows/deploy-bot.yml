@@ -1,0 +1,34 @@
+name: Deploy Bot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bot/**'
+      - '.github/workflows/deploy-bot.yml'
+  workflow_dispatch:
+
+# Only one bot deploy at a time — never overlap restarts.
+concurrency:
+  group: deploy-bot
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # No git checkout needed — the server pulls main itself.
+      # The forced-command on the deploy user's SSH key runs the
+      # `/opt/vpnbot/deploy-bot.sh` script regardless of what we send,
+      # so we just open the SSH connection and the script does the work.
+      - name: Trigger remote pull + restart
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BOT_DEPLOY_SSH_KEY }}" > ~/.ssh/bot_deploy
+          chmod 600 ~/.ssh/bot_deploy
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/bot_deploy \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              true
