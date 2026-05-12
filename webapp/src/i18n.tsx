@@ -361,8 +361,10 @@ const T = {
     status_down:          'DOWN',
     status_unknown:       'нет данных',
     status_empty:         'Список серверов пуст',
-    status_autorefresh:   'Обновляется каждые 30 секунд',
+    status_autorefresh:   'Обновляется каждые 30 секунд. История за 30 дней.',
     status_load_err:      'Не удалось загрузить статус',
+    status_incidents:     'Последние инциденты',
+    status_inc_ongoing:   'идёт',
 
     trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
     trial_banner_sub:     'AmneziaWG который правда работает на МТС. Без карты, без подписки.',
@@ -740,8 +742,10 @@ const T = {
     status_down:          'DOWN',
     status_unknown:       'unknown',
     status_empty:         'No servers configured',
-    status_autorefresh:   'Refreshes every 30 seconds',
+    status_autorefresh:   'Refreshes every 30 seconds. 30-day history.',
     status_load_err:      'Failed to load status',
+    status_incidents:     'Recent incidents',
+    status_inc_ongoing:   'ongoing',
 
     trial_banner_title:   '🎁 Try free — 3 days',
     trial_banner_sub:     "AmneziaWG that actually works around Russian DPI. No card, no sub.",

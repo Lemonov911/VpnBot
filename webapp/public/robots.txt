@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Allow: /status
+
+# Mini App routes — пользы от индексирования нет, скрываем
+Disallow: /vpn
+Disallow: /configs
+Disallow: /esim
+Disallow: /support
+Disallow: /referral
+
+Sitemap: https://maxvpnesim.com/sitemap.xml

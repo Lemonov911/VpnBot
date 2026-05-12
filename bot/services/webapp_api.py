@@ -252,57 +252,87 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
 
-    Возвращает агрегат:
-      {
-        "bot":      "up",  // мы отвечаем, значит up
-        "updated":  ISO timestamp,
-        "servers":  [{ name, flag, location, protocol, status, latency_ms }],
-        "summary":  { up: N, total: M, all_ok: bool }
-      }
-    Статус сервера: 'up' (агент ответил на /health), 'down' (timeout/ошибка),
-    'unknown' (нет agent_url в БД — legacy запись).
+    Берёт live-снимок из последней пробы (`server_health_log`) + uptime %
+    за 24h/7d/30d + 24-часовой strip + последние incidents. Probes сам
+    лоит scheduler каждые 60 сек в `services/health.py`.
     """
     import asyncio
-    import time
     from datetime import datetime
-    from services.vpnctl_client import client_for_server, VpnctlError
-
-    async def _check(server: dict) -> dict:
-        base = {
-            "name":     server["name"],
-            "flag":     server.get("flag") or "🌍",
-            "location": server.get("location", ""),
-            "protocol": server.get("protocol", ""),
-        }
-        if not server.get("agent_url") or not server.get("agent_token"):
-            return {**base, "status": "unknown", "latency_ms": None}
-        client = client_for_server(server)
-        t0 = time.perf_counter()
-        try:
-            await asyncio.wait_for(client.health(), timeout=4.0)
-            latency_ms = int((time.perf_counter() - t0) * 1000)
-            return {**base, "status": "up", "latency_ms": latency_ms}
-        except (VpnctlError, asyncio.TimeoutError, Exception):
-            return {**base, "status": "down", "latency_ms": None}
+    from services.health import uptime_summary, last_24h_strip, recent_incidents
 
     import aiosqlite as _aiosqlite
     from services.database import DB_PATH as _DB_PATH
     async with _aiosqlite.connect(_DB_PATH) as db:
         db.row_factory = _aiosqlite.Row
+
         async with db.execute(
             "SELECT * FROM servers WHERE is_active=1 ORDER BY protocol, id"
         ) as cur:
             servers = [dict(r) for r in await cur.fetchall()]
 
-    results = await asyncio.gather(*[_check(s) for s in servers])
-    up = sum(1 for r in results if r["status"] == "up")
-    total = len(results)
+        # Последняя проба за каждый сервер.
+        last_probe: dict[int, dict] = {}
+        if servers:
+            placeholders = ",".join("?" * len(servers))
+            server_ids = [s["id"] for s in servers]
+            async with db.execute(
+                f"""SELECT server_id, status, latency_ms, checked_at FROM server_health_log
+                    WHERE id IN (
+                      SELECT MAX(id) FROM server_health_log
+                      WHERE server_id IN ({placeholders})
+                      GROUP BY server_id
+                    )""",
+                server_ids,
+            ) as cur:
+                for row in await cur.fetchall():
+                    last_probe[row["server_id"]] = dict(row)
+
+    async def _enrich(server: dict) -> dict:
+        sid = server["id"]
+        probe = last_probe.get(sid)
+        status = probe["status"] if probe else "unknown"
+        latency_ms = probe["latency_ms"] if probe else None
+        uptime, strip = await asyncio.gather(
+            uptime_summary(sid),
+            last_24h_strip(sid),
+        )
+        return {
+            "id":         sid,
+            "name":       server["name"],
+            "flag":       server.get("flag") or "🌍",
+            "location":   server.get("location", ""),
+            "protocol":   server.get("protocol", ""),
+            "status":     status,
+            "latency_ms": latency_ms,
+            "uptime":     uptime,
+            "strip_24h":  strip,
+        }
+
+    if servers:
+        enriched = await asyncio.gather(*[_enrich(s) for s in servers])
+    else:
+        enriched = []
+    incidents = await recent_incidents(limit=5)
+
+    up = sum(1 for r in enriched if r["status"] == "up")
+    total = len(enriched)
 
     return web.json_response({
         "bot":     "up",
         "updated": datetime.utcnow().isoformat() + "Z",
-        "servers": results,
+        "servers": enriched,
         "summary": {"up": up, "total": total, "all_ok": up == total and total > 0},
+        "incidents": [
+            {
+                "id":           inc["id"],
+                "server_name":  inc["server_name"],
+                "flag":         inc.get("flag") or "🌍",
+                "started_at":   inc["started_at"],
+                "resolved_at":  inc["resolved_at"],
+                "duration_sec": inc["duration_sec"],
+            }
+            for inc in incidents
+        ],
     })
 
 

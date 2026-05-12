@@ -164,20 +164,35 @@ export function claimTrial(): Promise<TrialClaim> {
 
 // ── Public status — no auth ───────────────────────────────────────────────────
 
+export interface UptimeWindow { pct: number | null; samples: number; total: number }
+
 export interface PublicServerStatus {
+  id:          number
   name:        string
   flag:        string
   location:    string
   protocol:    string
   status:      'up' | 'down' | 'unknown'
   latency_ms:  number | null
+  uptime:      { '24h': UptimeWindow; '7d': UptimeWindow; '30d': UptimeWindow }
+  strip_24h:   Array<'up' | 'down' | 'unknown'>
+}
+
+export interface Incident {
+  id:           number
+  server_name:  string
+  flag:         string
+  started_at:   string
+  resolved_at:  string | null
+  duration_sec: number | null
 }
 
 export interface PublicStatus {
-  bot:      'up'
-  updated:  string
-  servers:  PublicServerStatus[]
-  summary:  { up: number; total: number; all_ok: boolean }
+  bot:        'up'
+  updated:    string
+  servers:    PublicServerStatus[]
+  summary:    { up: number; total: number; all_ok: boolean }
+  incidents:  Incident[]
 }
 
 export async function getPublicStatus(): Promise<PublicStatus> {

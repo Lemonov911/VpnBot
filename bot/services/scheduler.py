@@ -345,11 +345,40 @@ async def _sync_esim_usage():
 _TICK = 0
 _ESIM_SYNC_EVERY_N_TICKS = 3  # CHECK_INTERVAL=1ч → раз в 3ч
 
+# Health-probe — отдельный таск, бьёт чаще основного шедулера.
+HEALTH_PROBE_INTERVAL_SEC = 60
+HEALTH_CLEANUP_INTERVAL_SEC = 24 * 3600  # раз в сутки чистим логи старше 31 дня
+
+
+async def _run_health_loop():
+    """Independent loop: probe servers every 60s, write to server_health_log."""
+    from services.health import probe_all_servers, cleanup_old_logs
+    cleanup_counter = 0
+    logger.info("Health-probe запущен (интервал: %d сек)", HEALTH_PROBE_INTERVAL_SEC)
+    while True:
+        try:
+            await probe_all_servers()
+        except Exception as e:
+            logger.warning("health probe error: %s", e)
+        cleanup_counter += HEALTH_PROBE_INTERVAL_SEC
+        if cleanup_counter >= HEALTH_CLEANUP_INTERVAL_SEC:
+            cleanup_counter = 0
+            try:
+                await cleanup_old_logs(keep_days=31)
+                logger.info("health: log cleanup done")
+            except Exception as e:
+                logger.warning("health cleanup error: %s", e)
+        await asyncio.sleep(HEALTH_PROBE_INTERVAL_SEC)
+
 
 async def run_scheduler(bot: Bot):
     """Бесконечный цикл — запускать как asyncio background task из bot.py."""
     global _TICK
     logger.info("Планировщик подписок запущен (интервал: %d сек)", CHECK_INTERVAL)
+
+    # Запускаем health-probe отдельным таском — он бьёт каждые 60с независимо
+    asyncio.create_task(_run_health_loop())
+
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         _TICK += 1

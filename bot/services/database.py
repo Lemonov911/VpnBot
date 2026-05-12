@@ -221,6 +221,36 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE users ADD COLUMN sub_token TEXT")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)")
 
+    # server_health_log — sparse time-series of up/down probes per server.
+    # Источник для расчёта uptime % и страницы /status.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS server_health_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id   INTEGER NOT NULL,
+            checked_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status      TEXT NOT NULL,         -- 'up' | 'down' | 'unknown'
+            latency_ms  INTEGER,
+            error       TEXT,
+            FOREIGN KEY (server_id) REFERENCES servers(id)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_health_server_time ON server_health_log(server_id, checked_at)")
+
+    # incidents — открытые/закрытые периоды простоя.
+    # Один incident на сервер: started_at при первом 'down', resolved_at при первом
+    # 'up' после down. Если сервер ещё лежит — resolved_at NULL.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS incidents (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id    INTEGER NOT NULL,
+            started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            resolved_at  TIMESTAMP,
+            duration_sec INTEGER,
+            FOREIGN KEY (server_id) REFERENCES servers(id)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_server ON incidents(server_id, started_at DESC)")
+
 
 async def _seed_default_server():
     """Если серверов нет — добавляет дефолтный из переменных окружения."""
