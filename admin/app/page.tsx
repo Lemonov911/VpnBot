@@ -43,9 +43,12 @@ export default async function Dashboard() {
           <div className="text-xs text-neutral-500 mt-0.5">Привет, {session.username}</div>
         </div>
         <div className="flex gap-4 items-center">
-          <a href="/analytics" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Аналитика</a>
-          <a href="/servers"   className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Серверы</a>
-          <a href="/logout"    className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Выйти</a>
+          <a href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Аналитика</a>
+          <a href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Клиенты</a>
+          <a href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Мониторинг</a>
+          <a href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Обращения</a>
+          <a href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Серверы</a>
+          <a href="/logout"     className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">Выйти</a>
         </div>
       </div>
 

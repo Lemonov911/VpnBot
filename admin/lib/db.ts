@@ -160,6 +160,122 @@ export function trialFunnel30d() {
   }
 }
 
+// ── Clients / Money page ──────────────────────────────────────────────────────
+
+export function topClients(limit = 50) {
+  // Топ юзеров по сумме потраченных stars (LTV-прокси).
+  // Триалы исключены — это не выручка.
+  return db().prepare(`
+    SELECT u.id, u.username, u.first_name, u.created_at as joined_at,
+           COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial')                       as paid_subs,
+           COUNT(s.id) FILTER (WHERE s.plan = 'vpn_trial')                        as trial_subs,
+           COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' THEN s.stars_paid END), 0) as total_stars,
+           MAX(CASE WHEN s.status = 'active' THEN s.plan END)                     as current_plan,
+           MAX(s.created_at)                                                       as last_purchase,
+           MAX(CASE WHEN s.status = 'active' THEN s.expires_at END)               as active_until
+    FROM users u
+    LEFT JOIN subscriptions s ON s.user_id = u.id
+    GROUP BY u.id
+    HAVING total_stars > 0
+    ORDER BY total_stars DESC, last_purchase DESC
+    LIMIT ?
+  `).all(limit) as Array<{
+    id: number
+    username: string | null
+    first_name: string | null
+    joined_at: string
+    paid_subs: number
+    trial_subs: number
+    total_stars: number
+    current_plan: string | null
+    last_purchase: string | null
+    active_until: string | null
+  }>
+}
+
+export function moneyTotals() {
+  const d = db()
+  const r = (sql: string) => (d.prepare(sql).get() as { n: number }).n
+  return {
+    total_revenue_stars: r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial'"),
+    paying_users:        r("SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND stars_paid > 0"),
+    avg_revenue_per_payer: 0, // computed in route from above
+    avg_ltv_stars:       0, // same
+    revenue_7d:          r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days')"),
+    revenue_30d:         r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
+    revenue_90d:         r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days')"),
+    repeat_buyers:       r(`SELECT COUNT(*) as n FROM (
+      SELECT user_id FROM subscriptions
+      WHERE plan!='vpn_trial' AND stars_paid > 0
+      GROUP BY user_id HAVING COUNT(*) > 1
+    )`),
+  }
+}
+
+// ── Monitoring ────────────────────────────────────────────────────────────────
+
+export function monitoringSnapshot() {
+  const d = db()
+  const r = (sql: string) => (d.prepare(sql).get() as { n: number }).n
+  return {
+    servers: d.prepare(`
+      SELECT id, name, flag, city, host, protocol,
+             active_peers, capacity, is_active, status, agent_url, created_at
+      FROM servers ORDER BY is_active DESC, protocol, id
+    `).all() as Array<{
+      id: number; name: string; flag: string | null; city: string | null;
+      host: string; protocol: string;
+      active_peers: number; capacity: number;
+      is_active: number; status: string | null; agent_url: string | null;
+      created_at: string;
+    }>,
+    active_configs:     r("SELECT COUNT(*) as n FROM configs WHERE status='active'"),
+    empty_slots:        r("SELECT COUNT(*) as n FROM configs WHERE status='empty'"),
+    revoked_configs:    r("SELECT COUNT(*) as n FROM configs WHERE status='revoked'"),
+    open_tickets:       r("SELECT COUNT(*) as n FROM support_tickets WHERE status='open'"),
+    closed_tickets:     r("SELECT COUNT(*) as n FROM support_tickets WHERE status='closed'"),
+    expiring_3d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND expires_at <= datetime('now','+3 days')"),
+    expiring_1d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND expires_at <= datetime('now','+1 day')"),
+  }
+}
+
+// ── Tickets page ──────────────────────────────────────────────────────────────
+
+export function allTicketsWithUser(limit = 100, statusFilter?: string) {
+  const d = db()
+  if (statusFilter) {
+    return d.prepare(`
+      SELECT t.id, t.category, t.message, t.status, t.created_at, t.admin_msg_id,
+             u.username, u.first_name, u.id as user_id
+      FROM support_tickets t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.status = ?
+      ORDER BY t.created_at DESC
+      LIMIT ?
+    `).all(statusFilter, limit) as Array<TicketRow>
+  }
+  return d.prepare(`
+    SELECT t.id, t.category, t.message, t.status, t.created_at, t.admin_msg_id,
+           u.username, u.first_name, u.id as user_id
+    FROM support_tickets t
+    JOIN users u ON u.id = t.user_id
+    ORDER BY t.created_at DESC
+    LIMIT ?
+  `).all(limit) as Array<TicketRow>
+}
+
+type TicketRow = {
+  id: number
+  category: string
+  message: string
+  status: string
+  created_at: string
+  admin_msg_id: number | null
+  username: string | null
+  first_name: string | null
+  user_id: number
+}
+
 export function topReferrers(limit = 10) {
   return db().prepare(`
     SELECT u.id, u.username, u.first_name,
