@@ -60,6 +60,9 @@ jobs:
       # ── BUILD #2: для production maxvpnesim.com (base=/) ──────────────
       # nginx обслуживает корень домена, поэтому абсолютные пути типа
       # /assets/... должны не иметь префикса /VpnBot/.
+      # VITE_API_URL намеренно пустой — fetch идёт на относительный /api/...
+      # через тот же nginx (иначе mixed-content: https://maxvpnesim.com →
+      # http://151.243.113.31 блокируется браузером).
       - name: Build for production server
         run: |
           rm -rf webapp/dist
@@ -68,7 +71,7 @@ jobs:
         env:
           VITE_BASE_PATH: /
           VITE_BOT_USERNAME: ${{ secrets.VITE_BOT_USERNAME }}
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_API_URL: ""
 
       - name: Deploy to production server (rsync)
         run: |
