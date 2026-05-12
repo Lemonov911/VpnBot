@@ -342,6 +342,18 @@ const T = {
     home_configs:      'Конфиги',
     home_guide:        'Инструкция',
     home_support:      'Поддержка',
+
+    // Trial CTA
+    trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
+    trial_banner_sub:     'AmneziaWG который правда работает на МТС. Без карты, без подписки.',
+    trial_banner_btn:     'Активировать триал',
+    trial_claiming:       'Активируем…',
+    trial_success_title:  '🎉 Триал активирован!',
+    trial_success_sub:    'Subscription URL отправлен в чат с ботом — открой и импортируй в Happ.',
+    trial_err_active:     'У тебя уже есть активная подписка.',
+    trial_err_used:       'Триал уже использован раньше.',
+    trial_err_no_server:  'Серверы временно недоступны. Попробуй через минуту.',
+    trial_err_generic:    'Не удалось активировать. Попробуй позже.',
     home_invite:       'Пригласи друга',
     home_invite_sub:   'Получи +7 дней за каждого друга',
     home_stars_spent_label: 'Потрачено звёзд',
@@ -688,6 +700,19 @@ const T = {
     home_configs:      'Configs',
     home_guide:        'Guide',
     home_support:      'Support',
+
+    // Trial CTA
+    trial_banner_title:   '🎁 Try free — 3 days',
+    trial_banner_sub:     "AmneziaWG that actually works around Russian DPI. No card, no sub.",
+    trial_banner_btn:     'Activate trial',
+    trial_claiming:       'Activating…',
+    trial_success_title:  '🎉 Trial activated!',
+    trial_success_sub:    'Subscription URL was sent to your bot chat — open it and import into Happ.',
+    trial_err_active:     'You already have an active subscription.',
+    trial_err_used:       'Trial was already claimed.',
+    trial_err_no_server:  'Servers temporarily unavailable. Try in a minute.',
+    trial_err_generic:    'Failed to activate. Try later.',
+
     home_invite:       'Invite a friend',
     home_invite_sub:   'Get +7 days free for each friend',
     home_stars_spent_label: 'Stars spent',

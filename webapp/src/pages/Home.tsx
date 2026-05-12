@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
   getActiveSubscription, getUserStats,
-  type Subscription, type UserStats,
+  getTrialStatus, claimTrial,
+  type Subscription, type UserStats, type TrialStatus,
 } from '../api'
 import { useT, usePlural } from '../i18n'
 
@@ -14,10 +15,40 @@ export default function Home() {
 
   const [sub,       setSub]       = useState<Subscription | null | undefined>(undefined)
   const [stats,     setStats]     = useState<UserStats | null>(null)
+  const [trial,     setTrial]     = useState<TrialStatus | null>(null)
+  const [claiming,  setClaiming]  = useState(false)
+  const [trialErr,  setTrialErr]  = useState('')
+  const [trialDone, setTrialDone] = useState(false)
+
   useEffect(() => {
     getActiveSubscription().catch(() => null).then(setSub)
     getUserStats().catch(() => null).then(s => setStats(s))
+    getTrialStatus().catch(() => null).then(s => setTrial(s))
   }, [])
+
+  const handleClaimTrial = async () => {
+    setClaiming(true)
+    setTrialErr('')
+    WebApp.HapticFeedback.impactOccurred('medium')
+    try {
+      await claimTrial()
+      WebApp.HapticFeedback.notificationOccurred('success')
+      setTrialDone(true)
+      // refresh subscription card — теперь юзер с активным trial
+      getActiveSubscription().catch(() => null).then(setSub)
+      setTrial({ eligible: false, duration_days: trial?.duration_days ?? 3 })
+    } catch (e: unknown) {
+      WebApp.HapticFeedback.notificationOccurred('error')
+      const err = e as { message?: string }
+      const msg = err.message || ''
+      if (msg.includes('active_subscription'))     setTrialErr(t('trial_err_active'))
+      else if (msg.includes('already_claimed'))    setTrialErr(t('trial_err_used'))
+      else if (msg.includes('no_server'))          setTrialErr(t('trial_err_no_server'))
+      else                                          setTrialErr(t('trial_err_generic'))
+    } finally {
+      setClaiming(false)
+    }
+  }
 
   const planLabel = (key: string) => {
     const map: Record<string, string> = {
@@ -71,6 +102,31 @@ export default function Home() {
   return (
     <>
       <div className="page gap-3">
+
+        {/* ── Trial CTA banner — shown only if eligible & no active sub ── */}
+        {trial?.eligible && sub === null && !trialDone && (
+          <div className="fade-in rounded-[20px] p-4 bg-gradient-to-br from-[#16a34a] to-[#0ea5e9] text-white shadow-[0_8px_24px_rgba(14,165,233,0.35)]">
+            <div className="text-base font-bold mb-1">{t('trial_banner_title')}</div>
+            <div className="text-[12px] opacity-90 mb-3 leading-snug">{t('trial_banner_sub')}</div>
+            <button
+              onClick={handleClaimTrial}
+              disabled={claiming}
+              className="w-full py-2.5 rounded-[12px] border-none bg-white/95 text-[#16a34a] text-sm font-bold cursor-pointer disabled:opacity-60"
+            >
+              {claiming ? t('trial_claiming') : t('trial_banner_btn')}
+            </button>
+            {trialErr && (
+              <div className="mt-2 text-[11px] bg-white/15 rounded px-2 py-1">{trialErr}</div>
+            )}
+          </div>
+        )}
+
+        {trialDone && (
+          <div className="fade-in rounded-[20px] p-4 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
+            <div className="text-base font-bold mb-1 text-[var(--tg-theme-text-color)]">{t('trial_success_title')}</div>
+            <div className="text-[12px] text-[var(--tg-theme-hint-color)] leading-snug">{t('trial_success_sub')}</div>
+          </div>
+        )}
 
         {/* ── Service cards ── */}
         <div className="grid grid-cols-2 gap-2.5">

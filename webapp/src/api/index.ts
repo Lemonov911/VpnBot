@@ -142,6 +142,26 @@ export function changeSubscriptionPlan(planKey: string): Promise<{
   return post('/api/vpn/subscription/change', { plan_key: planKey })
 }
 
+export interface TrialStatus {
+  eligible:      boolean
+  duration_days: number
+}
+
+export interface TrialClaim {
+  sub_id:        number
+  sub_url:       string
+  expires_at:    string
+  duration_days: number
+}
+
+export function getTrialStatus(): Promise<TrialStatus> {
+  return get('/api/vpn/trial')
+}
+
+export function claimTrial(): Promise<TrialClaim> {
+  return post('/api/vpn/trial/claim', {})
+}
+
 // ── eSIM ──────────────────────────────────────────────────────────────────────
 
 export interface Country {

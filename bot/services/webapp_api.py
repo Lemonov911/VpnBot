@@ -742,6 +742,87 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
     })
 
 
+async def handle_vpn_trial_status(request: web.Request) -> web.Response:
+    """GET /api/vpn/trial — eligible: можно ли юзеру взять триал."""
+    from services.trial import can_claim_trial, TRIAL_DAYS
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
+    return web.json_response({
+        "eligible":      await can_claim_trial(user["id"]),
+        "duration_days": TRIAL_DAYS,
+    })
+
+
+async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
+    """POST /api/vpn/trial/claim — выдать бесплатный триал."""
+    from services.trial import (
+        provision_trial,
+        TrialAlreadyClaimed,
+        TrialBlockedByActiveSub,
+        TrialNoServer,
+    )
+    from services.vpnctl_client import VpnctlError
+
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
+
+    try:
+        result = await provision_trial(user["id"])
+    except TrialBlockedByActiveSub:
+        return web.json_response(
+            {"error": "active_subscription",
+             "message": "У тебя уже активная подписка."},
+            status=409,
+        )
+    except TrialAlreadyClaimed:
+        return web.json_response(
+            {"error": "already_claimed",
+             "message": "Триал уже использован."},
+            status=409,
+        )
+    except TrialNoServer:
+        return web.json_response(
+            {"error": "no_server",
+             "message": "Серверы временно недоступны, попробуй позже."},
+            status=503,
+        )
+    except VpnctlError as e:
+        logger.warning("trial provision failed: %s", e)
+        return web.json_response(
+            {"error": "provision_failed",
+             "message": "Не удалось создать конфиг. Попробуй позже."},
+            status=500,
+        )
+
+    # Дублируем URL в чат с ботом — Mini App success-баннер хорош, но юзеру
+    # нужно куда-то скопировать ссылку, и чат естественнее.
+    try:
+        bot: Bot = request.app["bot"]
+        expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
+        await bot.send_message(
+            user["id"],
+            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+            f"📅 До: <b>{expires_str}</b>\n"
+            f"🚀 Скорость: 60 Mbps\n\n"
+            f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
+            f"<code>{result['sub_url']}</code>\n\n"
+            f"📖 Инструкция: /howto\n"
+            f"💎 После trial — выбери постоянный тариф в /start",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("trial notify failed for user=%d: %s", user["id"], e)
+
+    return web.json_response({
+        "sub_id":        result["sub_id"],
+        "sub_url":       result["sub_url"],
+        "expires_at":    result["expires_at"].isoformat(),
+        "duration_days": result["duration_days"],
+    })
+
+
 async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     """
     POST /api/vpn/subscription/change { plan_key }
@@ -1068,6 +1149,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/vpn/config/{id}/revoke",     handle_vpn_config_revoke)
     app.router.add_get ("/api/vpn/subscription",           handle_vpn_subscription)
     app.router.add_post("/api/vpn/subscription/change",    handle_vpn_change_plan)
+    app.router.add_get ("/api/vpn/trial",                  handle_vpn_trial_status)
+    app.router.add_post("/api/vpn/trial/claim",            handle_vpn_trial_claim)
     # Subscription URL для VPN-клиентов (Happ/Streisand): один URL — все его vless-конфиги
     app.router.add_get ("/sub/{token}",                    handle_user_subscription)
 

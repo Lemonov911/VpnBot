@@ -130,67 +130,41 @@ async def cmd_stats(message: Message):
 
 @router.message(Command("trial"))
 async def cmd_trial(message: Message):
-    """Бесплатный пробный период — 1 GB / 24 часа."""
-    from datetime import datetime, timedelta
-    from services.database import (
-        DB_PATH, get_best_server, save_peer_to_config, create_subscription,
-        create_config_record, update_server_peer_count, get_or_create_sub_token,
-        has_active_subscription,
+    """Бесплатный пробный период — 3 дня VLESS-base."""
+    from services.trial import (
+        provision_trial,
+        TrialAlreadyClaimed,
+        TrialBlockedByActiveSub,
+        TrialNoServer,
     )
-    from services.vpnctl_client import provision_peer, VpnctlError
-    import aiosqlite
+    from services.vpnctl_client import VpnctlError
 
-    user_id = message.from_user.id
-
-    # Уже есть платная подписка → trial не нужен и не должен стакаться поверх.
-    # Без этого юзер с активным vpn_max может бесплатно получить второй сабскрипт
-    # и второй пир — это абуз и расход слотов на сервере.
-    if await has_active_subscription(user_id):
+    try:
+        result = await provision_trial(message.from_user.id)
+    except TrialBlockedByActiveSub:
         await message.answer(
             "У тебя уже активная подписка. Trial доступен только новым пользователям."
         )
         return
-
-    # Проверка, что пользователь не использовал trial раньше
-    async with aiosqlite.connect(DB_PATH) as db:
-        existing = await (await db.execute(
-            "SELECT id FROM subscriptions WHERE user_id=? AND plan='vpn_trial' LIMIT 1",
-            (user_id,)
-        )).fetchone()
-    if existing:
+    except TrialAlreadyClaimed:
         await message.answer(
             "🎁 Trial уже использован.\n\nДля продолжения — выбери тариф в /start"
         )
         return
-
-    # Создаём пробную подписку на 24 ч
-    expires = datetime.now() + timedelta(days=1)
-    sub_id = await create_subscription(user_id, "vpn_trial", "trial", 0, expires)
-    config_id = await create_config_record(sub_id, user_id, protocol="vless")
-
-    server = await get_best_server("vless")
-    if not server:
+    except TrialNoServer:
         await message.answer("⚠️ Серверы пока недоступны, попробуй позже")
         return
-
-    try:
-        peer = await provision_peer(server, f"trial_{user_id}_{config_id}", "vless-base")
     except VpnctlError as e:
         await message.answer(f"⚠️ Ошибка провижининга: {e}")
         return
 
-    await save_peer_to_config(
-        config_id, server["id"], peer.id, "", peer.config, f"trial_{user_id}"
-    )
-    await update_server_peer_count(server["id"], +1)
-    sub_token = await get_or_create_sub_token(user_id)
-
+    expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
     await message.answer(
-        "🎁 <b>Trial 1 GB / 24 часа активирован</b>\n\n"
-        f"📅 До: <b>{expires.strftime('%d.%m.%Y %H:%M')}</b>\n"
+        f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+        f"📅 До: <b>{expires_str}</b>\n"
         f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
-        f"<b>Subscription URL</b> (импортируй в Happ):\n"
-        f"<code>https://maxvpnesim.com/sub/{sub_token}</code>\n\n"
+        f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
+        f"<code>{result['sub_url']}</code>\n\n"
         f"📖 Инструкция: /howto\n"
         f"💎 После trial — выбери постоянный тариф в /start",
         parse_mode="HTML",
