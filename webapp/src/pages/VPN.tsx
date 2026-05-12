@@ -150,6 +150,84 @@ export default function VPN() {
     )
   }
 
+  if (sub?.status === 'expired') {
+    const planName = PLAN_NAMES[sub.plan] ?? sub.plan
+    return (
+      <>
+        <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
+          <div className="fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] rounded-2xl py-4 px-[18px] border border-[var(--card-border)]">
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mb-0.5">{t('vpn_expired_title')}</div>
+                <div className="font-bold text-[22px] text-[var(--tg-theme-text-color,#000)]">{planName}</div>
+                <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at)}</div>
+              </div>
+              <span className="bg-danger/12 text-danger text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0">{t('vpn_expired_badge')}</span>
+            </div>
+            <p className="text-sm text-[var(--tg-theme-hint-color,#707579)] mt-3 mb-3.5">{t('vpn_expired_sub')}</p>
+            <button onClick={() => nav('/vpn/plans')} className="w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer">
+              {t('vpn_expired_renew')}
+            </button>
+          </div>
+
+          <div className="section-title">{t('vpn_choose')}</div>
+
+          {VISIBLE_PLANS.map((plan, i) => {
+            const pi = PLAN_ICONS[plan.key] ?? PLAN_ICONS.vpn_base
+            const tw = PLAN_TW[plan.key] ?? PLAN_TW.vpn_base
+            const isHit = plan.badge === 'hit'
+            return (
+              <div key={plan.key} className={`fade-in fade-in-${i + 1} rounded-2xl border-2 p-[14px_16px] flex items-center gap-3.5 ${
+                isHit ? 'border-primary/50 bg-primary/[0.03]' : 'border-transparent bg-[var(--tg-theme-section-bg-color,#f1f1f1)]'
+              }`}>
+                <div className={`w-11 h-11 rounded-[13px] shrink-0 flex items-center justify-center ${tw.bg} ${tw.shadow}`}>
+                  {pi.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
+                    <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{PLAN_NAMES[plan.key] ?? t(plan.nameKey as never)}</span>
+                    {isHit && (
+                      <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
+                    )}
+                  </div>
+                  <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)]">
+                    <span className="font-semibold text-[var(--tg-theme-text-color,#000)]">{plan.rub} ₽</span>
+                    <span className="opacity-40 mx-1">·</span>
+                    <span className="text-xs">
+                      ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
+                      📱 {plan.vless} VLESS
+                      {plan.wg ? (
+                        <>
+                          <span className="opacity-40 mx-1">·</span>
+                          🔐 {plan.wg} WireGuard
+                        </>
+                      ) : null}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  disabled={buyLoading === plan.key}
+                  onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setSheetPlan(plan) }}
+                  className={`py-2 px-4 rounded-xl border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[13px] font-semibold cursor-pointer shrink-0 ${buyLoading === plan.key ? 'opacity-60' : ''}`}
+                >
+                  {buyLoading === plan.key ? '…' : `${plan.rub} ₽`}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {sheetPlan && (
+          <PaymentSheet
+            plan={sheetPlan}
+            onClose={() => setSheetPlan(null)}
+            onPay={method => handleBuy(sheetPlan, method)}
+          />
+        )}
+      </>
+    )
+  }
+
   if (sub === null) {
     return (
       <>

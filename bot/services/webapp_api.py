@@ -21,6 +21,7 @@ eSIM:
 import base64
 import logging
 import os
+import time as _time
 
 from aiohttp import web
 from aiogram import Bot
@@ -32,7 +33,7 @@ import services.esim_api as esim
 from services.database import (
     get_user_configs, get_user_configs_full, get_config_by_id, activate_config_slot,
     reset_config_slot, get_servers_by_protocol, get_server_by_id,
-    get_active_subscription, change_subscription_plan, schedule_plan_change,
+    get_active_subscription, get_last_expired_subscription, change_subscription_plan, schedule_plan_change,
     has_active_subscription, create_support_ticket, update_ticket_admin_msg,
     get_referral_stats as db_get_referral_stats,
 )
@@ -231,6 +232,9 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
     return web.json_response(safe)
 
 
+_status_cache: dict = {"data": None, "ts": 0.0}
+_status_rate:  dict[str, float] = {}
+
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
 
@@ -241,6 +245,18 @@ async def handle_public_status(request: web.Request) -> web.Response:
     import asyncio
     from datetime import datetime
     from services.health import uptime_summary, last_24h_strip, recent_incidents
+
+    now = _time.monotonic()
+
+    # Rate limit: 1 req / 6s per IP (≈10 rpm)
+    ip = request.remote or ""
+    if now - _status_rate.get(ip, 0.0) < 6.0:
+        return web.json_response({"error": "rate_limit"}, status=429)
+    _status_rate[ip] = now
+
+    # Cache 30s
+    if _status_cache["data"] is not None and now - _status_cache["ts"] < 30.0:
+        return web.json_response(_status_cache["data"])
 
     import aiosqlite as _aiosqlite
     from services.database import DB_PATH as _DB_PATH
@@ -299,7 +315,7 @@ async def handle_public_status(request: web.Request) -> web.Response:
     up = sum(1 for r in enriched if r["status"] == "up")
     total = len(enriched)
 
-    return web.json_response({
+    payload = {
         "bot":     "up",
         "updated": datetime.utcnow().isoformat() + "Z",
         "servers": enriched,
@@ -315,7 +331,10 @@ async def handle_public_status(request: web.Request) -> web.Response:
             }
             for inc in incidents
         ],
-    })
+    }
+    _status_cache["data"] = payload
+    _status_cache["ts"]   = _time.monotonic()
+    return web.json_response(payload)
 
 
 async def handle_vpn_status(request: web.Request) -> web.Response:
@@ -793,21 +812,33 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
+    from datetime import datetime
     sub = await get_active_subscription(user["id"])
     if sub is None:
-        return web.json_response(None)
+        expired = await get_last_expired_subscription(user["id"])
+        if expired is None:
+            return web.json_response(None)
+        return web.json_response({
+            "id":             expired["id"],
+            "plan":           expired["plan"],
+            "stars_paid":     expired["stars_paid"],
+            "expires_at":     expired["expires_at"],
+            "pending_plan":   None,
+            "days_remaining": 0,
+            "status":         "expired",
+        })
 
-    from datetime import datetime
     expires = datetime.fromisoformat(sub["expires_at"])
     remaining_days = max(0, (expires - datetime.utcnow()).days)
 
     return web.json_response({
-        "id":            sub["id"],
-        "plan":          sub["plan"],
-        "stars_paid":    sub["stars_paid"],
-        "expires_at":    sub["expires_at"],
-        "pending_plan":  sub["pending_plan"],
+        "id":             sub["id"],
+        "plan":           sub["plan"],
+        "stars_paid":     sub["stars_paid"],
+        "expires_at":     sub["expires_at"],
+        "pending_plan":   sub["pending_plan"],
         "days_remaining": remaining_days,
+        "status":         "active",
     })
 
 

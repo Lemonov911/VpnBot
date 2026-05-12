@@ -550,6 +550,20 @@ async def get_active_subscription(user_id: int) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_last_expired_subscription(user_id: int) -> dict | None:
+    """Возвращает последнюю истёкшую подписку пользователя или None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at
+            FROM subscriptions
+            WHERE user_id=? AND status='expired'
+            ORDER BY created_at DESC LIMIT 1
+        """, (user_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
 async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                                     awg_delta: int, vless_delta: int,
                                     wg_delta: int = 0):

@@ -34,6 +34,10 @@ const T = {
 
     // VPN page
     vpn_no_sub:    'Нет подписки',
+    vpn_expired_title: 'Подписка истекла',
+    vpn_expired_sub:   'Продли, чтобы снова получить доступ к VPN',
+    vpn_expired_badge: '● Истекла',
+    vpn_expired_renew: 'Продлить подписку',
     vpn_choose:    'Выбрать тариф',
     vpn_active:    'Активный тариф',
     vpn_active_badge: '● Активен',
@@ -420,6 +424,10 @@ const T = {
     feat_servers_s:'Helsinki coming soon',
 
     vpn_no_sub:    'No subscription',
+    vpn_expired_title: 'Subscription expired',
+    vpn_expired_sub:   'Renew to get VPN access again',
+    vpn_expired_badge: '● Expired',
+    vpn_expired_renew: 'Renew subscription',
     vpn_choose:    'Choose a plan',
     vpn_active:    'Active plan',
     vpn_active_badge: '● Active',

@@ -126,6 +126,7 @@ export interface Subscription {
   expires_at:     string
   pending_plan:   string | null
   days_remaining: number
+  status?:        'active' | 'expired'
 }
 
 export function getActiveSubscription(): Promise<Subscription | null> {

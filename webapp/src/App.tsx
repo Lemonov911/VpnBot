@@ -4,6 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import { LanguageProvider, useT } from './i18n'
 import BottomNav from './components/BottomNav'
 import LangSwitch from './components/LangSwitch'
+import ErrorBoundary from './components/ErrorBoundary'
 
 import Home         from './pages/Home'
 import VPN          from './pages/VPN'
@@ -87,6 +88,7 @@ export default function App() {
       <BrowserRouter>
         <GlobalHeader />
 
+        <ErrorBoundary>
         <Routes>
           {/* VPN */}
           <Route path="/vpn"          element={<VPN />} />
@@ -109,6 +111,7 @@ export default function App() {
           {/* Главная */}
           <Route path="/"             element={<Home />} />
         </Routes>
+        </ErrorBoundary>
         <BottomNav />
       </BrowserRouter>
     </LanguageProvider>
