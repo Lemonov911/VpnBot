@@ -14,6 +14,7 @@ import Instructions from './pages/Instructions'
 import ESim         from './pages/ESim'
 import ESimCountry  from './pages/ESimCountry'
 import ESimFAQ      from './pages/ESimFAQ'
+import MyESims      from './pages/MyESims'
 import Support      from './pages/Support'
 import Referral     from './pages/Referral'
 import Status       from './pages/Status'
@@ -29,6 +30,7 @@ function GlobalHeader() {
     '/configs':      { title: t('configs_title').replace(/^\S+\s/, ''), sub: '' },
     '/instructions': { title: t('instr_title'),      sub: '' },
     '/esim':         { title: t('esim_title').replace(/^\S+\s/, ''), sub: t('esim_sub') },
+    '/esim/my':      { title: t('myesim_title'), sub: '' },
     '/esim/faq':     { title: 'FAQ', sub: '' },
     '/support':      { title: t('support_title'),    sub: t('support_sub') },
     '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
@@ -98,6 +100,7 @@ export default function App() {
 
           {/* eSIM */}
           <Route path="/esim"         element={<ESim />} />
+          <Route path="/esim/my"      element={<MyESims />} />
           <Route path="/esim/faq"     element={<ESimFAQ />} />
           <Route path="/esim/:code"   element={<ESimCountry />} />
 

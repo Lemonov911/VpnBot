@@ -255,6 +255,22 @@ const T = {
     esim_pay_btn:          'Оплатить',
     esim_rubles:           '₽',
 
+    // My eSIMs
+    myesim_title:          'Мои eSIM',
+    myesim_empty:          'Нет купленных eSIM',
+    myesim_empty_sub:      'Купи первую симку — работает за рубежом без роуминга',
+    myesim_buy:            'Купить eSIM',
+    myesim_status_pending: '⏳ Готовится',
+    myesim_status_ready:   '● Активна',
+    myesim_status_failed:  '● Ошибка',
+    myesim_expires:        'до',
+    myesim_copied:         'Скопировано',
+    myesim_show_qr:        'QR-код',
+    myesim_used:           'использовано',
+    myesim_support:        'Поддержка',
+    myesim_entry_card:     'Мои симки',
+    myesim_entry_sub:      'Активные и прошлые',
+
     // eSIM FAQ
     esim_faq_q1: 'Что такое eSIM?',
     esim_faq_a1: 'eSIM — это цифровая SIM-карта, встроенная в телефон. Её не нужно физически вставлять: достаточно отсканировать QR-код и тариф появится на устройстве за секунды.',
@@ -639,6 +655,22 @@ const T = {
     esim_payment_method:   'Payment method',
     esim_pay_btn:          'Pay',
     esim_rubles:           '₽',
+
+    // My eSIMs
+    myesim_title:          'My eSIMs',
+    myesim_empty:          'No eSIMs yet',
+    myesim_empty_sub:      'Buy your first eSIM — works abroad without roaming',
+    myesim_buy:            'Buy eSIM',
+    myesim_status_pending: '⏳ Preparing',
+    myesim_status_ready:   '● Active',
+    myesim_status_failed:  '● Error',
+    myesim_expires:        'until',
+    myesim_copied:         'Copied',
+    myesim_show_qr:        'QR code',
+    myesim_used:           'used',
+    myesim_support:        'Support',
+    myesim_entry_card:     'My SIMs',
+    myesim_entry_sub:      'Active and past',
 
     // eSIM FAQ
     esim_faq_q1: 'What is eSIM?',

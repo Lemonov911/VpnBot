@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
-import { getESimCountries, type Country } from '../api'
+import { getESimCountries, getMyESims, type Country } from '../api'
 import { useT, usePlural } from '../i18n'
 
 function flagEmoji(code: string, fallback?: string): string {
@@ -20,6 +20,7 @@ export default function ESim() {
   const [error, setError]         = useState('')
   const [search, setSearch]       = useState('')
   const [tab, setTab]             = useState<'ru' | 'travel'>('ru')
+  const [myCount, setMyCount]     = useState<number | null>(null)
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -33,6 +34,7 @@ export default function ESim() {
       .then(setCountries)
       .catch(() => setError(t('esim_err_load')))
       .finally(() => setLoading(false))
+    getMyESims().then(list => setMyCount(list.length)).catch(() => {})
   }, [])
 
   const travelCountries = useMemo(() => {
@@ -49,6 +51,34 @@ export default function ESim() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
+
+      {myCount !== null && myCount > 0 && (
+        <div
+          onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/esim/my') }}
+          className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden cursor-pointer"
+        >
+          <div className="py-[13px] px-4 flex items-center gap-[14px]">
+            <div className="w-9 h-9 rounded-[10px] shrink-0 bg-primary flex items-center justify-center">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/>
+                <path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">
+                {t('myesim_entry_card')}
+                <span className="ml-1.5 text-xs font-medium text-[var(--tg-theme-hint-color)]">
+                  {myCount}
+                </span>
+              </div>
+              <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">{t('myesim_entry_sub')}</div>
+            </div>
+            <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
+              <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <button
