@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { monitoringSnapshot } from '@/lib/db'
 import { redirect } from 'next/navigation'
@@ -34,12 +35,11 @@ export default async function Monitoring() {
           <div className="text-xs text-neutral-500 mt-0.5">Инфра + операционные сигналы</div>
         </div>
         <div className="flex gap-4 items-center">
-          <a href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</a>
-          <a href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</a>
-          <a href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</a>
-          <a href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</a>
-          <a href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</a>
-          <a href="/logout"     className="text-xs text-neutral-600 hover:text-neutral-400">Выйти</a>
+          <Link href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
+          <Link href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
+          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</Link>
+          <Link href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
+          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
         </div>
       </div>
 

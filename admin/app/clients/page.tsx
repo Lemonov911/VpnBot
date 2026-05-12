@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { topClients, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
@@ -43,12 +44,11 @@ export default async function Clients() {
           <div className="text-xs text-neutral-500 mt-0.5">Топ по LTV. Кто реально приносит деньги.</div>
         </div>
         <div className="flex gap-4 items-center">
-          <a href="/"            className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</a>
-          <a href="/analytics"   className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</a>
-          <a href="/monitoring"  className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</a>
-          <a href="/tickets"     className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</a>
-          <a href="/servers"     className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</a>
-          <a href="/logout"      className="text-xs text-neutral-600 hover:text-neutral-400">Выйти</a>
+          <Link href="/"            className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
+          <Link href="/analytics"   className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
+          <Link href="/monitoring"  className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
+          <Link href="/tickets"     className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
+          <Link href="/servers"     className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
         </div>
       </div>
 

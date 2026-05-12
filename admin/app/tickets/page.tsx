@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { allTicketsWithUser } from '@/lib/db'
 import { redirect } from 'next/navigation'
@@ -33,14 +34,14 @@ export default async function Tickets({
       (k === 'closed' && filter === 'closed') ||
       (k === 'all' && filter === undefined)
     return (
-      <a
+      <Link
         href={`/tickets?status=${k}`}
         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
           active ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'
         }`}
       >
         {label}
-      </a>
+      </Link>
     )
   }
 
@@ -52,12 +53,11 @@ export default async function Tickets({
           <div className="text-xs text-neutral-500 mt-0.5">Тикеты от пользователей</div>
         </div>
         <div className="flex gap-4 items-center">
-          <a href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</a>
-          <a href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</a>
-          <a href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</a>
-          <a href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</a>
-          <a href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</a>
-          <a href="/logout"     className="text-xs text-neutral-600 hover:text-neutral-400">Выйти</a>
+          <Link href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
+          <Link href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
+          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</Link>
+          <Link href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
+          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
         </div>
       </div>
 
