@@ -14,9 +14,15 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from urllib.parse import parse_qsl, unquote
 
 logger = logging.getLogger(__name__)
+
+# Telegram recommends rejecting initData older than this. Without the check,
+# a captured initData (devtools leak, shared screen, log) works forever and
+# lets an attacker impersonate the user against every authenticated endpoint.
+INIT_DATA_MAX_AGE_SEC = 24 * 60 * 60
 
 
 def verify_init_data(init_data: str, bot_token: str) -> dict | None:
@@ -69,6 +75,22 @@ def verify_init_data(init_data: str, bot_token: str) -> dict | None:
         # Сравниваем через compare_digest (защита от timing-атак)
         if not hmac.compare_digest(computed_hash, received_hash):
             logger.warning("verify_init_data: подпись невалидна")
+            return None
+
+        # Replay-window: HMAC валиден, но initData может быть украденный
+        # и сколь угодно старый. Telegram рекомендует ≤24ч.
+        auth_date_raw = pairs.get("auth_date")
+        if not auth_date_raw:
+            logger.warning("verify_init_data: auth_date отсутствует")
+            return None
+        try:
+            auth_date = int(auth_date_raw)
+        except ValueError:
+            logger.warning("verify_init_data: auth_date не int: %r", auth_date_raw)
+            return None
+        age = int(time.time()) - auth_date
+        if age > INIT_DATA_MAX_AGE_SEC or age < -300:
+            logger.warning("verify_init_data: auth_date просрочен (age=%ds)", age)
             return None
 
         # Извлекаем данные пользователя из поля user (JSON, URL-encoded)

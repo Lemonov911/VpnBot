@@ -135,11 +135,21 @@ async def cmd_trial(message: Message):
     from services.database import (
         DB_PATH, get_best_server, save_peer_to_config, create_subscription,
         create_config_record, update_server_peer_count, get_or_create_sub_token,
+        has_active_subscription,
     )
     from services.vpnctl_client import provision_peer, VpnctlError
     import aiosqlite
 
     user_id = message.from_user.id
+
+    # Уже есть платная подписка → trial не нужен и не должен стакаться поверх.
+    # Без этого юзер с активным vpn_max может бесплатно получить второй сабскрипт
+    # и второй пир — это абуз и расход слотов на сервере.
+    if await has_active_subscription(user_id):
+        await message.answer(
+            "У тебя уже активная подписка. Trial доступен только новым пользователям."
+        )
+        return
 
     # Проверка, что пользователь не использовал trial раньше
     async with aiosqlite.connect(DB_PATH) as db:

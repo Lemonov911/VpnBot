@@ -491,6 +491,31 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning("CryptoBot webhook: unknown plan %s", plan_key)
         return web.Response(status=200)
 
+    # Сверяем, что инвойс был выписан именно за этот план в правильной валюте.
+    # Без этого payload-у можно доверять только в том, что подпись валидна —
+    # но саму подпись CryptoBot ставит на любую сумму, которую мы запросили.
+    # Если бы payload подделать было нельзя, юзер всё ещё мог бы выписать
+    # инвойс vpn_base (200 ₽), а потом подсунуть тот же signed-body боту
+    # с payload vpn_max. Поэтому проверяем currency + amount по invoice-полям.
+    fiat = (invoice.get("fiat") or "").upper()
+    if fiat not in ("RUB", "USD"):
+        logger.warning("CryptoBot webhook: unexpected fiat=%r for invoice %s",
+                       fiat, invoice.get("invoice_id"))
+        return web.Response(status=400)
+    try:
+        invoice_amount = float(invoice.get("amount", "0"))
+        expected_amount = float(plan["rub" if fiat == "RUB" else "usd"])
+    except (TypeError, ValueError):
+        logger.warning("CryptoBot webhook: bad amount fields invoice=%s amount=%r plan=%r",
+                       invoice.get("invoice_id"), invoice.get("amount"), plan_key)
+        return web.Response(status=400)
+    if invoice_amount + 1e-9 < expected_amount:
+        logger.warning(
+            "CryptoBot webhook: amount mismatch invoice=%s plan=%s fiat=%s got=%s expected=%s — REJECTED",
+            invoice.get("invoice_id"), plan_key, fiat, invoice_amount, expected_amount,
+        )
+        return web.Response(status=400)
+
     payment_id = f"crypto_{invoice.get('invoice_id')}"
 
     from services.database import (
