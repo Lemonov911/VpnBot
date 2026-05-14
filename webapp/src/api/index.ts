@@ -82,12 +82,16 @@ export function getUserConfigs(): Promise<VpnConfig[]> {
  */
 export function getConfigDownloadUrl(configId: number): string {
   const encoded = encodeURIComponent(WebApp.initData)
-  return `${API_BASE}/api/vpn/config/${configId}/download?init_data=${encoded}`
+  // API_BASE пустой в production-сборке (VITE_API_URL=""), поэтому берём origin окна.
+  // WebApp.downloadFile() требует абсолютный https:// URL — относительный не принимает.
+  const origin = API_BASE || window.location.origin
+  return `${origin}/api/vpn/config/${configId}/download?init_data=${encoded}`
 }
 
 export function getConfigQrUrl(configId: number): string {
   const encoded = encodeURIComponent(WebApp.initData)
-  return `${API_BASE}/api/vpn/config/${configId}/qr?init_data=${encoded}`
+  const origin = API_BASE || window.location.origin
+  return `${origin}/api/vpn/config/${configId}/qr?init_data=${encoded}`
 }
 
 export interface VpnServer {
