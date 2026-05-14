@@ -385,7 +385,17 @@ function SlotCard({
                 QR
               </button>
               <button
-                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); window.open(getConfigDownloadUrl(slot.id), '_blank') }}
+                onClick={() => {
+                  WebApp.HapticFeedback.impactOccurred('light')
+                  const url = getConfigDownloadUrl(slot.id)
+                  const filename = `${slot.peer_name || `vpn_config_${slot.id}`}.conf`
+                  const tg = WebApp as unknown as { downloadFile?: (p: { url: string; file_name: string }) => void }
+                  if (typeof tg.downloadFile === 'function') {
+                    tg.downloadFile({ url, file_name: filename })
+                  } else {
+                    window.open(url, '_blank')
+                  }
+                }}
                 className={`w-9 h-9 rounded-[10px] border-none ${bg} flex items-center justify-center cursor-pointer shrink-0`}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
