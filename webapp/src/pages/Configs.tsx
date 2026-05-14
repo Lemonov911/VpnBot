@@ -47,9 +47,15 @@ const PROTO_TEXT: Record<string, string> = {
   awg:   'text-cyan-500',
 }
 const PROTO_LABEL: Record<string, string> = {
-  vless: 'VLESS',
+  vless: 'VLESS · Reality',
   wg:    'WireGuard',
   awg:   'AmneziaWG',
+}
+
+const PROTO_HINT: Record<string, string> = {
+  vless: 'Любое устройство · обход DPI',
+  wg:    '📡 Роутер · OpenWrt · Keenetic',
+  awg:   '📱 Телефон · Mac · Windows',
 }
 
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
@@ -144,6 +150,83 @@ function ServerPicker({
   )
 }
 
+function FormatPicker({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (format: 'awg' | 'wg') => void
+  onClose:  () => void
+}) {
+  const t = useT()
+  return (
+    <>
+      <div onClick={onClose} className="fixed inset-0 bg-black/50 z-[200]" />
+      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] pt-5 px-4 pb-9 z-[201]">
+        <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
+        <h3 className="m-0 mb-1 text-[17px] font-semibold text-[var(--tg-theme-text-color)]">
+          {t('configs_pick_format')}
+        </h3>
+        <p className="m-0 mb-4 text-[13px] text-[var(--tg-theme-hint-color)]">
+          {t('configs_pick_format_sub')}
+        </p>
+
+        <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-2">
+          {/* AWG */}
+          <button
+            onClick={() => onSelect('awg')}
+            className="w-full py-[14px] px-4 border-none bg-transparent text-left cursor-pointer border-b border-solid border-[var(--card-border)]"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-[10px] bg-cyan-500 flex items-center justify-center shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="3" width="18" height="18" rx="3" stroke="#fff" strokeWidth="2"/>
+                  <path d="M8 12h8M12 8v8" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <div className="flex-1">
+                <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">AmneziaWG</div>
+                <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-px">{t('configs_fmt_awg_sub')}</div>
+              </div>
+              <svg width="7" height="12" viewBox="0 0 7 12" fill="none" className="shrink-0">
+                <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+          </button>
+
+          {/* WG */}
+          <button
+            onClick={() => onSelect('wg')}
+            className="w-full py-[14px] px-4 border-none bg-transparent text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-[10px] bg-emerald-500 flex items-center justify-center shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="3" width="18" height="18" rx="3" stroke="#fff" strokeWidth="2"/>
+                  <path d="M8 12h8" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <div className="flex-1">
+                <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">WireGuard</div>
+                <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-px">{t('configs_fmt_wg_sub')}</div>
+              </div>
+              <svg width="7" height="12" viewBox="0 0 7 12" fill="none" className="shrink-0">
+                <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+          </button>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-[14px] border-none bg-transparent text-[var(--tg-theme-hint-color)] text-[15px] cursor-pointer mt-1"
+        >
+          {t('configs_cancel')}
+        </button>
+      </div>
+    </>
+  )
+}
+
 function ProtoIcon({ protocol: _protocol }: { protocol: string }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -167,18 +250,22 @@ function SlotCard({
   const label    = PROTO_LABEL[slot.protocol] ?? slot.protocol.toUpperCase()
   const isEmpty  = slot.status === 'empty'
 
-  const [activating,     setActivating]     = useState(false)
-  const [revoking,       setRevoking]       = useState(false)
-  const [showPicker,     setShowPicker]     = useState(false)
-  const [showQr,         setShowQr]         = useState(false)
-  const [servers,        setServers]        = useState<VpnServer[]>([])
-  const [loadingServers, setLoadingServers] = useState(false)
-  const [copied,         setCopied]          = useState(false)
+  const [activating,       setActivating]       = useState(false)
+  const [revoking,         setRevoking]         = useState(false)
+  const [showPicker,       setShowPicker]       = useState(false)
+  const [showQr,           setShowQr]           = useState(false)
+  const [servers,          setServers]          = useState<VpnServer[]>([])
+  const [loadingServers,   setLoadingServers]   = useState(false)
+  const [copied,           setCopied]           = useState(false)
 
   const handleAddClick = async () => {
+    await loadServers(slot.protocol)
+  }
+
+  const loadServers = async (protocol: string) => {
     setLoadingServers(true)
     try {
-      const list = await getVpnServers(slot.protocol)
+      const list = await getVpnServers(protocol)
       setServers(list)
       setShowPicker(true)
     } finally {
@@ -234,9 +321,14 @@ function SlotCard({
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
               {isEmpty
-                ? t('configs_not_activated')
+                ? PROTO_HINT[slot.protocol] ?? t('configs_not_activated')
                 : slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}
             </div>
+            {!isEmpty && (
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--tg-theme-hint-color)', opacity: 0.6 }}>
+                {PROTO_HINT[slot.protocol]}
+              </div>
+            )}
             {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
               <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5 opacity-70">
                 ↓ {slot.rx_human} · ↑ {slot.tx_human}
