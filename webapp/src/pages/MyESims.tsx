@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getMyESims, type MyESim } from '../api'
-import { useT } from '../i18n'
+import { useT, type TKey } from '../i18n'
 
 function flagEmoji(code: string | null): string {
   if (!code) return '🌐'
@@ -48,7 +48,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ESimCard({ sim, t }: { sim: MyESim; t: (k: string) => string }) {
+function ESimCard({ sim, t }: { sim: MyESim; t: (k: TKey) => string }) { // eslint-disable-line @typescript-eslint/no-explicit-any
   const statusClass =
     sim.status === 'ready'   ? 'text-success' :
     sim.status === 'pending' ? 'text-warning'  : 'text-danger'
