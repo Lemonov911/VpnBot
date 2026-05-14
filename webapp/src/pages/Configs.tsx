@@ -54,8 +54,8 @@ const PROTO_LABEL: Record<string, string> = {
 
 const PROTO_HINT: Record<string, string> = {
   vless: 'Любое устройство · обход DPI',
-  wg:    '📡 Роутер · OpenWrt · Keenetic',
-  awg:   '📱 Телефон · Mac · Windows',
+  wg:    'WireGuard · Роутер · OpenWrt',
+  awg:   'AmneziaWG · iOS · Android · Mac',
 }
 
 function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
