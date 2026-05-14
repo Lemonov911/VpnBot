@@ -245,14 +245,9 @@ function SlotCard({
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
               {isEmpty
-                ? PROTO_HINT[slot.protocol] ?? t('configs_not_activated')
+                ? t('configs_not_activated')
                 : `${slot.server_flag ? slot.server_flag + ' ' : ''}${slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}`}
             </div>
-            {!isEmpty && (
-              <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--tg-theme-hint-color)', opacity: 0.6 }}>
-                {PROTO_HINT[slot.protocol]}
-              </div>
-            )}
             {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
               <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5 opacity-70">
                 ↓ {slot.rx_human} · ↑ {slot.tx_human}
