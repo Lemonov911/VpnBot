@@ -240,16 +240,16 @@ function SlotCard({
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)]">
-              {slot.server_flag && !isEmpty ? `${slot.server_flag} ` : ''}{label} · #{slot.slot_num}
+            <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] truncate">
+              {label} · #{slot.slot_num}
             </div>
-            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px">
+            <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
               {isEmpty
                 ? PROTO_HINT[slot.protocol] ?? t('configs_not_activated')
-                : slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}
+                : `${slot.server_flag ? slot.server_flag + ' ' : ''}${slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}`}
             </div>
             {!isEmpty && (
-              <div className="text-[11px] mt-0.5" style={{ color: 'var(--tg-theme-hint-color)', opacity: 0.6 }}>
+              <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--tg-theme-hint-color)', opacity: 0.6 }}>
                 {PROTO_HINT[slot.protocol]}
               </div>
             )}
