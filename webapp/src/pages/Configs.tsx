@@ -313,11 +313,15 @@ function SlotCard({
                   WebApp.HapticFeedback.impactOccurred('light')
                   const url = getConfigDownloadUrl(slot.id)
                   const filename = `${slot.peer_name || `vpn_config_${slot.id}`}.conf`
-                  const tg = WebApp as unknown as { downloadFile?: (p: { url: string; file_name: string }) => void }
-                  if (typeof tg.downloadFile === 'function') {
-                    tg.downloadFile({ url, file_name: filename })
+                  // Пробуем downloadFile через нативный объект (SDK-обёртка его может не проксировать)
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const nativeTg = (window as any).Telegram?.WebApp
+                  if (typeof nativeTg?.downloadFile === 'function') {
+                    nativeTg.downloadFile({ url, file_name: filename })
+                  } else if (typeof (WebApp as unknown as { downloadFile?: unknown }).downloadFile === 'function') {
+                    (WebApp as unknown as { downloadFile: (p: { url: string; file_name: string }) => void }).downloadFile({ url, file_name: filename })
                   } else {
-                    window.open(url, '_blank')
+                    WebApp.openLink(url)
                   }
                 }}
                 className={`w-9 h-9 rounded-[10px] border-none ${bg} flex items-center justify-center cursor-pointer shrink-0`}
