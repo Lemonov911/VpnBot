@@ -52,7 +52,7 @@ export function createVpnInvoiceCrypto(
 
 export interface VpnConfig {
   id:          number
-  protocol:    'vless'
+  protocol:    'vless' | 'awg' | 'wg'
   peer_name:   string | null
   label:       string | null
   status:      string
@@ -82,12 +82,12 @@ export function getUserConfigs(): Promise<VpnConfig[]> {
  */
 export function getConfigDownloadUrl(configId: number): string {
   const encoded = encodeURIComponent(WebApp.initData)
-  return `/api/vpn/config/${configId}/download?init_data=${encoded}`
+  return `${API_BASE}/api/vpn/config/${configId}/download?init_data=${encoded}`
 }
 
 export function getConfigQrUrl(configId: number): string {
   const encoded = encodeURIComponent(WebApp.initData)
-  return `/api/vpn/config/${configId}/qr?init_data=${encoded}`
+  return `${API_BASE}/api/vpn/config/${configId}/qr?init_data=${encoded}`
 }
 
 export interface VpnServer {
@@ -111,8 +111,8 @@ export function getVpnStatus(): Promise<VpnServerStatus[]> {
   return get('/api/vpn/status')
 }
 
-export function activateSlot(configId: number, serverId: number): Promise<{ ok: boolean }> {
-  return post(`/api/vpn/config/${configId}/activate`, { server_id: serverId })
+export function activateSlot(configId: number, serverId: number, format?: string): Promise<{ ok: boolean }> {
+  return post(`/api/vpn/config/${configId}/activate`, { server_id: serverId, ...(format ? { format } : {}) })
 }
 
 export function revokeConfig(configId: number): Promise<{ ok: boolean }> {
