@@ -2,19 +2,13 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { useT } from '../i18n'
 
-// Feature flag — VITE_SHOW_ESIM=false убирает eSIM-вкладку. Vite bundles
-// env at build time, поэтому изменения требуют пересборки/деплоя webapp.
-// Дефолт true — eSIM включён, не ломаем существующих юзеров.
-const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
-
-const TABS_ALL = [
+// VPN-only бранч — eSIM удалена.
+const TABS = [
   { path: '/',        key: 'nav_home'    as const, icon: HomeIcon    },
   { path: '/vpn',     key: 'nav_vpn'     as const, icon: ShieldIcon  },
-  { path: '/esim',    key: 'nav_esim'    as const, icon: SimIcon     },
   { path: '/support', key: 'nav_support' as const, icon: HelpIcon    },
   { path: '/referral',key: 'nav_ref'     as const, icon: FriendsIcon },
 ]
-const TABS = SHOW_ESIM ? TABS_ALL : TABS_ALL.filter(t => t.path !== '/esim')
 
 function iconColor(active: boolean, dark: boolean) {
   if (dark) return active ? '#fff' : 'rgba(255,255,255,0.50)'
@@ -46,17 +40,6 @@ function ShieldIcon({ active, dark }: { active: boolean; dark: boolean }) {
         stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
         fill={iconFill(active, dark)}/>
       <path d="M9 12l2 2 4-4" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  )
-}
-
-function SimIcon({ active, dark }: { active: boolean; dark: boolean }) {
-  const c = iconColor(active, dark)
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-      <rect x="5" y="2" width="14" height="20" rx="2" stroke={c} strokeWidth="2"
-        fill={iconFill(active, dark)}/>
-      <path d="M9 8h6M9 12h6M9 16h4" stroke={c} strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   )
 }

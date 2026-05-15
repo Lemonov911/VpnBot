@@ -27,9 +27,8 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.types import LabeledPrice
 
-from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET
+from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ADMIN_API_SECRET
 from services.auth import verify_init_data
-import services.esim_api as esim
 from services.database import (
     get_user_configs, get_user_configs_full, get_config_by_id, activate_config_slot,
     reset_config_slot, get_servers_by_protocol, get_server_by_id,
@@ -736,164 +735,6 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
 
 # ── eSIM хендлеры ──────────────────────────────────────────────────────────────
 
-async def handle_esim_countries(request: web.Request) -> web.Response:
-    countries = await esim.get_countries()
-    return web.json_response(countries)
-
-
-async def handle_esim_packages(request: web.Request) -> web.Response:
-    country = request.rel_url.query.get("country", "")
-    if not country:
-        return web.json_response({"error": "country required"}, status=400)
-    packages = await esim.get_packages_for(country.upper())
-    return web.json_response(packages)
-
-
-async def handle_esim_invoice(request: web.Request) -> web.Response:
-    body = await request.json()
-    user = _resolve_user(request, body)
-    if user is None:
-        return _unauthorized()
-
-    pkg_code = body.get("package_code", "")
-    if not pkg_code:
-        return web.json_response({"error": "Invalid params"}, status=400)
-
-    pkg = await esim.find_package(pkg_code)
-    if not pkg:
-        return web.json_response({"error": "Package not found"}, status=404)
-
-    price = pkg.get("price", 0)
-    stars = esim.stars_for(price)
-    name  = body.get("name") or pkg.get("name", "eSIM")
-
-    bot: Bot = request.app["bot"]
-    payload = f"esim:{pkg_code}:{price}"
-    url = await bot.create_invoice_link(
-        title=name,
-        description=f"eSIM: {name}. Активация при первом подключении.",
-        payload=payload,
-        currency="XTR",
-        prices=[LabeledPrice(label=name, amount=stars)],
-        provider_token="",
-    )
-    logger.info("eSIM invoice: user=%s pkg=%s stars=%d rub=%d", user.get("id"), pkg_code, stars, pkg.get("priceRub", 0))
-    return web.json_response({"invoice_url": url})
-
-
-# ── eSIM webhook (esimaccess → /api/esim/webhook) ─────────────────────────────
-
-async def handle_esim_webhook(request: web.Request) -> web.Response:
-    """esimaccess.com шлёт сюда уведомления о готовности eSIM, статусах и
-    низком балансе. Зарегистрировать URL у них через esim_api.set_webhook()
-    или в их веб-кабинете.
-
-    Ожидаемые типы (notifyType):
-      ORDER_STATUS  — заказ готов, профили аллоцированы (главный триггер!)
-      ESIM_STATUS   — обновление статуса eSIM (DOWNLOADED / ENABLED / DELETED)
-      SMDP_EVENT    — события на стороне SM-DP+ сервера
-      LOW_BALANCE   — баланс упал ниже 25% или 10%
-    """
-    # Sec audit H4 (15.05): ESIM_WEBHOOK_SECRET ОБЯЗАТЕЛЕН в проде. Раньше
-    # пустой секрет тихо отключал auth → любой мог POST'ить fake ORDER_STATUS.
-    if not ESIM_WEBHOOK_SECRET:
-        if not DEBUG:
-            logger.error("eSIM webhook: ESIM_WEBHOOK_SECRET не задан в prod — отклоняем")
-            return web.json_response({"error": "webhook auth not configured"}, status=503)
-        # В DEBUG разрешаем (для локальных тестов)
-    else:
-        import hmac as _hmac_lib
-        incoming = request.headers.get("X-Api-Key", "") or request.headers.get("Authorization", "").removeprefix("Bearer ")
-        # Constant-time compare защищает от timing-attack на secret.
-        if not _hmac_lib.compare_digest(incoming.encode(), ESIM_WEBHOOK_SECRET.encode()):
-            logger.warning("eSIM webhook: bad secret from %s", request.remote)
-            return web.json_response({"error": "unauthorized"}, status=401)
-
-    from services.database import (
-        get_esim_by_order_no, fulfill_esim_profile, get_esim_by_tran_no,
-    )
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad JSON"}, status=400)
-
-    notify_type = data.get("notifyType") or ""
-    content     = data.get("content") or {}
-    logger.info("eSIM webhook: type=%s content_keys=%s", notify_type, list(content.keys())[:10])
-
-    bot: Bot = request.app["bot"]
-
-    if notify_type == "ORDER_STATUS":
-        order_no = content.get("orderNo") or data.get("orderNo")
-        if not order_no:
-            return web.json_response({"ok": True})
-        profile = await get_esim_by_order_no(order_no)
-        if not profile:
-            logger.warning("eSIM webhook: profile for order_no=%s not found", order_no)
-            return web.json_response({"ok": True})
-        try:
-            resp = await esim.query_by_order_no(order_no)
-        except Exception as e:
-            logger.error("eSIM webhook: query failed for %s: %s", order_no, e)
-            return web.json_response({"ok": True})
-        esim_list = (resp.get("obj") or {}).get("esimList") or []
-        if not esim_list:
-            return web.json_response({"ok": True})
-        if await fulfill_esim_profile(profile["id"], esim_list[0]):
-            from handlers.vpn import deliver_esim_to_user
-            await deliver_esim_to_user(bot, profile["id"])
-
-    elif notify_type == "LOW_BALANCE":
-        from config import ADMIN_ID
-        if ADMIN_ID:
-            level = content.get("level") or "?"
-            balance = content.get("balance", 0)
-            try:
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"⚠️ <b>eSIM low balance</b>\nLevel: {level}\nBalance: {balance / 10000:.2f} USD",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
-    # ESIM_STATUS / SMDP_EVENT — пока просто логируем для аналитики.
-    return web.json_response({"ok": True})
-
-
-async def handle_my_esims(request: web.Request) -> web.Response:
-    """GET /api/esim/my — список eSIM-профилей пользователя для Mini App."""
-    from services.database import get_user_esim_profiles
-    user = _resolve_user(request)
-    if user is None:
-        return _unauthorized()
-
-    profiles = await get_user_esim_profiles(user["id"])
-    out = []
-    for p in profiles:
-        used = p.get("used_volume") or 0
-        total = p.get("total_volume") or 0
-        out.append({
-            "id":            p["id"],
-            "status":        p["status"],          # pending / ready / failed
-            "packageName":   p.get("package_name", "eSIM"),
-            "locationCode":  p.get("location_code"),
-            "iccid":         p.get("iccid"),
-            "ac":            p.get("ac"),
-            "qrUrl":         p.get("qr_url"),
-            "shortUrl":      p.get("short_url"),
-            "smdpAddress":   p.get("smdp_address"),
-            "matchingId":    p.get("matching_id"),
-            "usedBytes":     used,
-            "totalBytes":    total,
-            "usedPct":       round(100 * used / total, 1) if total else 0,
-            "expireAt":      p.get("expire_at"),
-            "lastSyncAt":    p.get("last_sync_at"),
-            "createdAt":     p.get("created_at"),
-        })
-    return web.json_response(out)
-
-
 async def handle_vpn_subscription(request: web.Request) -> web.Response:
     """GET /api/vpn/subscription — активная подписка пользователя."""
     user = _resolve_user(request)
@@ -1475,11 +1316,6 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)
 
     # eSIM
-    app.router.add_get ("/api/esim/countries",             handle_esim_countries)
-    app.router.add_get ("/api/esim/packages",              handle_esim_packages)
-    app.router.add_post("/api/esim/invoice",               handle_esim_invoice)
-    app.router.add_get ("/api/esim/my",                    handle_my_esims)
-    app.router.add_post("/api/esim/webhook",               handle_esim_webhook)
 
     # Поддержка
     app.router.add_post("/api/support/ticket",             handle_support_ticket)

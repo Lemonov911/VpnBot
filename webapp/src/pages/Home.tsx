@@ -8,9 +8,6 @@ import {
 } from '../api'
 import { useT, usePlural } from '../i18n'
 
-// Feature flag — VITE_SHOW_ESIM=false скрывает eSIM-блок (parity с BottomNav).
-const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
-
 export default function Home() {
   const nav    = useNavigate()
   const t      = useT()
@@ -177,8 +174,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Service cards ── */}
-        <div className="grid grid-cols-2 gap-2.5">
+        {/* ── Service cards ── (vpn-only branch: single VPN card, full width) */}
+        <div className="grid grid-cols-1 gap-2.5">
 
           {/* VPN card */}
           {sub === undefined ? (
@@ -245,42 +242,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* eSIM card — скрыта при SHOW_ESIM=false. Сетка grid-cols-2 выше
-              остаётся, VPN-карточка просто растягивается на 1 ряд (Tailwind
-              grid auto-fills). Если в будущем будут другие side-продукты —
-              можно добавить заглушку «Скоро…». */}
-          {SHOW_ESIM && (
-          <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
-            <div className="h-[3px] bg-gradient-to-r from-success to-[#00b4d8] shrink-0" />
-            <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
-              <div className="w-[42px] h-[42px] rounded-[13px] bg-gradient-to-br from-success to-[#00b4d8] flex items-center justify-center mb-[11px] shadow-[0_4px_14px_rgba(39,174,96,0.4)]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <rect x="5" y="2" width="14" height="20" rx="3" stroke="#fff" strokeWidth="2"/>
-                  <path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"/>
-                </svg>
-              </div>
-
-              <div className="text-[10px] font-bold uppercase tracking-[0.7px] mb-1.5 text-[var(--tg-theme-hint-color)]">
-                eSIM
-              </div>
-
-              <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
-                {t('home_esim_title')}
-              </div>
-              <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
-                {t('home_esim_sub')}
-              </div>
-
-              <div className="flex-1 min-h-[20px]" />
-              <button
-                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/esim') }}
-                className="w-full py-2 rounded-[10px] border-none bg-gradient-to-br from-success to-[#00b4d8] text-white text-xs font-bold cursor-pointer"
-              >
-                {t('home_esim_browse')}
-              </button>
-            </div>
-          </div>
-          )}
         </div>
 
         {/* ── Quick actions ── */}

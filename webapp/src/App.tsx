@@ -11,10 +11,6 @@ import VPN          from './pages/VPN'
 import Plans        from './pages/Plans'
 import Configs      from './pages/Configs'
 import Instructions from './pages/Instructions'
-import ESim         from './pages/ESim'
-import ESimCountry  from './pages/ESimCountry'
-import ESimFAQ      from './pages/ESimFAQ'
-import MyESims      from './pages/MyESims'
 import Support      from './pages/Support'
 import Referral     from './pages/Referral'
 import Status            from './pages/Status'
@@ -30,9 +26,6 @@ function GlobalHeader() {
     '/vpn/plans':    { title: t('plans_title').replace(/^\S+\s/, ''), sub: '' },
     '/configs':      { title: t('configs_title').replace(/^\S+\s/, ''), sub: '' },
     '/instructions': { title: t('instr_title'),      sub: '' },
-    '/esim':         { title: t('esim_title').replace(/^\S+\s/, ''), sub: t('esim_sub') },
-    '/esim/my':      { title: t('myesim_title'), sub: '' },
-    '/esim/faq':     { title: 'FAQ', sub: '' },
     '/support':      { title: t('support_title'),    sub: t('support_sub') },
     '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
     '/status':             { title: 'Статус сервисов',     sub: '' },
@@ -99,12 +92,6 @@ export default function App() {
           <Route path="/vpn/plans"    element={<Plans />} />
           <Route path="/configs"      element={<Configs />} />
           <Route path="/instructions" element={<Instructions />} />
-
-          {/* eSIM */}
-          <Route path="/esim"         element={<ESim />} />
-          <Route path="/esim/my"      element={<MyESims />} />
-          <Route path="/esim/faq"     element={<ESimFAQ />} />
-          <Route path="/esim/:code"   element={<ESimCountry />} />
 
           {/* Support & Referral */}
           <Route path="/support"      element={<Support />} />

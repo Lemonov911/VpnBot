@@ -13,13 +13,9 @@ WEBAPP_URL       = os.getenv("WEBAPP_URL", "")
 API_PORT         = int(os.getenv("API_PORT") or 8080)
 DEBUG            = os.getenv("DEBUG", "").lower() == "true"
 
-# Feature flag — спрятать eSIM из UI (бот-меню + Mini App). Когда хочется
-# чистого VPN-only продукта без отвлекающего side-product'а. Сам код eSIM
-# остаётся (handlers/API эндпоинты), просто не показываем в UI.
-# Дефолт `true` — eSIM включён, не ломаем существующих юзеров.
-SHOW_ESIM        = os.getenv("SHOW_ESIM", "true").lower() != "false"
-ESIM_API_KEY     = os.getenv("ESIM_ACCESS_API_KEY", "")
-ESIM_WEBHOOK_SECRET = os.getenv("ESIM_WEBHOOK_SECRET", "")
+# vpn-only branch — eSIM physically removed, SHOW_ESIM flag не нужен.
+SHOW_ESIM        = False
+# eSIM env vars удалены в vpn-only бранче.
 VPN_SERVER_HOST  = os.getenv("VPN_SERVER_HOST", "")
 VPN_SERVER_USER  = os.getenv("VPN_SERVER_USER", "root")
 VPN_SERVER_KEY   = os.getenv("VPN_SERVER_KEY_PATH", "~/.ssh/id_rsa")

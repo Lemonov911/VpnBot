@@ -225,79 +225,10 @@ export async function getIncidentHistory(limit = 50, offset = 0): Promise<Incide
   return res.json()
 }
 
-// ── eSIM ──────────────────────────────────────────────────────────────────────
-
-export interface Country {
-  code:      string
-  name:      string
-  name_en?:  string
-  flag?:     string
-  count:     number
-  is_russia?: boolean
-}
-
-export interface ESimPackage {
-  packageCode:  string
-  slug?:        string
-  name:         string
-  location?:    string
-  volume?:      number
-  dataLabel:    string
-  dataType:     number   // 1=total data, 2=daily-FUP (speed reduced after limit)
-  duration:     number
-  durationUnit: string
-  speed:        string
-  ipExport:     string   // country code(s) of IP exit, e.g. "UK"
-  fupPolicy?:   string
-  price:        number   // wholesale units (для invoice payload)
-  priceRub:     number   // основная цена для UI
-  priceUsd:     number   // справочно
-  stars:        number
-}
-
-export interface MyESim {
-  id:           number
-  status:       'pending' | 'ready' | 'failed'
-  packageName:  string
-  locationCode: string | null
-  iccid:        string | null
-  ac:           string | null
-  qrUrl:        string | null
-  shortUrl:     string | null
-  smdpAddress:  string | null
-  matchingId:   string | null
-  usedBytes:    number
-  totalBytes:   number
-  usedPct:      number
-  expireAt:     string | null
-  lastSyncAt:   string | null
-  createdAt:    string
-}
-
-export function getESimCountries(): Promise<Country[]> {
-  return get('/api/esim/countries')
-}
-
-export function getESimPackages(country: string): Promise<ESimPackage[]> {
-  return get('/api/esim/packages', { country })
-}
-
-export function createESimInvoice(pkg: ESimPackage): Promise<{ invoice_url: string }> {
-  return post('/api/esim/invoice', {
-    package_code: pkg.packageCode,
-    price:        pkg.price,
-    stars:        pkg.stars,
-    name:         `eSIM ${pkg.dataLabel} · ${pkg.duration} ${pkg.durationUnit}`,
-  })
-}
-
-export function getMyESims(): Promise<MyESim[]> {
-  return get('/api/esim/my')
-}
-
 // ── Поддержка ─────────────────────────────────────────────────────────────────
 
-export type SupportCategory = 'vpn' | 'esim' | 'payment' | 'other'
+// vpn-only branch — категория 'esim' удалена (нет eSIM в продукте).
+export type SupportCategory = 'vpn' | 'payment' | 'other'
 
 export function createSupportTicket(
   category: SupportCategory,

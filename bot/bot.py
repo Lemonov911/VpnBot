@@ -38,10 +38,6 @@ async def main():
 
     asyncio.create_task(run_scheduler(bot))
 
-    # Прогреваем кеш eSIM пакетов в фоне (чтобы первый юзер не ждал 30с)
-    from services.esim_api import warm_cache
-    asyncio.create_task(warm_cache())
-
     try:
         await dp.start_polling(bot)
     finally:
