@@ -1,0 +1,37 @@
+name: Deploy Admin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'admin/**'
+      - '.github/workflows/deploy-admin.yml'
+  workflow_dispatch:
+
+# Только один деплой админки одновременно — npm build не любит race.
+concurrency:
+  group: deploy-admin
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # No git checkout — server itself does `git pull` + `npm run build` +
+      # restart via /opt/vpnbot/deploy-admin.sh (forced-command on deploy SSH key).
+      # Setup на сервере одноразово:
+      #   1) Создан /opt/vpnbot/deploy-admin.sh (root:root, 0750)
+      #   2) /etc/sudoers.d/deploy whitelists `deploy ALL=(root) NOPASSWD: /opt/vpnbot/deploy-admin.sh`
+      #   3) ~deploy/.ssh/authorized_keys содержит forced-command для admin-key:
+      #      command="sudo /opt/vpnbot/deploy-admin.sh",no-pty,no-port-forwarding ssh-ed25519 AAAA...
+      - name: Trigger remote pull + rebuild + restart
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ADMIN_DEPLOY_SSH_KEY }}" > ~/.ssh/admin_deploy
+          chmod 600 ~/.ssh/admin_deploy
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/admin_deploy \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+              true
