@@ -19,22 +19,48 @@ export function db(): Database.Database {
   return _db
 }
 
+/**
+ * Список admin-юзеров — исключаются из метрик выручки/конверсии/LTV.
+ * Без этого тестовые покупки админа летят в дашборд и портят статистику.
+ *
+ * Источник: ADMIN_IDS (CSV) + fallback на ADMIN_ID. Тот же env что для auth —
+ * один источник правды, новые админы автоматически исключаются.
+ */
+const EXCLUDED_USER_IDS: number[] = (() => {
+  const csv = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '')
+  return csv.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n > 0)
+})()
+
+/** Готовая SQL-инъекция-безопасная часть `AND <col> NOT IN (...)`. */
+function excludeAdminsClause(col: string = 'user_id'): string {
+  if (EXCLUDED_USER_IDS.length === 0) return ''
+  return ` AND ${col} NOT IN (${EXCLUDED_USER_IDS.join(',')}) `
+}
+
 export function stats() {
   const d = db()
-  const users        = (d.prepare('SELECT COUNT(*) as n FROM users').get() as any).n
-  const activeSubs   = (d.prepare("SELECT COUNT(*) as n FROM subscriptions WHERE status='active'").get() as any).n
-  const totalStars   = (d.prepare("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE status IN ('active','expired')").get() as any).n
-  const openTickets  = (d.prepare("SELECT COUNT(*) as n FROM support_tickets WHERE status='open'").get() as any).n
+  // Все продажные метрики исключают тестовые покупки админов.
+  // users — счётчик регистраций (его не фильтруем; видимость общего трафика).
+  // activeSubs / totalStars — деньги, фильтруем.
+  const exclSubs = excludeAdminsClause('user_id')
+  const users        = (d.prepare('SELECT COUNT(*) as n FROM users').get() as { n: number }).n
+  const activeSubs   = (d.prepare(`SELECT COUNT(*) as n FROM subscriptions WHERE status='active' ${exclSubs}`).get() as { n: number }).n
+  const totalStars   = (d.prepare(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE status IN ('active','expired') ${exclSubs}`).get() as { n: number }).n
+  const openTickets  = (d.prepare("SELECT COUNT(*) as n FROM support_tickets WHERE status='open'").get() as { n: number }).n
   return { users, activeSubs, totalStars, openTickets }
 }
 
 export function recentPayments(limit = 20) {
+  const excl = excludeAdminsClause('s.user_id')
+  // 1=1 — корректное условие, добавляет AND-фильтр без логического влияния
+  // если фильтра нет (excl="") или если есть.
   return db().prepare(`
     SELECT s.id, s.plan, s.stars_paid, s.payment_id, s.status,
            s.created_at, s.expires_at,
            u.username, u.first_name
     FROM subscriptions s
     JOIN users u ON u.id = s.user_id
+    WHERE 1=1 ${excl}
     ORDER BY s.created_at DESC LIMIT ?
   `).all(limit)
 }
@@ -88,39 +114,42 @@ export function searchUsers(query: string) {
 export function analyticsSummary() {
   const d = db()
   const r = (sql: string, ...params: unknown[]) => (d.prepare(sql).get(...params) as { n: number }).n
+  const excl = excludeAdminsClause('user_id')
   return {
     users_total:          r('SELECT COUNT(*) as n FROM users'),
     users_30d:            r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-30 days')"),
     users_7d:             r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-7 days')"),
-    subs_active:          r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active'"),
-    subs_paid_30d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
-    subs_trial_30d:       r("SELECT COUNT(*) as n FROM subscriptions WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days')"),
-    revenue_stars_30d:    r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
-    revenue_stars_7d:     r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days')"),
-    expired_30d:          r("SELECT COUNT(*) as n FROM subscriptions WHERE status='expired' AND expires_at > datetime('now','-30 days')"),
+    subs_active:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='active' ${excl}`),
+    subs_paid_30d:        r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
+    subs_trial_30d:       r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_stars_30d:    r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_stars_7d:     r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
+    expired_30d:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='expired' AND expires_at > datetime('now','-30 days') ${excl}`),
   }
 }
 
 export function dailyRevenueLast30() {
+  const excl = excludeAdminsClause('user_id')
   return db().prepare(`
     SELECT date(created_at) as day,
            COUNT(*)                    as paid_subs,
            COALESCE(SUM(stars_paid),0) as stars
     FROM subscriptions
     WHERE plan != 'vpn_trial'
-      AND created_at > datetime('now','-30 days')
+      AND created_at > datetime('now','-30 days') ${excl}
     GROUP BY day
     ORDER BY day ASC
   `).all() as Array<{ day: string; paid_subs: number; stars: number }>
 }
 
 export function planMix30d() {
+  const excl = excludeAdminsClause('user_id')
   return db().prepare(`
     SELECT plan,
            COUNT(*) as count,
            COALESCE(SUM(stars_paid),0) as stars
     FROM subscriptions
-    WHERE created_at > datetime('now','-30 days')
+    WHERE created_at > datetime('now','-30 days') ${excl}
     GROUP BY plan
     ORDER BY count DESC
   `).all() as Array<{ plan: string; count: number; stars: number }>
@@ -129,13 +158,16 @@ export function planMix30d() {
 export function trialFunnel30d() {
   // Воронка: сколько юзеров пришло → взяли триал → купили платный после триала.
   const d = db()
+  const excl   = excludeAdminsClause('user_id')
+  const exclT  = excludeAdminsClause('t.user_id')
+  const exclS  = excludeAdminsClause('s.user_id')
   const new_users = (d.prepare(
     "SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-30 days')"
   ).get() as { n: number }).n
 
   const trial_users = (d.prepare(
     `SELECT COUNT(DISTINCT user_id) as n FROM subscriptions
-     WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days')`
+     WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`
   ).get() as { n: number }).n
 
   // Юзеры, у которых был триал И ПОТОМ платная подписка
@@ -145,14 +177,14 @@ export function trialFunnel30d() {
                          AND p.plan != 'vpn_trial'
                          AND p.created_at > t.created_at
     WHERE t.plan = 'vpn_trial'
-      AND t.created_at > datetime('now','-30 days')
+      AND t.created_at > datetime('now','-30 days') ${exclT}
   `).get() as { n: number }).n
 
   // Платные юзеры, у которых триала не было
   const direct_paid = (d.prepare(`
     SELECT COUNT(DISTINCT user_id) as n FROM subscriptions s
     WHERE s.plan != 'vpn_trial'
-      AND s.created_at > datetime('now','-30 days')
+      AND s.created_at > datetime('now','-30 days') ${exclS}
       AND NOT EXISTS (
         SELECT 1 FROM subscriptions t
         WHERE t.user_id = s.user_id AND t.plan = 'vpn_trial'
@@ -173,7 +205,8 @@ export function trialFunnel30d() {
 
 export function topClients(limit = 50) {
   // Топ юзеров по сумме потраченных stars (LTV-прокси).
-  // Триалы исключены — это не выручка.
+  // Триалы исключены — это не выручка. Админы тоже исключены — тест-данные.
+  const excl = excludeAdminsClause('u.id')
   return db().prepare(`
     SELECT u.id, u.username, u.first_name, u.created_at as joined_at,
            COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial')                       as paid_subs,
@@ -184,6 +217,7 @@ export function topClients(limit = 50) {
            MAX(CASE WHEN s.status = 'active' THEN s.expires_at END)               as active_until
     FROM users u
     LEFT JOIN subscriptions s ON s.user_id = u.id
+    WHERE 1=1 ${excl}
     GROUP BY u.id
     HAVING total_stars > 0
     ORDER BY total_stars DESC, last_purchase DESC
@@ -205,17 +239,18 @@ export function topClients(limit = 50) {
 export function moneyTotals() {
   const d = db()
   const r = (sql: string) => (d.prepare(sql).get() as { n: number }).n
+  const excl = excludeAdminsClause('user_id')
   return {
-    total_revenue_stars: r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial'"),
-    paying_users:        r("SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND stars_paid > 0"),
+    total_revenue_stars: r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' ${excl}`),
+    paying_users:        r(`SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND stars_paid > 0 ${excl}`),
     avg_revenue_per_payer: 0, // computed in route from above
     avg_ltv_stars:       0, // same
-    revenue_7d:          r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days')"),
-    revenue_30d:         r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days')"),
-    revenue_90d:         r("SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days')"),
+    revenue_7d:          r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
+    revenue_30d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_90d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days') ${excl}`),
     repeat_buyers:       r(`SELECT COUNT(*) as n FROM (
       SELECT user_id FROM subscriptions
-      WHERE plan!='vpn_trial' AND stars_paid > 0
+      WHERE plan!='vpn_trial' AND stars_paid > 0 ${excl}
       GROUP BY user_id HAVING COUNT(*) > 1
     )`),
   }
@@ -325,6 +360,7 @@ type TicketRow = {
 }
 
 export function topReferrers(limit = 10) {
+  const excl = excludeAdminsClause('u.id')
   return db().prepare(`
     SELECT u.id, u.username, u.first_name,
            COUNT(r.id) as invited,
@@ -332,7 +368,7 @@ export function topReferrers(limit = 10) {
     FROM users u
     JOIN users r       ON r.referred_by = u.id
     LEFT JOIN subscriptions s ON s.user_id = r.id
-    WHERE u.id IN (SELECT DISTINCT referred_by FROM users WHERE referred_by IS NOT NULL)
+    WHERE u.id IN (SELECT DISTINCT referred_by FROM users WHERE referred_by IS NOT NULL) ${excl}
     GROUP BY u.id
     ORDER BY invited_paid DESC, invited DESC
     LIMIT ?
