@@ -16,11 +16,16 @@ const FAQ_META = [
 function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
   const [open, setOpen] = useState<number | null>(null)
   const tp = WebApp.themeParams
+  // FAQ q3+a3 — про установку eSIM. Скрываем если eSIM выключен (build flag),
+  // иначе юзер видит подробную инструкцию на отсутствующий в UI продукт.
+  const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
   const faqItems = [
     { q: t('faq_q1'), a: t('faq_a1') },
     { q: t('faq_q2'), a: t('faq_a2') },
-    { q: t('faq_q3'), a: t('faq_a3') },
-    { q: t('faq_q4'), a: t('faq_a4') },
+    ...(SHOW_ESIM ? [
+      { q: t('faq_q3'), a: t('faq_a3') },
+      { q: t('faq_q4'), a: t('faq_a4') },
+    ] : []),
     { q: t('faq_q5'), a: t('faq_a5') },
   ]
   return (

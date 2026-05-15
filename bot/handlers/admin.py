@@ -40,9 +40,15 @@ def _make_admin_token(user_id: int, username: str) -> str:
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
-@router.message(F.reply_to_message, F.from_user.id == ADMIN_ID)
+@router.message(F.reply_to_message)
 async def relay_support_reply(message: Message):
-    """Пересылает ответ админа на тикет обратно пользователю."""
+    """Пересылает ответ админа на тикет обратно пользователю.
+
+    Раньше фильтр был `F.from_user.id == ADMIN_ID` (только основной).
+    Теперь любой из ADMIN_IDS может отвечать — проверка внутри.
+    """
+    if not _is_admin(message.from_user.id):
+        return  # не админ — даже не reply на тикет
     replied_msg_id = message.reply_to_message.message_id
     ticket = await get_ticket_by_admin_msg(replied_msg_id)
     if not ticket:
@@ -210,6 +216,42 @@ async def cmd_admin(message: Message):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="Открыть панель →", url=admin_url)
         ]])
+    )
+
+
+@router.message(Command("refund_ref"))
+async def cmd_refund_referral(message: Message):
+    """Откатывает реферальный бонус для подписки которая была возвращена.
+
+    Используется когда поддержка делает manual refund (например через
+    CryptoBot dashboard) — рефер получил +7 дней за пустой платёж,
+    которые надо вычесть обратно.
+
+    Usage: /refund_ref <subscription_id>
+    """
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip().isdigit():
+        await message.answer(
+            "Usage: <code>/refund_ref &lt;subscription_id&gt;</code>\n\n"
+            "Откатит +N дней рефералу для подписки которая была возвращена.",
+            parse_mode="HTML",
+        )
+        return
+    sub_id = int(parts[1].strip())
+    from services.database import rollback_referral_bonus
+    result = await rollback_referral_bonus(sub_id)
+    if result is None:
+        await message.answer(
+            f"❌ Бонус не был начислен для sub #{sub_id} (или уже откатан).",
+        )
+        return
+    referrer_id, days = result
+    await message.answer(
+        f"✅ Откачено: <b>{days} дней</b> у юзера <code>{referrer_id}</code>.\n"
+        f"ref_bonus_days уменьшен (clamp на 0), expires_at активной подписки сдвинут назад.",
+        parse_mode="HTML",
     )
 
 

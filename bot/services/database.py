@@ -228,6 +228,12 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE subscriptions ADD COLUMN reminded_3d INTEGER NOT NULL DEFAULT 0")
     if "reminded_1d" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN reminded_1d INTEGER NOT NULL DEFAULT 0")
+    # Tracking: какому рефереру был начислен бонус за эту подписку.
+    # NULL = бонус не начислен, иначе referrer_id. Нужно для rollback при refund.
+    if "ref_bonus_awarded_to" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN ref_bonus_awarded_to INTEGER")
+    if "ref_bonus_days_awarded" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN ref_bonus_days_awarded INTEGER NOT NULL DEFAULT 0")
 
     # support_tickets — admin_msg_id for reply relay
     async with db.execute("PRAGMA table_info(support_tickets)") as cur:
@@ -511,6 +517,33 @@ async def reset_config_slot(config_id: int):
                WHERE id=?""",
             (config_id,),
         )
+        await db.commit()
+
+
+async def claim_config_slot_for_activation(config_id: int) -> bool:
+    """Atomic claim: переводит слот из 'empty' в 'activating'.
+
+    Защищает от race: два браузера одновременно жмут «Добавить» на одном
+    слоте → оба прошли select-check status='empty' → оба вызывают
+    provision_peer → два пира на агенте, один в БД, второй orphan.
+
+    Возвращает True если claim удался (значит можно делать provision),
+    False если слот уже в other-status (другая вкладка опередила).
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE configs SET status='activating' WHERE id=? AND status='empty'",
+            (config_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_config_record(config_id: int):
+    """Полностью удаляет config-запись из БД.
+    Используется для cleanup orphan-слотов после failed provision."""
+    async with _connect() as db:
+        await db.execute("DELETE FROM configs WHERE id=?", (config_id,))
         await db.commit()
 
 
@@ -1034,12 +1067,15 @@ async def add_referral_bonus(referrer_id: int, days: int):
         await db.commit()
 
 
-async def try_award_referral_bonus(user_id: int, days: int) -> int | None:
+async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | None = None) -> int | None:
     """Если у юзера был приглашающий И это его первая ПЛАТНАЯ подписка —
     начисляет рефереру `days` дней бонуса и возвращает referrer_id.
     Иначе None.
 
     Триал (`plan='vpn_trial'`) не считается «первой покупкой».
+
+    Если `paid_sub_id` передан — записываем в subscriptions.ref_bonus_awarded_to
+    referrer_id, чтобы при refund можно было откатить через rollback_referral_bonus().
     """
     async with _connect() as db:
         async with db.execute(
@@ -1068,8 +1104,61 @@ async def try_award_referral_bonus(user_id: int, days: int) -> int | None:
             "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
             (f"+{days} days", referrer_id),
         )
+        # Tracking — кому был начислен бонус, чтобы можно было откатить при refund
+        if paid_sub_id is not None:
+            await db.execute(
+                """UPDATE subscriptions
+                   SET ref_bonus_awarded_to=?, ref_bonus_days_awarded=?
+                   WHERE id=?""",
+                (referrer_id, days, paid_sub_id),
+            )
         await db.commit()
         return referrer_id
+
+
+async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | None:
+    """Откатывает реферальный бонус для подписки, которая была refund-нута.
+
+    Возвращает (referrer_id, days) если откат прошёл, None если бонус не был начислен.
+
+    Использовать когда юзер вернул деньги через support — рефер получил +7 дней
+    за пустой платёж, надо вычесть.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT ref_bonus_awarded_to, ref_bonus_days_awarded
+               FROM subscriptions WHERE id=?""",
+            (refunded_sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row or not row["ref_bonus_awarded_to"]:
+            return None
+
+        referrer_id = row["ref_bonus_awarded_to"]
+        days = row["ref_bonus_days_awarded"] or 0
+        if days == 0:
+            return None
+
+        # Reverse: вычитаем дни. ref_bonus_days clamp на 0 (не уйти в минус).
+        await db.execute(
+            """UPDATE users SET ref_bonus_days=MAX(0, ref_bonus_days-?)
+               WHERE id=?""",
+            (days, referrer_id),
+        )
+        await db.execute(
+            """UPDATE subscriptions SET expires_at=datetime(expires_at, ?)
+               WHERE user_id=? AND status='active'""",
+            (f"-{days} days", referrer_id),
+        )
+        # Помечаем что бонус откатили — повторный rollback не сработает
+        await db.execute(
+            """UPDATE subscriptions SET ref_bonus_awarded_to=NULL,
+               ref_bonus_days_awarded=0 WHERE id=?""",
+            (refunded_sub_id,),
+        )
+        await db.commit()
+        return referrer_id, days
 
 
 # ── eSIM profiles ─────────────────────────────────────────────────────────────

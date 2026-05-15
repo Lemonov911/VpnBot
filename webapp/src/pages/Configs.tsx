@@ -292,7 +292,7 @@ function SlotCard({
               <button
                 onClick={handleRevoke}
                 aria-label="revoke"
-                className="w-9 h-9 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
+                className="w-11 h-11 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -329,7 +329,7 @@ function SlotCard({
                     WebApp.openLink(url)
                   }
                 }}
-                className={`w-9 h-9 rounded-[10px] border-none ${bg} flex items-center justify-center cursor-pointer shrink-0`}
+                className={`w-11 h-11 rounded-[10px] border-none ${bg} flex items-center justify-center cursor-pointer shrink-0`}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
@@ -338,7 +338,7 @@ function SlotCard({
               <button
                 onClick={handleRevoke}
                 aria-label="revoke"
-                className="w-9 h-9 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
+                className="w-11 h-11 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

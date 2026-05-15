@@ -155,14 +155,14 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-2 mb-2">
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
-                className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+                className="min-h-[44px] py-2.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[12px] font-medium cursor-pointer"
                 style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
               >
                 🍎 {t('trial_install_ios')}
               </button>
               <button
                 onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
-                className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+                className="min-h-[44px] py-2.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[12px] font-medium cursor-pointer"
                 style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
               >
                 🤖 {t('trial_install_android')}
@@ -170,7 +170,7 @@ export default function Home() {
             </div>
             <button
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/plans') }}
-              className="w-full py-1.5 rounded-[10px] border-none bg-primary/[0.13] text-primary text-[11px] font-medium cursor-pointer"
+              className="w-full min-h-[44px] py-2.5 rounded-[10px] border-none bg-primary/[0.13] text-primary text-[12px] font-medium cursor-pointer"
             >
               {t('trial_success_upgrade')}
             </button>

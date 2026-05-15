@@ -32,7 +32,8 @@ from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
     get_user_configs, get_user_configs_full, get_config_by_id, activate_config_slot,
-    reset_config_slot, get_servers_by_protocol, get_server_by_id,
+    reset_config_slot, claim_config_slot_for_activation,
+    get_servers_by_protocol, get_server_by_id,
     get_active_subscription, get_last_expired_subscription, change_subscription_plan, schedule_plan_change,
     has_active_subscription, create_support_ticket, update_ticket_admin_msg,
     get_referral_stats as db_get_referral_stats,
@@ -461,6 +462,16 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     if not sub or sub["id"] != config["subscription_id"]:
         return web.json_response({"error": "Нет активной подписки"}, status=403)
 
+    # Atomic claim — защита от race: две вкладки одновременно жмут «Добавить»
+    # на одном слоте. Без claim'а обе пройдут проверку status='empty' выше,
+    # обе вызовут provision_peer → два peer'а на агенте, один в БД, второй
+    # orphan. Claim переводит слот в 'activating' атомарно — второй запрос
+    # получит rowcount=0 и отбьётся.
+    if not await claim_config_slot_for_activation(config_id):
+        return web.json_response(
+            {"error": "Слот уже активируется в другой вкладке"}, status=409
+        )
+
     body = await request.json()
     server_id = body.get("server_id")
 
@@ -478,6 +489,7 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
 
     if not server.get("agent_url") or not server.get("agent_token"):
         logger.error("Server %s has no agent_url/agent_token", server.get("name", server["id"]))
+        await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Сервер не настроен (нет агента)"}, status=503)
 
     peer_name = f"tg{user['id']}_{config_id}"
@@ -495,13 +507,16 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         result = await provision_peer(server, peer_name, service_name)
     except VpnctlError as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
     except Exception as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Сервер недоступен"}, status=503)
 
     config_data = result.config
     if not config_data:
+        await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
 
     peer_id = result.id

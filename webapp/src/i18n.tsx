@@ -16,7 +16,7 @@ const T = {
     // только VPN — рассинхрон).
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'AmneziaWG который работает у МТС\nБез карты, без подписки'
+      ? 'Открывает Instagram, YouTube, ChatGPT\nБез карты, без подписки'
       : 'Свободный доступ к интернету\nбез цензуры и ограничений',
     home_sub_active: '● Подписка активна',
     home_sub_none:   'Нет активной подписки',
@@ -405,7 +405,7 @@ const T = {
     status_next:          'Дальше',
 
     trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
-    trial_banner_sub:     'AmneziaWG, который реально работает у МТС. Без карты, без подписки.',
+    trial_banner_sub:     'VPN для России. Без карты, без подписки.',
     trial_banner_btn:     'Активировать триал',
     trial_claiming:       'Активируем…',
     trial_success_title:  '🎉 Триал активирован!',
@@ -442,7 +442,7 @@ const T = {
 
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'AmneziaWG that really works on Russian ISPs\nNo card, no commitment'
+      ? 'Unblocks Instagram, YouTube, ChatGPT\nNo card, no commitment'
       : 'Free internet access\nwithout censorship',
     home_sub_active: '● Subscription active',
     home_sub_none:   'No active subscription',
@@ -825,7 +825,7 @@ const T = {
     status_next:          'Next',
 
     trial_banner_title:   '🎁 Try free — 3 days',
-    trial_banner_sub:     "AmneziaWG that actually works around Russian DPI. No card, no sub.",
+    trial_banner_sub:     "VPN that works in Russia. No card, no subscription.",
     trial_banner_btn:     'Activate trial',
     trial_claiming:       'Activating…',
     trial_success_title:  '🎉 Trial activated!',

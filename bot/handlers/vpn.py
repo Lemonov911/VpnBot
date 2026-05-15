@@ -427,7 +427,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     try:
         from services.database import try_award_referral_bonus
         from handlers.start import REFERRAL_BONUS_DAYS
-        referrer_id = await try_award_referral_bonus(user_id, REFERRAL_BONUS_DAYS)
+        referrer_id = await try_award_referral_bonus(user_id, REFERRAL_BONUS_DAYS, paid_sub_id=sub_id)
         if referrer_id:
             try:
                 await message.bot.send_message(
