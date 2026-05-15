@@ -88,12 +88,17 @@ export default function Support() {
     }
   }
 
-  const CATS = [
+  // eSIM-категория тикета скрыта если SHOW_ESIM=false (build-time flag).
+  // Иначе юзер пишет «не могу активировать eSIM» а у него нет eSIM-продукта.
+  const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
+
+  const CATS_ALL = [
     { key: 'vpn'     as SupportCategory, label: t('support_cat_vpn'),  color: '#27ae60', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg> },
     { key: 'esim'    as SupportCategory, label: t('support_cat_esim'), color: '#2481cc', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="5" y="2" width="14" height="20" rx="2" stroke="#fff" strokeWidth="2"/><path d="M9 8h6M9 12h6M9 16h4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/></svg> },
     { key: 'payment' as SupportCategory, label: t('support_cat_pay'),  color: '#e67e22', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2"/><path d="M2 10h20" stroke="#fff" strokeWidth="2"/><path d="M6 15h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
     { key: 'other'   as SupportCategory, label: t('support_cat_other'),color: '#8e44ad', icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
   ]
+  const CATS = SHOW_ESIM ? CATS_ALL : CATS_ALL.filter(c => c.key !== 'esim')
 
   if (state === 'done') {
     return (

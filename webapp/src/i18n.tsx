@@ -11,9 +11,13 @@ const T = {
     nav_support: 'Помощь',
     nav_ref:     'Друзья',
 
-    // Home
-    home_hero_title: 'VPN & eSIM',
-    home_hero_sub:   'Свободный доступ к интернету\nбез цензуры и ограничений',
+    // Home — бренд зависит от feature flag VITE_SHOW_ESIM. Mini App не должно
+    // обещать eSIM если флаг выключен (юзер видит «VPN & eSIM» а в навигации
+    // только VPN — рассинхрон).
+    home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
+    home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
+      ? 'AmneziaWG который работает у МТС\nБез карты, без подписки'
+      : 'Свободный доступ к интернету\nбез цензуры и ограничений',
     home_sub_active: '● Подписка активна',
     home_sub_none:   'Нет активной подписки',
     home_sub_from:   'от 200 ₽ в месяц',
@@ -436,8 +440,10 @@ const T = {
     nav_support: 'Help',
     nav_ref:     'Friends',
 
-    home_hero_title: 'VPN & eSIM',
-    home_hero_sub:   'Free internet access\nwithout censorship',
+    home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
+    home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
+      ? 'AmneziaWG that really works on Russian ISPs\nNo card, no commitment'
+      : 'Free internet access\nwithout censorship',
     home_sub_active: '● Subscription active',
     home_sub_none:   'No active subscription',
     home_sub_from:   'from $2.20 / month',
