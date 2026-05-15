@@ -65,24 +65,33 @@ class TrialNoServer(TrialError):
 
 
 async def can_claim_trial(user_id: int) -> bool:
-    """True если у юзера нет активной подписки и последний триал ИСТЁК
-    больше TRIAL_COOLDOWN_DAYS назад (или его вообще не было).
+    """True если у юзера нет активной/grace-подписки и нет недавнего trial'а.
 
-    Считаем от `expires_at` а не `created_at`: иначе юзер активирует триал
-    день 1, истекает день 4, cooldown 30 дней — он может взять новый триал
-    в день 18 (created_at=1 + 30 = 31, ещё впереди → cooldown не сработал).
-    Правильно: ждать TRIAL_COOLDOWN_DAYS после реального окончания.
+    Логика (два независимых запроса):
+    1) Активная или grace-подписка любого типа (включая trial) → False.
+       Юзер не может взять новый trial пока старый ещё работает.
+    2) Любой trial с expires_at в пределах cooldown → False.
+       Юзер не может брать второй trial раньше чем через TRIAL_COOLDOWN_DAYS
+       после реального истечения (не от created_at!).
     """
     if await has_active_subscription(user_id):
         return False
     async with aiosqlite.connect(DB_PATH) as db:
-        # Если есть trial с истечением будущим — он ещё активен или в grace
+        # Активная trial-sub в любом статусе active/grace — блокирует
         row = await (await db.execute(
             """SELECT 1 FROM subscriptions
-               WHERE user_id=? AND plan=?
-                 AND (expires_at > datetime('now')
-                      OR expires_at > datetime('now', '-{} days'))
-               LIMIT 1""".format(TRIAL_COOLDOWN_DAYS),
+               WHERE user_id=? AND plan=? AND status IN ('active','grace')
+               LIMIT 1""",
+            (user_id, TRIAL_PLAN),
+        )).fetchone()
+        if row is not None:
+            return False
+        # Trial был, но expires_at в пределах cooldown — блокирует
+        row = await (await db.execute(
+            f"""SELECT 1 FROM subscriptions
+                WHERE user_id=? AND plan=?
+                  AND expires_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()
     return row is None

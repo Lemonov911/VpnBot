@@ -375,7 +375,8 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         # Без этого retry от Telegram может вызвать второй refund → 400 от API
         # + flood control + ложное "звёзды возвращены" юзеру.
         from services.database import (
-            mark_subscription_expired, is_payment_refunded, mark_payment_refunded,
+            mark_subscription_expired, mark_subscription_refunded,
+            is_payment_refunded, mark_payment_refunded,
         )
         refund_ok = False
         if await is_payment_refunded(payment_id):
@@ -405,9 +406,14 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                 except Exception:
                     pass
         try:
-            await mark_subscription_expired(sub_id)
+            # Если refund прошёл — помечаем как refunded (для MRR/referral).
+            # Если refund провалился — помечаем expired (нужен ручной refund админом).
+            if refund_ok:
+                await mark_subscription_refunded(sub_id)
+            else:
+                await mark_subscription_expired(sub_id)
         except Exception as e:
-            logger.error("Mark expired failed sub=%d: %s", sub_id, e)
+            logger.error("Mark sub failed sub=%d: %s", sub_id, e)
         msg = (
             "❌ <b>Не удалось создать VPN-конфиги</b>\n\n"
             "Сервера временно недоступны. Звёзды возвращены — попробуй "
@@ -480,12 +486,21 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
 # удаляются из vless-base но добавляются в vless-grace в гонке.
 import asyncio as _asyncio
 _trial_close_locks: dict[int, _asyncio.Lock] = {}
+# Per-sub lock — защита от race upgrade-from-grace со scheduler'ом который
+# параллельно может grace_until истечь и удалить пиры пока идёт upgrade.
+_sub_lifecycle_locks: dict[int, _asyncio.Lock] = {}
 
 
 def _trial_close_lock(user_id: int) -> _asyncio.Lock:
     if user_id not in _trial_close_locks:
         _trial_close_locks[user_id] = _asyncio.Lock()
     return _trial_close_locks[user_id]
+
+
+def _sub_lifecycle_lock(sub_id: int) -> _asyncio.Lock:
+    if sub_id not in _sub_lifecycle_locks:
+        _sub_lifecycle_locks[sub_id] = _asyncio.Lock()
+    return _sub_lifecycle_locks[sub_id]
 
 
 async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
@@ -579,45 +594,48 @@ async def _apply_plan_upgrade(message: Message, payment):
         return
 
     was_grace = sub.get("status") == "grace"
-    await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)
+    # Lock per sub_id — защита от race с scheduler'ом который может в это
+    # же время grace-expire-нуть подписку и удалить пиры пока идёт unthrottle.
+    async with _sub_lifecycle_lock(sub_id):
+        await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)
 
-    # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
-    # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что
-    # change_subscription_plan только меняет БД, не трогает агента).
-    if was_grace:
-        try:
-            from services.database import (
-                get_configs_for_subscription, get_server_by_id, update_config_data,
-            )
-            from services.vpnctl_client import client_for_server
-            configs = await get_configs_for_subscription(sub_id)
-            for cfg in configs:
-                server_id = cfg.get("server_id")
-                if not server_id:
-                    continue
-                server = await get_server_by_id(server_id)
-                if not server or not server.get("agent_url"):
-                    continue
-                try:
-                    client = client_for_server(server)
-                    proto = cfg.get("protocol", "")
-                    peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                    assigned_ip = cfg.get("assigned_ip") or ""
-                    if proto == "awg" and peer_id and assigned_ip:
-                        # Снять tc-throttle на awg0 для этого пира
-                        await client.unthrottle_peer("awg", peer_id, assigned_ip)
-                    elif proto in ("vless", "vless-reality") and peer_id:
-                        # Вернуть из vless-grace в нормальный inbound по тарифу
-                        from services.plans import vless_service_for_plan
-                        target_svc = vless_service_for_plan(plan_key)
-                        new_peer = await client.add_peer(target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id)
-                        await client.remove_peer("vless-grace", peer_id)
-                        if new_peer.config:
-                            await update_config_data(cfg["id"], new_peer.config)
-                except Exception as e:
-                    logger.warning("upgrade-from-grace unthrottle cfg #%d: %s", cfg["id"], e)
-        except Exception as e:
-            logger.error("upgrade-from-grace unthrottle outer: %s", e)
+        # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
+        # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что
+        # change_subscription_plan только меняет БД, не трогает агента).
+        if was_grace:
+            try:
+                from services.database import (
+                    get_configs_for_subscription, get_server_by_id, update_config_data,
+                )
+                from services.vpnctl_client import client_for_server
+                configs = await get_configs_for_subscription(sub_id)
+                for cfg in configs:
+                    server_id = cfg.get("server_id")
+                    if not server_id:
+                        continue
+                    server = await get_server_by_id(server_id)
+                    if not server or not server.get("agent_url"):
+                        continue
+                    try:
+                        client = client_for_server(server)
+                        proto = cfg.get("protocol", "")
+                        peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                        assigned_ip = cfg.get("assigned_ip") or ""
+                        if proto == "awg" and peer_id and assigned_ip:
+                            # Снять tc-throttle на awg0 для этого пира
+                            await client.unthrottle_peer("awg", peer_id, assigned_ip)
+                        elif proto in ("vless", "vless-reality") and peer_id:
+                            # Вернуть из vless-grace в нормальный inbound по тарифу
+                            from services.plans import vless_service_for_plan
+                            target_svc = vless_service_for_plan(plan_key)
+                            new_peer = await client.add_peer(target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id)
+                            await client.remove_peer("vless-grace", peer_id)
+                            if new_peer.config:
+                                await update_config_data(cfg["id"], new_peer.config)
+                    except Exception as e:
+                        logger.warning("upgrade-from-grace unthrottle cfg #%d: %s", cfg["id"], e)
+            except Exception as e:
+                logger.error("upgrade-from-grace unthrottle outer: %s", e)
 
     parts_desc = []
     if plan["awg_slots"]:
@@ -811,6 +829,15 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
     """Возврат Stars и уведомление при ошибке eSIM."""
     try:
         await bot.refund_star_payment(user_id, charge_id)
+        # Помечаем eSIM-профиль как refunded — для аналитики и чтобы
+        # /api/esim/my не показывал юзеру отменённый профиль как pending.
+        if order_id:
+            try:
+                from services.database import mark_esim_refunded_by_order, mark_order_expired
+                await mark_esim_refunded_by_order(order_id)
+                await mark_order_expired(order_id)
+            except Exception as e:
+                logger.warning("eSIM refund mark failed order=%s: %s", order_id, e)
         await bot.send_message(
             user_id,
             f"❌ <b>Не удалось оформить eSIM</b>"

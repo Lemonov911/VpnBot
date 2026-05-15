@@ -27,7 +27,7 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.types import LabeledPrice
 
-from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET
+from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM
 from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
@@ -96,6 +96,11 @@ def _int_param(request: web.Request, name: str) -> int | None:
 # ── VPN хендлеры ───────────────────────────────────────────────────────────────
 
 async def handle_vpn_invoice(request: web.Request) -> web.Response:
+    # Rate-limit: 6s/IP. Telegram Stars createInvoiceLink имеет soft-лимиты
+    # ~30 req/min, спам этого endpoint лочит всю продажу.
+    ip = request.remote or ""
+    if not _rate_limit_check_evict(_invoice_rate, ip, _time.monotonic(), window=6.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
     body = await request.json()
     user = _resolve_user(request, body)
     if user is None:
@@ -242,6 +247,12 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
 _status_cache: dict = {"data": None, "ts": 0.0}
 _status_rate:  dict[str, float] = {}
 _sub_rate:     dict[str, float] = {}  # rate-limit для /sub/{token}
+# Rate-limit buckets для POST endpoints — защита от спама счетов/тикетов.
+_invoice_rate:  dict[str, float] = {}  # /api/vpn/invoice, /api/esim/invoice
+_crypto_rate:   dict[str, float] = {}  # /api/vpn/invoice/crypto
+_change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
+_ticket_rate:   dict[str, float] = {}  # /api/support/ticket
+_trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -573,6 +584,10 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     POST /api/vpn/invoice/crypto  { plan_key, currency: "RUB"|"USD" }
     Создаёт инвойс через CryptoBot и возвращает { pay_url }.
     """
+    # Rate-limit: CryptoBot createInvoice имеет ~50 req/час, спам блокирует всё.
+    ip = request.remote or ""
+    if not _rate_limit_check_evict(_crypto_rate, ip, _time.monotonic(), window=6.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not CRYPTOBOT_TOKEN:
         return web.json_response({"error": "CryptoBot не настроен"}, status=503)
 
@@ -646,11 +661,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
     invoice = data.get("payload", {})
-    # Дополнительная проверка: invoice.status должен быть 'paid'. Если
-    # CryptoBot когда-нибудь пошлёт invoice_paid event с другим status'ом
-    # (expired/cancelled) — не обрабатываем.
-    if invoice.get("status") and invoice.get("status") != "paid":
-        logger.warning("CryptoBot webhook: invoice status not 'paid': %s", invoice.get("status"))
+    # Строгая проверка: invoice.status ДОЛЖЕН быть 'paid'. Без этого пустой
+    # или unknown status проходит дальше. CryptoBot теоретически может
+    # пошлать 'expired'/'cancelled'/'failed' для будущих событий.
+    if invoice.get("status") != "paid":
+        logger.warning("CryptoBot webhook: invoice status not 'paid': %r", invoice.get("status"))
         return web.Response(status=200)
     raw_payload = invoice.get("payload", "")
     logger.info("CryptoBot payment: invoice_id=%s payload=%s",
@@ -758,18 +773,18 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         try:
             from config import ADMIN_ID
             if ADMIN_ID:
-                paid_amount = invoice.get("paid_amount", "?")
-                paid_asset = invoice.get("paid_asset", "?")
+                # Не пишем paid_amount/paid_asset в TG-чат:
+                # device-compromise → financial profiling. Сумма всегда доступна
+                # в CryptoBot dashboard по invoice_id.
                 await bot.send_message(
                     ADMIN_ID,
                     f"🚨 <b>CryptoBot provision FAIL</b>\n\n"
                     f"User: <code>{user_id}</code>\n"
                     f"Sub: #{sub_id}\n"
                     f"Plan: {plan_key}\n"
-                    f"Paid: {paid_amount} {paid_asset}\n"
                     f"Invoice: <code>{invoice.get('invoice_id')}</code>\n\n"
-                    f"Сервера не отдали пиры. Юзер уведомлён. Нужно "
-                    f"досоздать конфиги вручную ИЛИ refund через CryptoBot UI.",
+                    f"Action: проверь CryptoBot dashboard, досоздай "
+                    f"конфиги вручную ИЛИ сделай refund.",
                     parse_mode="HTML",
                 )
         except Exception as e:
@@ -826,6 +841,10 @@ async def handle_esim_packages(request: web.Request) -> web.Response:
 
 
 async def handle_esim_invoice(request: web.Request) -> web.Response:
+    # Rate-limit: каждый eSIM invoice = вызов esimaccess API (rate-limited).
+    ip = request.remote or ""
+    if not _rate_limit_check_evict(_invoice_rate, ip, _time.monotonic(), window=6.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
     body = await request.json()
     user = _resolve_user(request, body)
     if user is None:
@@ -1043,6 +1062,11 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
+    # Rate-limit: каждый claim = provision на агенте, спам = DoS на VPN-сервер.
+    # 60 сек / юзер: легитимный clamер кликает раз, реальный спам отрезается.
+    if not _rate_limit_check_evict(_trial_rate, str(user["id"]), _time.monotonic(), window=60.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
+
     try:
         result = await provision_trial(user["id"])
     except TrialBlockedByActiveSub:
@@ -1124,6 +1148,11 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+
+    # Rate-limit: один пользователь — один change-запрос в минуту.
+    # Спам означает либо UI-бой, либо preview-abuse инвойсов.
+    if not _rate_limit_check_evict(_change_rate, str(user["id"]), _time.monotonic(), window=60.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
 
     body     = await request.json()
     plan_key = body.get("plan_key", "")
@@ -1381,6 +1410,11 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
 
+    # Rate-limit: 30 сек / юзер. Каждый тикет = сообщение админу в TG, спам
+    # затопит чат поддержки и DB. Легитимный юзер пишет 1 тикет в час.
+    if not _rate_limit_check_evict(_ticket_rate, str(user["id"]), _time.monotonic(), window=30.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
+
     try:
         body = await request.json()
     except Exception:
@@ -1559,11 +1593,16 @@ def create_api_app(bot: Bot) -> web.Application:
     # CryptoBot webhook
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)
 
-    # eSIM
-    app.router.add_get ("/api/esim/countries",             handle_esim_countries)
-    app.router.add_get ("/api/esim/packages",              handle_esim_packages)
-    app.router.add_post("/api/esim/invoice",               handle_esim_invoice)
-    app.router.add_get ("/api/esim/my",                    handle_my_esims)
+    # eSIM — гарды по SHOW_ESIM. Webhook оставляем зарегистрированным
+    # потому что esimaccess может слать notifications для уже-проданных
+    # eSIM (юзеры купившие до выключения флага). Catalog/invoice/my
+    # выключаем — фронт всё равно их не показывает, но любопытные могут
+    # дёргать через curl.
+    if SHOW_ESIM:
+        app.router.add_get ("/api/esim/countries",         handle_esim_countries)
+        app.router.add_get ("/api/esim/packages",          handle_esim_packages)
+        app.router.add_post("/api/esim/invoice",           handle_esim_invoice)
+        app.router.add_get ("/api/esim/my",                handle_my_esims)
     app.router.add_post("/api/esim/webhook",               handle_esim_webhook)
 
     # Поддержка

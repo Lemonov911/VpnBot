@@ -100,11 +100,15 @@ export default function App() {
           <Route path="/configs"      element={<Configs />} />
           <Route path="/instructions" element={<Instructions />} />
 
-          {/* eSIM */}
-          <Route path="/esim"         element={<ESim />} />
-          <Route path="/esim/my"      element={<MyESims />} />
-          <Route path="/esim/faq"     element={<ESimFAQ />} />
-          <Route path="/esim/:code"   element={<ESimCountry />} />
+          {/* eSIM — отключаемы через VITE_SHOW_ESIM=false. Без guard'а
+              юзер мог вручную ввести /esim в URL и попасть на мёртвый
+              функционал (API endpoints тоже guarded на бэкенде). */}
+          {import.meta.env.VITE_SHOW_ESIM !== 'false' && <>
+            <Route path="/esim"         element={<ESim />} />
+            <Route path="/esim/my"      element={<MyESims />} />
+            <Route path="/esim/faq"     element={<ESimFAQ />} />
+            <Route path="/esim/:code"   element={<ESimCountry />} />
+          </>}
 
           {/* Support & Referral */}
           <Route path="/support"      element={<Support />} />

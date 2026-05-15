@@ -156,7 +156,7 @@ export default function MyESims() {
   useEffect(() => {
     getMyESims()
       .then(setSims)
-      .catch(() => setError('Не удалось загрузить список eSIM'))
+      .catch(() => setError(t('esim_err_load')))
       .finally(() => setLoading(false))
   }, [])
 
