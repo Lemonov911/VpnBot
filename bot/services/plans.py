@@ -28,13 +28,16 @@ VPN_PLANS: dict[str, dict] = {
         "rub":            "200",
         "usd":            "2.20",
         "duration_days":  30,
+        # 2 AWG = телефон + ноут (обход МТС DPI).
+        # 1 VLESS = универсальная subscription-ссылка, импортируется в Happ —
+        # можно поделиться с близким (1 UUID разделится между устройствами).
         "awg_slots":      2,
-        "vless_slots":    5,
+        "vless_slots":    1,
         "wg_slots":       0,
         "speed_mbps":     60,
         "soft_cap_gb":    500,
         "throttle_mbps":  5,
-        "description":    "2 человека в 4K + телефоны в фоне",
+        "description":    "Один человек — телефон + ноут + VLESS-ссылка",
     },
     "vpn_max": {
         "name":           "Макс",
@@ -42,13 +45,15 @@ VPN_PLANS: dict[str, dict] = {
         "rub":            "500",
         "usd":            "5.50",
         "duration_days":  30,
+        # 3 AWG для основной семьи (3 телефона/устройства), 3 VLESS = достаточно
+        # для backup-устройств + роутер. Раньше было 10 VLESS — overkill.
         "awg_slots":      3,
-        "vless_slots":    10,
+        "vless_slots":    3,
         "wg_slots":       0,
         "speed_mbps":     120,
         "soft_cap_gb":    1000,
         "throttle_mbps":  15,
-        "description":    "Семья 3+ чел / стриминг + торренты",
+        "description":    "Семья 3+ человек, стриминг и торренты",
     },
 
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
