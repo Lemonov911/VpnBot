@@ -7,15 +7,16 @@ export type PayMethod = 'stars' | 'crypto'
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
   vless: number; badge?: string
-  wg?: number   // plain WireGuard slots (для роутеров / клиентов без поддержки AWG)
+  awg?: number  // AmneziaWG slots — обходят DPI МТС (главный продукт)
+  wg?: number   // plain WireGuard slots (legacy, для роутеров)
   speedMbps: number
   softCapGb: number
   throttleMbps: number
 }
 
 export const PLANS: Plan[] = [
-  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 5,  wg: 5, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
-  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 10, wg: 5, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
+  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 5,  awg: 2, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 10, awg: 3, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
 ]
 
 // alias for callers that imported VISIBLE_PLANS — keep backwards-compat for one cycle
@@ -46,6 +47,7 @@ export default function PaymentSheet({
           <div className="text-[13px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">
             {plan.rub} ₽ {t('pay_per_month')}
             {' · '}{plan.speedMbps} Mbps
+            {plan.awg ? ` · ${plan.awg} AmneziaWG` : ''}
             {' · '}{plan.vless} VLESS
             {plan.wg ? ` · ${plan.wg} WireGuard` : ''}
           </div>
@@ -82,11 +84,17 @@ export default function PaymentSheet({
         >
           {method === 'stars' ? `${t('pay_pay_btn')} ${plan.stars} ⭐` : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
-        {/* Оферта-ссылка временно скрыта — domain maxvpn.shop удалён,
-            /oferta.pdf на maxvpnesim.com даёт 404 (nginx location остался
-            на старом конфиге). Восстановить вместе с публикацией PP/disclaimer
-            после оформления самозанятости (см. obsidian → «Что нужно чтобы
-            начать продавать» #4). */}
+        {/* Trust signals — без них юзер на скептиц-рынке (RU VPN) не платит.
+            Конкретно: гарантия + 30 дней + что делать если не работает. Без юр.лица
+            это «soft guarantee» (мы вернём деньги, потому что репутация важнее
+            одной подписки), но писать всё равно надо.
+            Оферта-PDF/PP остаётся скрытой до публикации legal-страниц (см. obsidian
+            → «Что нужно чтобы начать продавать» #4). */}
+        <div className="mt-3 px-1 text-[10.5px] text-[var(--tg-theme-hint-color)] leading-snug text-center">
+          ✓ {t('pay_trust_1')}<br />
+          ✓ {t('pay_trust_2')}<br />
+          ✓ {t('pay_trust_3')}
+        </div>
       </div>
     </>
   )

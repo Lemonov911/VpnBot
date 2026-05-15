@@ -122,6 +122,12 @@ function PlanCard({
           <span className="opacity-40 mx-1">·</span>
           <span className="text-xs">
             ⚡ {plan.speedMbps} Mbps<span className="opacity-40 mx-1">·</span>
+            {plan.awg ? (
+              <>
+                🛡 {plan.awg} AmneziaWG
+                <span className="opacity-40 mx-1">·</span>
+              </>
+            ) : null}
             📱 {plan.vless} VLESS
             {plan.wg ? (
               <>

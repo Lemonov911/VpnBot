@@ -2,12 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"vpnctl/service"
 )
+
+var logger = log.Default()
 
 type addPeerReq struct {
 	Label string `json:"label"`
@@ -165,6 +171,77 @@ func (s *Server) handleServiceResumePeer(svc service.Service) http.HandlerFunc {
 			return
 		}
 		jsonOK(w, map[string]string{"status": "resumed"})
+	}
+}
+
+// handleServiceThrottlePeer applies a tc bandwidth limit (kbps) to an AWG peer
+// by its assigned IP on the awg0 interface. For non-AWG services this is a no-op
+// (VLESS grace is handled via inbound routing at the Xray level).
+func (s *Server) handleServiceThrottlePeer(iface string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := peerID(r)
+		if id == "" {
+			jsonError(w, "missing peer id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Kbps int    `json:"kbps"`
+			IP   string `json:"ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IP == "" || req.Kbps <= 0 {
+			jsonError(w, "bad request: need ip and kbps", http.StatusBadRequest)
+			return
+		}
+		peerIP := strings.Split(req.IP, "/")[0] // strip /32 if present
+		// classid 3:X — derived from last octet of peer IP. Default class = 3:1
+		// (зарезервировано, реальный peer не может получить IP с октетом .1
+		// — это gateway). Раньше был 3:30 и пир c .30 ломал full-speed класс.
+		parts := strings.Split(peerIP, ".")
+		octet := parts[len(parts)-1]
+		classid := "3:" + octet
+		cmds := [][]string{
+			// Ensure HTB root exists on the interface (idempotent)
+			{"tc", "qdisc", "add", "dev", iface, "root", "handle", "3:", "htb", "default", "1"},
+			// Default full-speed class (classid 3:1 — never collides with peer octets 2-254)
+			{"tc", "class", "add", "dev", iface, "parent", "3:", "classid", "3:1", "htb", "rate", "1000mbit"},
+			// Throttle class for this peer
+			{"tc", "class", "add", "dev", iface, "parent", "3:", "classid", classid,
+				"htb", "rate", fmt.Sprintf("%dkbit", req.Kbps), "ceil", fmt.Sprintf("%dkbit", req.Kbps), "burst", "64k"},
+			// Filter: traffic TO peer IP → throttle class
+			{"tc", "filter", "add", "dev", iface, "parent", "3:", "protocol", "ip",
+				"u32", "match", "ip", "dst", peerIP + "/32", "flowid", classid},
+		}
+		for _, cmd := range cmds {
+			if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
+				// ignore "already exists" errors
+				if !strings.Contains(string(out), "RTNETLINK answers: File exists") {
+					logger.Printf("throttle tc warn: %v: %s", err, out)
+				}
+			}
+		}
+		jsonOK(w, map[string]string{"status": "throttled", "ip": peerIP, "classid": classid})
+	}
+}
+
+// handleServiceUnthrottlePeer removes tc bandwidth limit for a peer IP.
+func (s *Server) handleServiceUnthrottlePeer(iface string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			IP string `json:"ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IP == "" {
+			jsonError(w, "bad request: need ip", http.StatusBadRequest)
+			return
+		}
+		peerIP := strings.Split(req.IP, "/")[0]
+		parts := strings.Split(peerIP, ".")
+		octet := parts[len(parts)-1]
+		classid := "3:" + octet
+		// Remove filter and class for this peer
+		exec.Command("tc", "filter", "del", "dev", iface, "parent", "3:", "protocol", "ip",
+			"u32", "match", "ip", "dst", peerIP+"/32", "flowid", classid).Run()
+		exec.Command("tc", "class", "del", "dev", iface, "classid", classid).Run()
+		jsonOK(w, map[string]string{"status": "unthrottled", "ip": peerIP})
 	}
 }
 

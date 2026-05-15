@@ -39,9 +39,14 @@ export default function Referral() {
   const handleShare = () => {
     if (!stats) return
     WebApp.HapticFeedback.impactOccurred('light')
+    // Раньше тут был список конкретных заблокированных сервисов («Instagram,
+    // YouTube, ChatGPT»). 149-ФЗ (запрет рекламы VPN в РФ с сент 2025)
+    // прицельно бьёт по упоминаниям обхода блокировок конкретных ресурсов
+    // — это легко цитируется при подаче на блок. Обобщённая формулировка
+    // ниже не реклама обхода, а просто описание категории софта.
     const text = encodeURIComponent(lang === 'ru'
-      ? `🛡 MAX VPN — открывает Instagram, YouTube, ChatGPT в России\nПопробуй: ${stats.ref_link}`
-      : `🛡 MAX VPN — unblocks Instagram, YouTube and ChatGPT in Russia\nTry it: ${stats.ref_link}`
+      ? `🛡 MAX VPN — быстрый VPN для телефона и компьютера\nПопробуй: ${stats.ref_link}`
+      : `🛡 MAX VPN — fast VPN for mobile and desktop\nTry it: ${stats.ref_link}`
     )
     WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(stats.ref_link)}&text=${text}`)
   }
@@ -49,6 +54,11 @@ export default function Referral() {
   return (
     <div className="page" style={{ gap: 12 }}>
 
+      {/* Hero — без неё страница начиналась с «Как это работает» без контекста */}
+      <div className="fade-in rounded-[20px] p-4 bg-gradient-to-br from-[#ff6b6b] to-[#feca57] text-white shadow-[0_8px_24px_rgba(255,107,107,0.25)]">
+        <div className="text-base font-bold">{t('ref_title')}</div>
+        <div className="text-[12px] opacity-90 mt-0.5">{t('ref_sub2')}</div>
+      </div>
 
       {/* How it works */}
       <span className="section-title">{t('ref_how_title')}</span>

@@ -1,8 +1,9 @@
 """
-Бесплатный пробный период: 3 дня VLESS-base.
+Бесплатный пробный период: 3 дня. Даёт сразу 2 конфига — VLESS-base и AmneziaWG —
+чтобы юзер мог попробовать главный продукт (AWG, обход МТС DPI) с первой минуты.
 
-Один вызов — provision_trial(user_id) — создаёт подписку, peer и
-возвращает subscription URL. Зовётся из двух мест:
+Один вызов — provision_trial(user_id) — создаёт подписку, оба пира и
+возвращает subscription URL + AWG-конфиг. Зовётся из двух мест:
   - /trial команда бота (handlers/admin.py:cmd_trial)
   - POST /api/vpn/trial Mini App'а (services/webapp_api.py)
 """
@@ -81,21 +82,23 @@ async def can_claim_trial(user_id: int) -> bool:
 
 
 async def provision_trial(user_id: int) -> dict:
-    """Создаёт пробную подписку + VLESS peer.
+    """Создаёт пробную подписку + VLESS peer + AWG peer.
 
     Returns:
         {
-            "sub_id":     int,
-            "config_id":  int,
-            "sub_url":    "https://maxvpnesim.com/sub/<token>",
-            "expires_at": datetime,
-            "duration_days": 3,
+            "sub_id":         int,
+            "vless_config_id": int,
+            "awg_config_id":   int | None,   # None если AWG сервер недоступен
+            "sub_url":        "https://maxvpnesim.com/sub/<token>",
+            "awg_config":     str | None,    # raw AWG конфиг (если есть)
+            "expires_at":     datetime,
+            "duration_days":  3,
         }
 
     Raises:
         TrialBlockedByActiveSub — у юзера активная платная подписка
         TrialAlreadyClaimed — trial уже был
-        TrialNoServer — нет vless-сервера
+        TrialNoServer — нет vless-сервера (AWG считается опциональным)
         VpnctlError — провижининг не удался
     """
     # Per-user lock: блокируем concurrent claim'ы того же юзера, иначе
@@ -124,28 +127,92 @@ async def _provision_trial_locked(user_id: int) -> dict:
         raise TrialAlreadyClaimed()
 
     expires = datetime.utcnow() + timedelta(days=TRIAL_DAYS)
-    sub_id = await create_subscription(user_id, TRIAL_PLAN, f"trial_{user_id}", 0, expires)
-    config_id = await create_config_record(sub_id, user_id, protocol="vless")
+    # Уникальный payment_id с timestamp — `trial_{user_id}` не подходит,
+    # т.к. через TRIAL_COOLDOWN_DAYS юзер может взять новый триал, и
+    # UNIQUE-constraint на subscriptions.payment_id уронит вставку.
+    trial_payment_id = f"trial_{user_id}_{int(datetime.utcnow().timestamp())}"
+    sub_id = await create_subscription(user_id, TRIAL_PLAN, trial_payment_id, 0, expires)
+    if sub_id is None:
+        logger.error("trial create_subscription returned None for user %d (payment_id collision?)", user_id)
+        raise TrialError("create_subscription failed")
 
-    server = await get_best_server("vless")
-    if not server:
-        raise TrialNoServer()
+    # ── compensating-rollback wrapper: если что-то упадёт между create_subscription
+    # и реальной выдачей пира, sub'а остаётся orphan в БД → юзер не может ни
+    # взять новый триал (cooldown 30 дней по `can_claim_trial`), ни купить
+    # платный (`has_active_subscription` блокирует invoice). Лечим компенсацией.
+    try:
+        # ── 1) VLESS peer (обязателен — главный канал) ──────────────────────
+        vless_cfg_id = await create_config_record(sub_id, user_id, protocol="vless")
+        vless_server = await get_best_server("vless")
+        if not vless_server:
+            raise TrialNoServer()
 
-    peer = await provision_peer(server, f"trial_{user_id}_{config_id}", "vless-base")
+        vless_peer = await provision_peer(
+            vless_server, f"trial_{user_id}_{vless_cfg_id}", "vless-base"
+        )
+        await save_peer_to_config(
+            vless_cfg_id, vless_server["id"], vless_peer.id, "",
+            vless_peer.config, f"trial_{user_id}",
+        )
+        await update_server_peer_count(vless_server["id"], +1)
+    except (TrialNoServer, VpnctlError, Exception):
+        # Rollback: пометим sub'у expired чтобы не блокировала юзера 30 дней.
+        # Используем mark_subscription_expired а не delete — payment_id уникален,
+        # на случай повторных claims через cooldown пусть он будет видимым.
+        try:
+            from services.database import mark_subscription_expired
+            await mark_subscription_expired(sub_id)
+            logger.warning("trial rollback: marked sub #%d expired (user %d)", sub_id, user_id)
+        except Exception as rb_err:
+            logger.error("trial rollback failed for sub #%d: %s", sub_id, rb_err)
+        raise
 
-    await save_peer_to_config(
-        config_id, server["id"], peer.id, "", peer.config, f"trial_{user_id}"
-    )
-    await update_server_peer_count(server["id"], +1)
+    # ── 2) AWG peer (опционален — best-effort, не валит триал) ──────────
+    # Главный продукт = AmneziaWG (обход МТС DPI). Триал без AWG занижает
+    # восприятие качества: юзер пришёл за AWG, получил VLESS — не то.
+    awg_cfg_id: int | None = None
+    awg_config: str | None = None
+    awg_assigned_ip: str = ""
+    try:
+        awg_server = await get_best_server("awg")
+        if awg_server:
+            awg_cfg_id = await create_config_record(sub_id, user_id, protocol="awg")
+            awg_peer = await provision_peer(
+                awg_server, f"trial_{user_id}_{awg_cfg_id}", "awg"
+            )
+            awg_assigned_ip = (awg_peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                awg_cfg_id, awg_server["id"], awg_peer.id, awg_assigned_ip,
+                awg_peer.config, f"trial_{user_id}_awg",
+            )
+            await update_server_peer_count(awg_server["id"], +1)
+            awg_config = awg_peer.config
+        else:
+            logger.warning("trial AWG skipped: no awg server available for user %d", user_id)
+    except VpnctlError as e:
+        logger.warning("trial AWG provisioning failed for user %d: %s — VLESS-only fallback", user_id, e)
+        awg_cfg_id = None
+        awg_config = None
+    except Exception as e:
+        logger.warning("trial AWG unexpected error for user %d: %s", user_id, e)
+        awg_cfg_id = None
+        awg_config = None
+
     sub_token = await get_or_create_sub_token(user_id)
 
-    logger.info("trial provisioned: user_id=%d sub_id=%d expires=%s",
-                user_id, sub_id, expires.isoformat())
+    logger.info(
+        "trial provisioned: user_id=%d sub_id=%d vless_cfg=%d awg_cfg=%s expires=%s",
+        user_id, sub_id, vless_cfg_id, awg_cfg_id, expires.isoformat(),
+    )
 
     return {
-        "sub_id":        sub_id,
-        "config_id":     config_id,
-        "sub_url":       f"https://maxvpnesim.com/sub/{sub_token}",
-        "expires_at":    expires,
-        "duration_days": TRIAL_DAYS,
+        "sub_id":          sub_id,
+        "vless_config_id": vless_cfg_id,
+        "awg_config_id":   awg_cfg_id,
+        "sub_url":         f"https://maxvpnesim.com/sub/{sub_token}",
+        "awg_config":      awg_config,
+        "expires_at":      expires,
+        "duration_days":   TRIAL_DAYS,
+        # Backward-compat: старые callers ждут "config_id"
+        "config_id":       vless_cfg_id,
     }

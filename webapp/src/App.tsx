@@ -17,7 +17,8 @@ import ESimFAQ      from './pages/ESimFAQ'
 import MyESims      from './pages/MyESims'
 import Support      from './pages/Support'
 import Referral     from './pages/Referral'
-import Status       from './pages/Status'
+import Status            from './pages/Status'
+import StatusIncidents   from './pages/StatusIncidents'
 
 function GlobalHeader() {
   const t    = useT()
@@ -34,7 +35,8 @@ function GlobalHeader() {
     '/esim/faq':     { title: 'FAQ', sub: '' },
     '/support':      { title: t('support_title'),    sub: t('support_sub') },
     '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
-    '/status':       { title: 'Статус сервисов',     sub: '' },
+    '/status':             { title: 'Статус сервисов',     sub: '' },
+    '/status/incidents':   { title: 'История инцидентов',   sub: '' },
   }
 
   const page = info[pathname] ?? info['/']
@@ -109,7 +111,8 @@ export default function App() {
           <Route path="/referral"     element={<Referral />} />
 
           {/* Public status page — no auth */}
-          <Route path="/status"       element={<Status />} />
+          <Route path="/status"            element={<Status />} />
+          <Route path="/status/incidents"  element={<StatusIncidents />} />
 
           {/* Главная */}
           <Route path="/"             element={<Home />} />

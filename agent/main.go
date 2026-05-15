@@ -55,7 +55,7 @@ func main() {
 			log.Printf("service: awg (built-in, interface=%s, endpoint=%s)",
 				mgr.Interface(), mgr.Endpoint())
 
-		case "vless", "vless-base", "vless-max", "vless-base-slow", "vless-max-slow":
+		case "vless", "vless-base", "vless-max", "vless-base-slow", "vless-max-slow", "vless-grace":
 			tier, ok := cfg.XrayTiers[svcName]
 			if !ok {
 				log.Fatalf("vless tier %q not configured", svcName)
@@ -64,7 +64,7 @@ func main() {
 			// чтобы быть совместимым с большим набором клиентов и mux в перспективе.
 			// vless / vless-base / vless-base-slow — с Vision.
 			flow := cfg.XrayFlow
-			if svcName == "vless-max" || svcName == "vless-max-slow" {
+			if svcName == "vless-max" || svcName == "vless-max-slow" || svcName == "vless-grace" {
 				flow = ""
 			}
 			xrayMgr := xraypkg.NewManager(

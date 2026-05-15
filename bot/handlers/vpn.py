@@ -216,7 +216,10 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
     user_id    = message.from_user.id
     payment_id = payment.telegram_payment_charge_id
 
-    # Защита от повторной обработки одного платежа (задача 4)
+    # Защита от повторной обработки одного платежа (задача 4).
+    # Двухуровневая: (1) get-by-payment_id фастпас для уже-обработанных дублей,
+    # (2) UNIQUE-constraint на subscriptions.payment_id — закрывает TOCTOU гонку
+    #     если два successful_payment события прилетят почти одновременно.
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
         logger.warning("Дубль платежа %s для user %d — игнорируем", payment_id, user_id)
@@ -224,7 +227,6 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
 
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
-    # Создаём подписку в новой таблице
     sub_id = await create_subscription(
         user_id=user_id,
         plan=plan_key,
@@ -232,6 +234,24 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         stars_paid=payment.total_amount,
         expires_at=expires_at,
     )
+    # None = UNIQUE-constraint сработал → дубль проскочил TOCTOU. Идемпотентный exit.
+    if sub_id is None:
+        logger.warning("Дубль платежа %s проскочил TOCTOU (UNIQUE сработал), user %d", payment_id, user_id)
+        return
+
+    # Юзер платит за тариф пока триал ещё active → его trial-VLESS-пир пойдёт
+    # в grace через 1-2 дня (scheduler не различает trial/paid sub'ы при expire).
+    # Happ балансирует subscription-URL между нормальным и grace пиром → юзер
+    # иногда попадает на 256 кбит/с и жалуется «купил, а скорость дрянь».
+    # Закрываем триал сразу: revoke его пиры и mark_expired.
+    try:
+        from services.database import get_user_subscriptions_by_plan
+        from services.scheduler import _process_expired_subscriptions  # not used directly, just for clarity
+        active_trials = await get_user_subscriptions_by_plan(user_id, "vpn_trial", status="active")
+        for trial_sub in active_trials:
+            await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
+    except Exception as e:
+        logger.warning("close-trial-on-paid failed user %d: %s (продолжаем)", user_id, e)
 
     # Для обратной совместимости — дублируем в orders
     order_id = await create_order(
@@ -390,6 +410,46 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         logger.warning("Ошибка реферального бонуса: %s", e)
 
 
+async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
+    """Юзер купил тариф пока триал ещё active — закрываем триал сразу.
+
+    Без этого scheduler через сутки увидит истекающий триал и переведёт его
+    в grace (256 кбит/с). Subscription URL отдаёт пиры из active+grace подписок
+    → Happ балансирует между нормальным платным пиром и медленным trial-grace.
+    Юзер жалуется «оплатил, а скорость не та».
+
+    Действие: revoke trial-пиры на агенте, reset config slots, mark trial expired.
+    Не grace — он триальный, не надо возвращать после.
+    """
+    from services.database import (
+        get_configs_for_subscription, get_server_by_id, mark_subscription_expired,
+        reset_config_slot, update_server_peer_count,
+    )
+    from services.vpnctl_client import client_for_server
+
+    configs = await get_configs_for_subscription(trial_sub_id)
+    for cfg in configs:
+        server_id = cfg.get("server_id")
+        if server_id:
+            server = await get_server_by_id(server_id)
+            if server and server.get("agent_url"):
+                try:
+                    client = client_for_server(server)
+                    proto = cfg.get("protocol", "")
+                    peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                    if peer_id:
+                        if proto == "awg":
+                            await client.remove_peer("awg", peer_id)
+                        elif proto in ("vless", "vless-reality"):
+                            await client.remove_peer("vless-base", peer_id)
+                        await update_server_peer_count(server_id, -1)
+                except Exception as e:
+                    logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e)
+        await reset_config_slot(cfg["id"])
+    await mark_subscription_expired(trial_sub_id)
+    logger.info("triale закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
+
+
 async def _apply_plan_upgrade(message: Message, payment):
     """Применяет апгрейд тарифа после успешной оплаты."""
     parts = payment.invoice_payload.split(":")
@@ -411,6 +471,22 @@ async def _apply_plan_upgrade(message: Message, payment):
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         await message.answer("⚠️ Неизвестный тариф. Напиши в поддержку.")
+        return
+
+    # Sec audit H6: проверяем что юзер обновляет СВОЮ подписку. Без этого
+    # утечка invoice URL → злоумышленник платит за чужой апгрейд (для жертвы
+    # это бесплатный бонус, но это нарушение модели и нечестная игра).
+    from services.database import get_subscription_by_id
+    sub = await get_subscription_by_id(sub_id)
+    if not sub:
+        logger.error("upgrade: sub #%d не найдена (payment_id=%s, user=%d)",
+                     sub_id, payment.telegram_payment_charge_id, user_id)
+        await message.answer("⚠️ Подписка не найдена. Напиши в поддержку.")
+        return
+    if sub["user_id"] != user_id:
+        logger.error("upgrade SECURITY: sub #%d принадлежит user %d, оплатил %d (payment=%s)",
+                     sub_id, sub["user_id"], user_id, payment.telegram_payment_charge_id)
+        await message.answer("⚠️ Подписка не твоя. Если это ошибка — напиши в поддержку.")
         return
 
     await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)

@@ -104,6 +104,18 @@ export default function Home() {
     <>
       <div className="page gap-3">
 
+        {/* Hero — показываем когда нет trial banner и нет trial-success */}
+        {!trial?.eligible && !trialDone && sub === null && (
+          <div className="fade-in pt-2 pb-1 px-1">
+            <div className="text-[22px] font-extrabold text-[var(--tg-theme-text-color)] tracking-tight">
+              {t('home_hero_title')}
+            </div>
+            <div className="text-[13px] text-[var(--tg-theme-hint-color)] mt-0.5 leading-snug whitespace-pre-line">
+              {t('home_hero_sub')}
+            </div>
+          </div>
+        )}
+
         {/* ── Trial CTA banner — shown only if eligible & no active sub ── */}
         {trial?.eligible && sub === null && !trialDone && (
           <div className="fade-in rounded-[20px] p-4 bg-gradient-to-br from-[#16a34a] to-[#0ea5e9] text-white shadow-[0_8px_24px_rgba(14,165,233,0.35)]">
@@ -126,9 +138,36 @@ export default function Home() {
           <div className="fade-in rounded-[20px] p-4 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
             <div className="text-base font-bold mb-1 text-[var(--tg-theme-text-color)]">{t('trial_success_title')}</div>
             <div className="text-[12px] text-[var(--tg-theme-hint-color)] leading-snug mb-3">{t('trial_success_sub')}</div>
+            {/* Перепорядок 15.05 (UX audit P0): сначала Configs (главный шаг —
+                там оба конфига: AWG-файл + VLESS sub-URL), потом установка Happ
+                как compact-chips, потом upgrade как tertiary. Раньше Happ-кнопки
+                были громче чем Configs — юзер ставил Happ, не понимал что
+                импортировать, выходил. */}
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/configs') }}
+              className="w-full py-[10px] rounded-[10px] border-none bg-primary text-white text-[13px] font-bold cursor-pointer mb-2"
+            >
+              📥 {t('trial_open_configs')}
+            </button>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <button
+                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
+                className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+                style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
+              >
+                🍎 {t('trial_install_ios')}
+              </button>
+              <button
+                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
+                className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+                style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
+              >
+                🤖 {t('trial_install_android')}
+              </button>
+            </div>
             <button
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/plans') }}
-              className="w-full py-2 rounded-[10px] border-none bg-primary/[0.13] text-primary text-xs font-bold cursor-pointer"
+              className="w-full py-1.5 rounded-[10px] border-none bg-primary/[0.13] text-primary text-[11px] font-medium cursor-pointer"
             >
               {t('trial_success_upgrade')}
             </button>

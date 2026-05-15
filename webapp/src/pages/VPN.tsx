@@ -141,6 +141,24 @@ export default function VPN() {
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)] mb-1.5">{t('vpn_done_title')}</div>
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm mb-5">{t('vpn_done_sub')}</p>
           <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('vpn_to_configs')}</button>
+          {/* UX audit P0: пейщики получали меньше guidance чем триал-юзеры.
+              Добавляем Happ install chips чтобы они знали какую программу ставить. */}
+          <div className="grid grid-cols-2 gap-2 w-full mb-2.5">
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
+              className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+              style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
+            >
+              🍎 {t('trial_install_ios')}
+            </button>
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
+              className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
+              style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
+            >
+              🤖 {t('trial_install_android')}
+            </button>
+          </div>
           <button className="btn w-full !bg-[var(--tg-theme-section-bg-color,#f1f1f1)] !text-[var(--tg-theme-text-color,#000)]"
             onClick={() => { setPaid(false); getActiveSubscription().then(setSub) }}>
             {t('vpn_to_plans')}
@@ -319,13 +337,33 @@ export default function VPN() {
 
   const planName    = PLAN_NAMES[sub.plan] ?? sub.plan
   const pendingName = sub.pending_plan ? (PLAN_NAMES[sub.pending_plan] ?? sub.pending_plan) : null
-  const isExpiring  = sub.days_remaining <= 7
+  const isGrace     = sub.status === 'grace'
+  const isExpiring  = !isGrace && sub.days_remaining <= 7
 
   const vlessTotal  = configs?.filter(c => c.protocol === 'vless').length ?? 0
   const vlessActive = configs?.filter(c => c.protocol === 'vless' && c.status === 'active').length ?? 0
 
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
+
+      {isGrace && (
+        <div className="fade-in rounded-xl py-3 px-3.5 flex justify-between items-center border bg-danger/10 border-danger/30">
+          <div className="min-w-0 pr-2">
+            <div className="text-[13px] font-semibold text-danger">
+              🐢 {t('vpn_grace_banner_title')}
+            </div>
+            <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">
+              {t('vpn_grace_banner_body')
+                .replace('{days}', String(sub.grace_days_left ?? 0))
+                .replace('{plural}', p(sub.grace_days_left ?? 0, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: ['day', 'days'] }))
+              }
+            </div>
+          </div>
+          <button onClick={() => nav('/vpn/plans')} className="px-3.5 py-1.5 rounded-lg border-none bg-danger text-white text-xs font-semibold cursor-pointer shrink-0">
+            {t('vpn_renew')}
+          </button>
+        </div>
+      )}
 
       {isExpiring && (
         <div className={`fade-in rounded-xl py-[10px] px-3.5 flex justify-between items-center border ${
@@ -352,7 +390,11 @@ export default function VPN() {
             <div className="font-bold text-[22px] text-[var(--tg-theme-text-color,#000)]">{planName}</div>
             <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at)}</div>
           </div>
-          <span className="bg-success/13 text-success text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0">{t('vpn_active_badge')}</span>
+          <span className={`text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0 ${
+            isGrace ? 'bg-danger/13 text-danger' : 'bg-success/13 text-success'
+          }`}>
+            {isGrace ? t('vpn_grace_badge') : t('vpn_active_badge')}
+          </span>
         </div>
 
         {vlessTotal > 0 && (

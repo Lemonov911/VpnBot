@@ -16,6 +16,7 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+	"vpnctl/internal/wgcore"
 )
 
 type Peer struct {
@@ -252,7 +253,7 @@ func (m *Manager) PeerIPs() []string {
 	var ips []string
 	for _, p := range m.peers {
 		if !p.Suspended {
-			ips = append(ips, stripMask(p.AssignedIP))
+			ips = append(ips, wgcore.StripMask(p.AssignedIP))
 		}
 	}
 	return ips
@@ -328,7 +329,7 @@ func (m *Manager) RemovePeer(pubkeyStr string) error {
 	}
 
 	if p, ok := m.peers[pubkeyStr]; ok {
-		ip := stripMask(p.AssignedIP)
+		ip := wgcore.StripMask(p.AssignedIP)
 		delete(m.usedIPs, ip)
 		delete(m.peers, pubkeyStr)
 	}
@@ -464,47 +465,27 @@ func (m *Manager) syncFromKernel() error {
 	return nil
 }
 
+// nextFreeIP перебирает подсеть в поисках свободного адреса.
+// IP-utils (`inc`, `cloneIP`, `stripMask`) — общие с `awg` пакетом,
+// см. `internal/wgcore`.
 func (m *Manager) nextFreeIP() (string, error) {
 	_, network, err := net.ParseCIDR(m.subnet)
 	if err != nil {
 		return "", err
 	}
 
-	ip := cloneIP(network.IP)
-	inc(ip)
-	inc(ip)
+	ip := wgcore.CloneIP(network.IP)
+	wgcore.Inc(ip)
+	wgcore.Inc(ip)
 
 	for network.Contains(ip) {
 		s := ip.String()
 		if !m.usedIPs[s] {
 			return s, nil
 		}
-		inc(ip)
+		wgcore.Inc(ip)
 	}
 	return "", fmt.Errorf("no free IPs in %s", m.subnet)
-}
-
-func inc(ip net.IP) {
-	for j := len(ip) - 1; j >= 0; j-- {
-		ip[j]++
-		if ip[j] != 0 {
-			break
-		}
-	}
-}
-
-func cloneIP(ip net.IP) net.IP {
-	c := make(net.IP, len(ip))
-	copy(c, ip)
-	return c
-}
-
-func stripMask(cidr string) string {
-	ip, _, _ := net.ParseCIDR(cidr)
-	if ip == nil {
-		return cidr
-	}
-	return ip.String()
 }
 
 func WireGuardConfig(cc *ClientConfig) string {

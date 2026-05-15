@@ -279,7 +279,7 @@ async def _migrate(db: aiosqlite.Connection):
 
 async def _seed_default_server():
     """Если серверов нет — добавляет дефолтный из переменных окружения."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute("SELECT COUNT(*) FROM servers") as cur:
             count = (await cur.fetchone())[0]
         if count > 0:
@@ -298,7 +298,7 @@ async def _seed_default_server():
 # ── users ──────────────────────────────────────────────────────────────────────
 
 async def upsert_user(user_id: int, username: str | None, first_name: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "INSERT OR IGNORE INTO users (id, username, first_name) VALUES (?, ?, ?)",
             (user_id, username, first_name),
@@ -310,7 +310,7 @@ async def upsert_user(user_id: int, username: str | None, first_name: str):
 
 async def create_order(user_id, product_type, plan, stars_paid,
                        vpn_username=None, expires_at=None) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             """INSERT INTO orders (user_id, product_type, plan, stars_paid, vpn_username, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
@@ -322,7 +322,7 @@ async def create_order(user_id, product_type, plan, stars_paid,
 
 
 async def complete_order(order_id: int, payment_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE orders SET status='completed', payment_id=? WHERE id=?",
             (payment_id, order_id),
@@ -331,7 +331,7 @@ async def complete_order(order_id: int, payment_id: str):
 
 
 async def get_expired_orders() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT id, user_id, vpn_username FROM orders
@@ -342,13 +342,13 @@ async def get_expired_orders() -> list[dict]:
 
 
 async def mark_order_expired(order_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute("UPDATE orders SET status='expired' WHERE id=?", (order_id,))
         await db.commit()
 
 
 async def get_stats() -> tuple[int, int, int]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
             users = (await cur.fetchone())[0]
         async with db.execute(
@@ -366,7 +366,7 @@ async def get_stats() -> tuple[int, int, int]:
 
 async def get_servers_by_protocol(protocol: str) -> list[dict]:
     """Активные серверы для протокола (AWG или VLESS)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM servers "
@@ -377,7 +377,7 @@ async def get_servers_by_protocol(protocol: str) -> list[dict]:
 
 
 async def get_server_by_id(server_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM servers WHERE id=?", (server_id,)) as cur:
             row = await cur.fetchone()
@@ -386,19 +386,29 @@ async def get_server_by_id(server_id: int) -> dict | None:
 
 # ── subscriptions ──────────────────────────────────────────────────────────────
 
-async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            """INSERT INTO subscriptions (user_id, plan, payment_id, stars_paid, expires_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user_id, plan, payment_id, stars_paid, expires_at.isoformat()),
-        )
-        await db.commit()
-        return cur.lastrowid
+async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at) -> int | None:
+    """Создаёт подписку. Возвращает sub_id или None если payment_id уже использован
+    (UNIQUE-constraint сработал → дубль платежа от Telegram, идемпотентный no-op).
+
+    Раньше при дубле бросала IntegrityError → краш handler'а. Теперь caller
+    проверяет `if sub_id is None: return  # дубль` и обрабатывает graceful'но.
+    """
+    import sqlite3
+    try:
+        async with _connect() as db:
+            cur = await db.execute(
+                """INSERT INTO subscriptions (user_id, plan, payment_id, stars_paid, expires_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, plan, payment_id, stars_paid, expires_at.isoformat()),
+            )
+            await db.commit()
+            return cur.lastrowid
+    except sqlite3.IntegrityError:
+        return None
 
 
 async def get_subscription_by_payment_id(payment_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM subscriptions WHERE payment_id=?", (payment_id,)
@@ -408,7 +418,7 @@ async def get_subscription_by_payment_id(payment_id: str) -> dict | None:
 
 
 async def get_expired_subscriptions() -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT id, user_id, plan FROM subscriptions
@@ -418,11 +428,42 @@ async def get_expired_subscriptions() -> list[dict]:
 
 
 async def mark_subscription_expired(subscription_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE subscriptions SET status='expired' WHERE id=?", (subscription_id,)
         )
         await db.commit()
+
+
+async def mark_subscription_grace(subscription_id: int, grace_until: str):
+    """Переводит подписку в grace-period (14 дней низкой скорости)."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET status='grace', grace_until=? WHERE id=?",
+            (grace_until, subscription_id),
+        )
+        await db.commit()
+
+
+async def get_grace_expired_subscriptions() -> list[dict]:
+    """Подписки в grace-state у которых grace_until уже прошёл."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, user_id, plan FROM subscriptions
+            WHERE status='grace' AND grace_until IS NOT NULL AND grace_until <= ?
+        """, (datetime.utcnow().isoformat(),)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def ensure_grace_column():
+    """Миграция: добавляет grace_until в subscriptions если её нет."""
+    async with _connect() as db:
+        async with db.execute("PRAGMA table_info(subscriptions)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "grace_until" not in cols:
+            await db.execute("ALTER TABLE subscriptions ADD COLUMN grace_until TEXT")
+            await db.commit()
 
 
 # ── configs / slots ────────────────────────────────────────────────────────────
@@ -430,7 +471,7 @@ async def mark_subscription_expired(subscription_id: int):
 async def create_config_record(subscription_id, user_id,
                                 protocol="awg", server_id=None) -> int:
     """Создаёт пустой слот. Возвращает id."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             """INSERT INTO configs (subscription_id, user_id, protocol, server_id, status)
                VALUES (?, ?, ?, ?, 'empty')""",
@@ -446,7 +487,7 @@ async def activate_config_slot(config_id: int, peer_name: str,
                                 assigned_ip: str | None = None,
                                 vless_uuid: str | None = None):
     """Переводит слот empty → active, записывает конфиг и сервер."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """UPDATE configs
                SET peer_name=?, config_data=?, server_id=?, wg_pubkey=?,
@@ -462,7 +503,7 @@ async def reset_config_slot(config_id: int):
     Сбрасывает слот обратно в empty после отзыва конфига.
     Слот остаётся в подписке — пользователь может добавить новый конфиг.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """UPDATE configs
                SET status='empty', peer_name=NULL, config_data=NULL,
@@ -475,7 +516,7 @@ async def reset_config_slot(config_id: int):
 
 async def update_config_peer(config_id: int, peer_name: str, config_data: str | None):
     """Legacy — используй activate_config_slot."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         status = 'active' if config_data else 'empty'
         await db.execute(
             "UPDATE configs SET peer_name=?, config_data=?, status=? WHERE id=?",
@@ -486,7 +527,7 @@ async def update_config_peer(config_id: int, peer_name: str, config_data: str | 
 
 async def get_user_configs(user_id: int) -> list[dict]:
     """Все слоты пользователя (empty + active) по активным подпискам."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT
@@ -513,10 +554,10 @@ async def get_user_configs(user_id: int) -> list[dict]:
 
 
 async def get_configs_for_subscription(subscription_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, peer_name, protocol, server_id FROM configs "
+            "SELECT id, peer_name, protocol, server_id, assigned_ip, vless_uuid, config_data FROM configs "
             "WHERE subscription_id=? AND status='active'",
             (subscription_id,)
         ) as cur:
@@ -524,7 +565,7 @@ async def get_configs_for_subscription(subscription_id: int) -> list[dict]:
 
 
 async def get_config_by_id(config_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM configs WHERE id=?", (config_id,)) as cur:
             row = await cur.fetchone()
@@ -536,14 +577,46 @@ async def revoke_config(config_id: int):
     await reset_config_slot(config_id)
 
 
+async def get_subscription_by_id(sub_id: int) -> dict | None:
+    """Возвращает подписку по id или None. Используется для проверки
+    user_id при апгрейде (sec audit H6)."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, user_id, plan, status, expires_at, grace_until, pending_plan FROM subscriptions WHERE id=?",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def get_user_subscriptions_by_plan(user_id: int, plan: str, status: str = "active") -> list[dict]:
+    """Список подписок юзера определённого плана и статуса. Используется чтобы
+    найти активный триал когда юзер платит за тариф."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, plan, status, expires_at, created_at FROM subscriptions
+               WHERE user_id=? AND plan=? AND status=?
+               ORDER BY created_at DESC""",
+            (user_id, plan, status),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_active_subscription(user_id: int) -> dict | None:
-    """Возвращает активную подписку пользователя или None."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    """Возвращает активную подписку пользователя или None.
+
+    Включает status IN ('active', 'grace') — grace это «истекла, но 14 дней
+    на 256 кбит/с»; для UX и provisioning это всё ещё валидная подписка с
+    живыми пирами. UI отличает по `grace_until IS NOT NULL`.
+    """
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at
+            SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at, grace_until
             FROM subscriptions
-            WHERE user_id=? AND status='active'
+            WHERE user_id=? AND status IN ('active', 'grace')
             ORDER BY created_at DESC LIMIT 1
         """, (user_id,)) as cur:
             row = await cur.fetchone()
@@ -552,7 +625,7 @@ async def get_active_subscription(user_id: int) -> dict | None:
 
 async def get_last_expired_subscription(user_id: int) -> dict | None:
     """Возвращает последнюю истёкшую подписку пользователя или None."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at
@@ -570,12 +643,29 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
     """
     Немедленно меняет план подписки (апгрейд).
     Добавляет новые пустые слоты если awg_delta/vless_delta/wg_delta > 0.
-    Снимает pending_plan если он был. wg_delta дефолтится в 0 для backward
-    compatibility со старыми callers.
+    Снимает pending_plan если он был.
+
+    Если подписка в grace (256 кбит/с после истечения) — возвращает её в active
+    с продлением expires_at на 30 дней. Иначе апгрейд из grace оставил бы юзера
+    на 256 кбит/с с новым планом — UI «Plan: Max», фактически throttle.
+
+    Sec/edge audit C4 (15.05): caller'у (handlers/vpn.py:_apply_plan_upgrade)
+    после этого вызова нужно отдельно вызвать unthrottle на vpnctl_client
+    чтобы вернуть AWG-пиры с tc, и переместить VLESS из vless-grace inbound
+    обратно в vless-base/max — это делается там, потому что требует agent_url.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
+        # Если был в grace — продлеваем active на полные 30 дней от now
         await db.execute(
-            "UPDATE subscriptions SET plan=?, pending_plan=NULL WHERE id=?",
+            """UPDATE subscriptions
+               SET plan=?, pending_plan=NULL,
+                   status='active',
+                   grace_until=NULL,
+                   expires_at = CASE
+                       WHEN status='grace' THEN datetime('now', '+30 days')
+                       ELSE expires_at
+                   END
+               WHERE id=?""",
             (new_plan, sub_id),
         )
         for proto, delta in (("awg", awg_delta), ("vless", vless_delta), ("wg", wg_delta)):
@@ -593,7 +683,7 @@ async def schedule_plan_change(sub_id: int, pending_plan: str | None):
     Ставит (или снимает) запланированный даунгрейд на следующий месяц.
     pending_plan=None — отменить запланированное изменение.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE subscriptions SET pending_plan=? WHERE id=?",
             (pending_plan, sub_id),
@@ -610,7 +700,7 @@ async def has_active_subscription(user_id: int) -> bool:
 # ── support_tickets ────────────────────────────────────────────────────────────
 
 async def create_support_ticket(user_id: int, category: str, message: str) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             "INSERT INTO support_tickets (user_id, category, message) VALUES (?, ?, ?)",
             (user_id, category, message),
@@ -620,7 +710,7 @@ async def create_support_ticket(user_id: int, category: str, message: str) -> in
 
 
 async def update_ticket_admin_msg(ticket_id: int, admin_msg_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE support_tickets SET admin_msg_id=? WHERE id=?",
             (admin_msg_id, ticket_id),
@@ -629,7 +719,7 @@ async def update_ticket_admin_msg(ticket_id: int, admin_msg_id: int):
 
 
 async def get_ticket_by_admin_msg(admin_msg_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM support_tickets WHERE admin_msg_id=?", (admin_msg_id,)
@@ -642,7 +732,7 @@ async def get_ticket_by_admin_msg(admin_msg_id: int) -> dict | None:
 
 async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
     """Возвращает активные подписки, истекающие через `days` дней (±12 ч)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         col = "reminded_3d" if days >= 2 else "reminded_1d"
         async with db.execute(
@@ -657,7 +747,7 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
 
 async def mark_reminded(sub_id: int, days: int):
     col = "reminded_3d" if days >= 2 else "reminded_1d"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(f"UPDATE subscriptions SET {col}=1 WHERE id=?", (sub_id,))
         await db.commit()
 
@@ -666,7 +756,7 @@ async def mark_reminded(sub_id: int, days: int):
 
 async def set_referred_by(user_id: int, referrer_id: int):
     """Записывает реферера только если у пользователя его ещё нет."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE users SET referred_by=? WHERE id=? AND referred_by IS NULL",
             (referrer_id, user_id),
@@ -676,7 +766,7 @@ async def set_referred_by(user_id: int, referrer_id: int):
 
 async def get_referral_stats(referrer_id: int) -> dict:
     """Сколько пользователей привёл реферер и сколько из них купили."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT COUNT(*) FROM users WHERE referred_by=?", (referrer_id,)
         ) as cur:
@@ -698,7 +788,7 @@ async def get_referral_stats(referrer_id: int) -> dict:
 
 async def get_best_server(protocol: str) -> dict | None:
     """Сервер с наименьшей загрузкой для данного протокола."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         proto_field = "awg" if protocol == "awg" else "vless"
         async with db.execute("""
@@ -712,7 +802,7 @@ async def get_best_server(protocol: str) -> dict | None:
 
 
 async def update_server_peer_count(server_id: int, delta: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE servers SET active_peers=MAX(0, active_peers+?) WHERE id=?",
             (delta, server_id),
@@ -722,7 +812,7 @@ async def update_server_peer_count(server_id: int, delta: int):
 
 async def save_peer_to_config(config_id: int, server_id: int, wg_pubkey: str,
                                assigned_ip: str, config_data: str, label: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute("""
             UPDATE configs SET
                 server_id=?, wg_pubkey=?, assigned_ip=?,
@@ -733,7 +823,7 @@ async def save_peer_to_config(config_id: int, server_id: int, wg_pubkey: str,
 
 
 async def update_config_traffic(config_id: int, rx: int, tx: int, last_seen: str | None):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE configs SET rx_bytes=?, tx_bytes=?, last_seen=? WHERE id=?",
             (rx, tx, last_seen, config_id),
@@ -742,7 +832,7 @@ async def update_config_traffic(config_id: int, rx: int, tx: int, last_seen: str
 
 
 async def get_config_id_by_vless_uuid(vless_uuid: str) -> int | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT id FROM configs WHERE vless_uuid=? LIMIT 1", (vless_uuid,)
         ) as cur:
@@ -752,14 +842,18 @@ async def get_config_id_by_vless_uuid(vless_uuid: str) -> int | None:
 
 async def get_active_vless_uuids_by_server(server_id: int) -> list[str]:
     """UUIDs of currently active VLESS configs on the given server.
-    Used by sync job to tell agent which UUIDs are still paid for."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    Used by sync job to tell agent which UUIDs are still paid for.
+
+    ВКЛЮЧАЕТ grace-подписки: их пиры висят в `vless-grace` inbound 14 дней
+    и не должны быть удалены агентом при hourly sync.
+    """
+    async with _connect() as db:
         async with db.execute(
             """SELECT c.vless_uuid FROM configs c
                JOIN subscriptions s ON c.subscription_id = s.id
                WHERE c.server_id=? AND c.protocol='vless' AND c.status='active'
                  AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
-                 AND s.status='active'""",
+                 AND s.status IN ('active', 'grace')""",
             (server_id,),
         ) as cur:
             return [r[0] for r in await cur.fetchall()]
@@ -768,7 +862,7 @@ async def get_active_vless_uuids_by_server(server_id: int) -> list[str]:
 async def get_active_vless_configs_with_plan() -> list[dict]:
     """Active VLESS configs along with the plan_key of their subscription.
     Used by quota-throttle scheduler."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT c.id AS config_id, c.user_id, c.server_id, c.vless_uuid, c.config_data,
@@ -783,7 +877,7 @@ async def get_active_vless_configs_with_plan() -> list[dict]:
 
 
 async def update_config_data(config_id: int, config_data: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE configs SET config_data=? WHERE id=?",
             (config_data, config_id),
@@ -794,7 +888,7 @@ async def update_config_data(config_id: int, config_data: str):
 async def get_or_create_sub_token(user_id: int) -> str:
     """Returns the user's stable subscription token (creates one on first call)."""
     import secrets
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute("SELECT sub_token FROM users WHERE id=?", (user_id,)) as cur:
             row = await cur.fetchone()
         if row and row[0]:
@@ -809,14 +903,14 @@ async def rotate_sub_token(user_id: int) -> str:
     """Issues a new sub_token, invalidating the previous subscription URL."""
     import secrets
     token = secrets.token_urlsafe(24)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute("UPDATE users SET sub_token=? WHERE id=?", (token, user_id))
         await db.commit()
     return token
 
 
 async def get_user_by_sub_token(token: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM users WHERE sub_token=? LIMIT 1", (token,)) as cur:
             row = await cur.fetchone()
@@ -825,15 +919,19 @@ async def get_user_by_sub_token(token: str) -> dict | None:
 
 async def get_active_vless_configs_for_user(user_id: int) -> list[dict]:
     """Active VLESS configs (with config_data) belonging to the user.
-    Used to render subscription endpoint."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    Used to render subscription endpoint.
+
+    Включает grace: `/sub/{token}` должен работать 14 дней после истечения —
+    конфиг в config_data во время grace указывает на vless-grace inbound (порт 9453).
+    """
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT c.id, c.config_data, c.peer_name, c.label, c.protocol
                FROM configs c
                JOIN subscriptions s ON c.subscription_id = s.id
                WHERE c.user_id=? AND c.protocol='vless' AND c.status='active'
-                 AND s.status='active'
+                 AND s.status IN ('active', 'grace')
                  AND c.config_data IS NOT NULL AND c.config_data != ''
                ORDER BY c.id""",
             (user_id,),
@@ -842,8 +940,13 @@ async def get_active_vless_configs_for_user(user_id: int) -> list[dict]:
 
 
 async def get_user_configs_full(user_id: int) -> list[dict]:
-    """Конфиги пользователя с данными сервера."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    """Конфиги пользователя с данными сервера.
+
+    Включает status IN ('active', 'grace') — во время grace-периода
+    конфиги остаются доступны (с пониженной скоростью), пользователь
+    должен видеть их в Mini App с предупреждением.
+    """
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT
@@ -860,7 +963,7 @@ async def get_user_configs_full(user_id: int) -> list[dict]:
             JOIN subscriptions s ON c.subscription_id = s.id
             LEFT JOIN servers srv ON c.server_id = srv.id
             WHERE c.user_id=?
-              AND s.status='active'
+              AND s.status IN ('active', 'grace')
             ORDER BY s.created_at DESC, c.protocol DESC, c.id ASC
         """, (user_id,)) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -868,7 +971,7 @@ async def get_user_configs_full(user_id: int) -> list[dict]:
 
 async def record_payment(user_id: int, subscription_id: int, method: str,
                           stars: int = 0, amount_usd: float = 0.0, tx_id: str = ""):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute("""
             INSERT INTO payments (user_id, subscription_id, method, stars, amount_usd, tx_id)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -878,7 +981,7 @@ async def record_payment(user_id: int, subscription_id: int, method: str,
 
 async def get_configs_by_server(server_id: int) -> list[dict]:
     """Все активные конфиги на сервере (для suspend-all при истечении)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT c.id, c.wg_pubkey, c.vless_uuid, c.protocol,
@@ -891,7 +994,7 @@ async def get_configs_by_server(server_id: int) -> list[dict]:
 
 async def add_referral_bonus(referrer_id: int, days: int):
     """Начисляет дни бонуса рефереру и продлевает активную подписку."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE users SET ref_bonus_days=ref_bonus_days+? WHERE id=?",
             (days, referrer_id),
@@ -911,7 +1014,7 @@ async def try_award_referral_bonus(user_id: int, days: int) -> int | None:
 
     Триал (`plan='vpn_trial'`) не считается «первой покупкой».
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT referred_by FROM users WHERE id=?", (user_id,)
         ) as cur:
@@ -948,7 +1051,7 @@ async def create_esim_profile(user_id: int, order_id: int, tx_id: str,
                                 package_code: str, package_name: str,
                                 location_code: str, wholesale_price: int) -> int:
     """Создаёт запись eSIM-профиля сразу после place_order. Статус='pending'."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             """INSERT INTO esim_profiles
                (user_id, order_id, order_no, tx_id, package_code, package_name,
@@ -961,7 +1064,7 @@ async def create_esim_profile(user_id: int, order_id: int, tx_id: str,
 
 
 async def set_esim_order_no(profile_id: int, order_no: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE esim_profiles SET order_no=? WHERE id=?",
             (order_no, profile_id),
@@ -981,7 +1084,7 @@ async def fulfill_esim_profile(profile_id: int, esim_data: dict) -> bool:
     if len(parts) == 3:
         smdp_addr, matching_id = parts[1], parts[2]
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             """UPDATE esim_profiles SET
                    esim_tran_no=?, iccid=?, ac=?, qr_url=?, short_url=?,
@@ -1011,7 +1114,7 @@ async def fulfill_esim_profile(profile_id: int, esim_data: dict) -> bool:
 
 
 async def mark_esim_failed(profile_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE esim_profiles SET status='failed' WHERE id=?", (profile_id,)
         )
@@ -1019,7 +1122,7 @@ async def mark_esim_failed(profile_id: int):
 
 
 async def get_esim_profile(profile_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM esim_profiles WHERE id=?", (profile_id,)
@@ -1029,7 +1132,7 @@ async def get_esim_profile(profile_id: int) -> dict | None:
 
 
 async def get_esim_by_order_no(order_no: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM esim_profiles WHERE order_no=? LIMIT 1", (order_no,)
@@ -1039,7 +1142,7 @@ async def get_esim_by_order_no(order_no: str) -> dict | None:
 
 
 async def get_esim_by_tran_no(esim_tran_no: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM esim_profiles WHERE esim_tran_no=? LIMIT 1",
@@ -1051,7 +1154,7 @@ async def get_esim_by_tran_no(esim_tran_no: str) -> dict | None:
 
 async def get_user_esim_profiles(user_id: int) -> list[dict]:
     """Все eSIM-профили пользователя (новые сверху, не failed)."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT * FROM esim_profiles
@@ -1064,7 +1167,7 @@ async def get_user_esim_profiles(user_id: int) -> list[dict]:
 
 async def get_esim_profiles_for_usage_sync(limit: int = 200) -> list[dict]:
     """Активные профили с esim_tran_no — для batch-синка юзеджа."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT id, esim_tran_no, total_volume, used_volume FROM esim_profiles
@@ -1078,7 +1181,7 @@ async def get_esim_profiles_for_usage_sync(limit: int = 200) -> list[dict]:
 
 
 async def update_esim_usage(esim_tran_no: str, used_bytes: int):
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """UPDATE esim_profiles
                SET used_volume=?, last_sync_at=CURRENT_TIMESTAMP

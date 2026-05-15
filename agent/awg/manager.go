@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/curve25519"
+	"vpnctl/internal/wgcore"
 )
 
 // Дефолты клиентского конфига. Менять осторожно — все клиенты пересоберутся.
@@ -288,38 +289,24 @@ func (m *Manager) Stats() ([]*Peer, error) {
 
 // nextFreeIP перебирает подсеть начиная с третьего адреса (.2), пропуская
 // серверный IP. Первые два адреса (.0 network, .1 server) зарезервированы.
+// IP-utils (`inc`, `cloneIP`) — общие с `wg` пакетом, см. `internal/wgcore`.
 func (m *Manager) nextFreeIP() (string, error) {
 	_, network, err := net.ParseCIDR(m.params.Subnet)
 	if err != nil {
 		return "", err
 	}
-	ip := cloneIP(network.IP)
-	inc(ip)
-	inc(ip)
+	ip := wgcore.CloneIP(network.IP)
+	wgcore.Inc(ip)
+	wgcore.Inc(ip)
 
 	for network.Contains(ip) {
 		s := ip.String()
 		if !m.usedIPs[s] && s != m.params.ServerIP {
 			return s, nil
 		}
-		inc(ip)
+		wgcore.Inc(ip)
 	}
 	return "", fmt.Errorf("no free IPs in %s", m.params.Subnet)
-}
-
-func inc(ip net.IP) {
-	for j := len(ip) - 1; j >= 0; j-- {
-		ip[j]++
-		if ip[j] != 0 {
-			break
-		}
-	}
-}
-
-func cloneIP(ip net.IP) net.IP {
-	c := make(net.IP, len(ip))
-	copy(c, ip)
-	return c
 }
 
 // generateKeypair — Curve25519 ключи в base64 (WireGuard формат).

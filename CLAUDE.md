@@ -206,6 +206,23 @@ rsync -avz --exclude='__pycache__' --exclude='*.pyc' --exclude='.env' \
 ssh root@151.243.113.31 'systemctl restart vpnbot'
 ```
 
+### ⚠️ DESTRUCTIVE OPS ON PROD — ПРАВИЛА
+
+**Перед любым `rm -rf`, `mv`, `chmod -R` на проде:**
+
+1. **`ls -la <target>` ОБЯЗАТЕЛЬНО** — узнать что там реально лежит
+2. **Если есть файлы с возрастом > 1 дня** → это НЕ временный мусор, делай tar snapshot:
+   ```bash
+   tar czf /root/safety_$(date +%s).tar.gz <target>
+   ```
+3. **Только потом** — `rm -rf`
+
+**Production бот живёт в `/opt/vpnbot/`** (НЕ `/opt/vpnbot/bot/`!). Раньше был легаси-deploy в `bot/` подпапке с venv + .env. **Snapshot от 12.05** лежит в `/root/vpnbot_backup_20260512_102844.tar.gz` — последний known-good если что.
+
+**Production БД:** `/opt/vpnbot/bot.db`. Daily backup уходит админу в TG. На случай факапа — gunzip из чата → положить как `bot.db` → restart.
+
+**Урок 2026-05-15:** `rm -rf /opt/vpnbot/bot` потёр прод-БД + .env + venv. Восстановилось из 12.05 backup'а, но 3 дня данных пропало. Не повторять.
+
 ---
 
 ## Key Notes

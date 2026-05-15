@@ -16,6 +16,34 @@ import aiohttp
 
 log = logging.getLogger(__name__)
 
+# Shared session — переиспользует TCP/TLS connection между запросами.
+# Раньше aiohttp.ClientSession создавался на каждый _request() → новый
+# TCP handshake + TLS, 50-200мс per call. На hourly sync с 5 сервисами
+# × N серверов это ~секунды латентности впустую. Lazy-init чтобы не
+# создавать session до первого фактического вызова (импорт безопасен).
+_SHARED_SESSION: aiohttp.ClientSession | None = None
+
+
+def _get_session() -> aiohttp.ClientSession:
+    global _SHARED_SESSION
+    if _SHARED_SESSION is None or _SHARED_SESSION.closed:
+        _SHARED_SESSION = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(
+                limit=50,            # max parallel connections across all servers
+                limit_per_host=10,   # max per agent — hourly sync hits ~5
+                ttl_dns_cache=300,
+            ),
+        )
+    return _SHARED_SESSION
+
+
+async def close_shared_session() -> None:
+    """Закрывает shared session. Вызывать на shutdown."""
+    global _SHARED_SESSION
+    if _SHARED_SESSION is not None and not _SHARED_SESSION.closed:
+        await _SHARED_SESSION.close()
+        _SHARED_SESSION = None
+
 
 @dataclass
 class PeerResult:
@@ -40,10 +68,13 @@ class VpnctlClient:
         ts = str(int(time.time()))
         msg = f"{ts}:{method}{path}:".encode() + body
         sig = _hmac.new(self.token.encode(), msg, hashlib.sha256).hexdigest()
+        # ВНИМАНИЕ: ранее тут отправлялся ещё `X-Agent-Token: <raw token>` как
+        # legacy fallback. Это убивало защиту HMAC — перехват одного запроса
+        # = вечный токен, привязка к timestamp/path/body выбрасывалась. Удалено
+        # 15.05 (sec audit C1). Если агент на старой версии — пересобрать.
         return {
-            "X-Agent-Sig":   f"{ts}.{sig}",
-            "X-Agent-Token": self.token,  # legacy fallback
-            "Content-Type":  "application/json",
+            "X-Agent-Sig":  f"{ts}.{sig}",
+            "Content-Type": "application/json",
         }
 
     @staticmethod
@@ -56,19 +87,19 @@ class VpnctlClient:
         body_bytes = b"" if body is None else _json.dumps(body, separators=(",", ":")).encode()
         headers = self._sign(method, path, body_bytes)
         url = f"{self.base}{path}"
-        async with aiohttp.ClientSession() as s:
-            async with s.request(
-                method, url,
-                data=body_bytes if body_bytes else None,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=timeout_s),
-            ) as r:
-                ctype = r.headers.get("Content-Type", "")
-                if "application/json" in ctype:
-                    data = await r.json()
-                else:
-                    data = await r.text()
-                return r.status, data
+        s = _get_session()
+        async with s.request(
+            method, url,
+            data=body_bytes if body_bytes else None,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout_s),
+        ) as r:
+            ctype = r.headers.get("Content-Type", "")
+            if "application/json" in ctype:
+                data = await r.json()
+            else:
+                data = await r.text()
+            return r.status, data
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -129,6 +160,23 @@ class VpnctlClient:
     async def resume_all(self, service: str, ids: list[str]):
         await self._request("POST", f"/services/{service}/peers/resume-all", {"ids": ids})
 
+    async def throttle_peer(self, service: str, peer_id: str, assigned_ip: str, kbps: int = 256):
+        """Grace-period throttle: ограничивает скорость пира через tc на awg0.
+        Для VLESS — переключает на vless-grace inbound (порт 9453)."""
+        await self._request(
+            "POST",
+            f"/services/{service}/peers/{quote(peer_id, safe='')}/throttle",
+            {"ip": assigned_ip, "kbps": kbps},
+        )
+
+    async def unthrottle_peer(self, service: str, peer_id: str, assigned_ip: str):
+        """Снимает grace-period throttle."""
+        await self._request(
+            "DELETE",
+            f"/services/{service}/peers/{quote(peer_id, safe='')}/throttle",
+            {"ip": assigned_ip},
+        )
+
     async def sync_active_ids(self, service: str, valid_ids: list[str]) -> dict:
         st, data = await self._request(
             "POST", f"/services/{service}/sync", {"valid_ids": valid_ids}, timeout_s=15,
@@ -184,3 +232,118 @@ async def resume_peer(server: dict, peer_id: str, protocol: str):
         await client_for_server(server).resume_peer(protocol, peer_id)
     except Exception as e:
         log.warning(f"resume_peer: {e}")
+
+
+async def throttle_peer(server: dict, peer_id: str, protocol: str, assigned_ip: str, kbps: int = 256):
+    """Применяет tc-throttle на пир. Для AWG — фильтр по dst IP на awg0."""
+    try:
+        await client_for_server(server).throttle_peer(protocol, peer_id, assigned_ip, kbps=kbps)
+    except Exception as e:
+        log.warning(f"throttle_peer: {e}")
+
+
+async def unthrottle_peer(server: dict, peer_id: str, protocol: str, assigned_ip: str):
+    """Снимает tc-throttle с пира."""
+    try:
+        await client_for_server(server).unthrottle_peer(protocol, peer_id, assigned_ip)
+    except Exception as e:
+        log.warning(f"unthrottle_peer: {e}")
+
+
+# ── Smoke-test CLI ─────────────────────────────────────────────────────────────
+#
+# `python -m services.vpnctl_client probe <server_id>` — быстрая диагностика
+# связи с vpnctl-агентом. Печатает каноничную HMAC-строку (для дебага 401),
+# тайминги, и список сервисов. Полезно когда что-то не работает в проде
+# и надо понять — это бот, агент, сеть, или подпись.
+
+async def _probe_server(server_id: int) -> int:
+    """Пингует все эндпоинты агента сервера и печатает отчёт. Возвращает exit code."""
+    import sys
+    from services.database import get_server_by_id
+
+    server = await get_server_by_id(server_id)
+    if not server:
+        print(f"❌ Server #{server_id} не найден в БД", file=sys.stderr)
+        return 1
+    if not server.get("agent_url") or not server.get("agent_token"):
+        print(f"❌ Server #{server_id} не настроен (нет agent_url или agent_token)", file=sys.stderr)
+        return 1
+
+    print(f"Probing server #{server_id}: {server.get('name')} ({server['agent_url']})")
+    print(f"Token: {server['agent_token'][:8]}...{server['agent_token'][-4:]}  (length: {len(server['agent_token'])})")
+    print()
+
+    client = VpnctlClient(server["agent_url"], server["agent_token"])
+    ok_count = 0
+    fail_count = 0
+
+    # 1) /health — без auth (но всё равно подписываем чтоб проверить)
+    print("─── 1) GET /health ───")
+    t0 = time.time()
+    try:
+        st, data = await client._request("GET", "/health", timeout_s=10)
+        elapsed = (time.time() - t0) * 1000
+        print(f"  status: {st}, latency: {elapsed:.0f}ms")
+        if st == 200:
+            print(f"  uptime: {data.get('uptime')}, services: {data.get('services')}")
+            ok_count += 1
+        else:
+            print(f"  ❌ body: {data}")
+            fail_count += 1
+    except Exception as e:
+        print(f"  ❌ network error: {e}")
+        fail_count += 1
+
+    # 2) /services — требует HMAC
+    print("\n─── 2) GET /services (HMAC required) ───")
+    ts = str(int(time.time()))
+    canonical = f"{ts}:GET/services:"
+    print(f"  canonical string: {canonical!r}")
+    print(f"  HMAC-SHA256(token, canonical) = подпись")
+    t0 = time.time()
+    try:
+        st, data = await client._request("GET", "/services", timeout_s=10)
+        elapsed = (time.time() - t0) * 1000
+        print(f"  status: {st}, latency: {elapsed:.0f}ms")
+        if st == 200:
+            services = [s.get("name") for s in data] if isinstance(data, list) else data
+            print(f"  ✅ services: {services}")
+            ok_count += 1
+        elif st == 401:
+            print(f"  ❌ 401 — HMAC не верифицировался. Проверь:")
+            print(f"    - Токен в БД совпадает с AGENT_TOKEN на сервере?")
+            print(f"    - Время на боте и сервере синхронизировано (replay window 5 min)?")
+            fail_count += 1
+        else:
+            print(f"  ❌ body: {data}")
+            fail_count += 1
+    except Exception as e:
+        print(f"  ❌ network error: {e}")
+        fail_count += 1
+
+    print(f"\n{'='*50}")
+    print(f"OK: {ok_count}  /  FAIL: {fail_count}")
+    return 0 if fail_count == 0 else 1
+
+
+def _cli() -> int:
+    import asyncio as _asyncio
+    import sys
+    if len(sys.argv) < 3 or sys.argv[1] != "probe":
+        print("Usage: python -m services.vpnctl_client probe <server_id>", file=sys.stderr)
+        return 2
+    try:
+        server_id = int(sys.argv[2])
+    except ValueError:
+        print(f"❌ server_id must be int, got {sys.argv[2]!r}", file=sys.stderr)
+        return 2
+    code = _asyncio.run(_probe_server(server_id))
+    # Корректно закрываем shared session чтобы asyncio не ругался при exit.
+    _asyncio.run(close_shared_session())
+    return code
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(_cli())

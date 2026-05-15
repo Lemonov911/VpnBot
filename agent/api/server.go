@@ -57,6 +57,8 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/peers/{id}/resume", s.handleServiceResumePeer(svcRef))
 				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, false))
 				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, false))
+				r.Post("/peers/{id}/throttle", s.handleServiceThrottlePeer("awg0"))
+				r.Delete("/peers/{id}/throttle", s.handleServiceUnthrottlePeer("awg0"))
 				r.Post("/sync", s.handleServiceSync(svcRef))
 				r.Get("/info", s.handleServiceInfo(svcRef))
 			})
@@ -76,30 +78,21 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
-// authMiddleware accepts EITHER a static `X-Agent-Token` header (legacy)
-// OR a HMAC-SHA256 signature: header `X-Agent-Sig: <ts>.<hex(hmac)>`
-// where `hmac = HMAC_SHA256(token, ts + ":" + method + path + ":" + body)`.
+// authMiddleware требует HMAC-SHA256 подпись в заголовке
+// `X-Agent-Sig: <ts>.<hex(hmac)>` где hmac = HMAC_SHA256(token, ts+":"+method+path+":"+body).
 //
-// HMAC bumps protection over a leaked token: signatures are bound to ts
-// (replay window 5 min) and request shape, so capturing a single header
-// cannot impersonate other endpoints / past requests.
+// Раньше принимался также `X-Agent-Token: <raw token>` как legacy fallback.
+// Удалён 2026-05-15 (sec audit C1): он сводил на нет защиту HMAC от replay/
+// перехвата одиночного запроса. Если боту нужно откатиться — оба компонента
+// (агент + bot) рестартить вместе, иначе 401.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Prefer HMAC if present
-		if sig := r.Header.Get("X-Agent-Sig"); sig != "" {
-			if s.verifyHMAC(r, sig) {
-				next.ServeHTTP(w, r)
-				return
-			}
+		sig := r.Header.Get("X-Agent-Sig")
+		if sig == "" || !s.verifyHMAC(r, sig) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// Legacy static-token fallback
-		if r.Header.Get("X-Agent-Token") == s.token {
-			next.ServeHTTP(w, r)
-			return
-		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		next.ServeHTTP(w, r)
 	})
 }
 

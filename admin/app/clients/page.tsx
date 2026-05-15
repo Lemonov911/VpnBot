@@ -49,6 +49,7 @@ export default async function Clients() {
           <Link href="/monitoring"  className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
           <Link href="/tickets"     className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
           <Link href="/servers"     className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
+          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">Выход</a>
         </div>
       </div>
 

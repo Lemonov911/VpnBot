@@ -58,13 +58,19 @@ def _resolve_user(request: web.Request, body: dict | None = None) -> dict | None
     # 1. Заголовок (новый способ)
     init_data = request.headers.get("X-Telegram-Init-Data", "").strip()
 
-    # 2. Тело запроса (старый способ — совместимость)
+    # 2. Тело запроса (старый способ — совместимость с legacy POST)
     if not init_data and body:
         init_data = body.get("init_data", "").strip()
 
-    # 3. Query-параметр (GET-запросы)
+    # 3. Query-параметр — ТОЛЬКО для эндпоинтов которым он реально нужен
+    #    (WebApp.openLink/downloadFile в Telegram не передаёт headers).
+    #    Sec audit H1 (15.05): раньше query-fallback был для ВСЕХ эндпоинтов
+    #    → initData попадал в nginx access.log на каждый запрос → 24h
+    #    impersonation. Теперь только path /api/vpn/config/{id}/download|qr.
     if not init_data:
-        init_data = request.rel_url.query.get("init_data", "").strip()
+        path = request.path
+        if "/download" in path or "/qr" in path:
+            init_data = request.rel_url.query.get("init_data", "").strip()
 
     user = verify_init_data(init_data, BOT_TOKEN) if init_data else None
 
@@ -244,15 +250,14 @@ async def handle_public_status(request: web.Request) -> web.Response:
     """
     import asyncio
     from datetime import datetime
-    from services.health import uptime_summary, last_24h_strip, recent_incidents
+    from services.health import uptime_summary, last_24h_strip, last_30d_strip, recent_incidents
 
     now = _time.monotonic()
 
-    # Rate limit: 1 req / 6s per IP (≈10 rpm)
+    # Rate limit: 1 req / 6s per IP (≈10 rpm) — с lazy eviction старых ключей.
     ip = request.remote or ""
-    if now - _status_rate.get(ip, 0.0) < 6.0:
+    if not _rate_limit_check_evict(_status_rate, ip, now, window=6.0):
         return web.json_response({"error": "rate_limit"}, status=429)
-    _status_rate[ip] = now
 
     # Cache 30s
     if _status_cache["data"] is not None and now - _status_cache["ts"] < 30.0:
@@ -290,9 +295,10 @@ async def handle_public_status(request: web.Request) -> web.Response:
         probe = last_probe.get(sid)
         status = probe["status"] if probe else "unknown"
         latency_ms = probe["latency_ms"] if probe else None
-        uptime, strip = await asyncio.gather(
+        uptime, strip24, strip30 = await asyncio.gather(
             uptime_summary(sid),
             last_24h_strip(sid),
+            last_30d_strip(sid),
         )
         return {
             "id":         sid,
@@ -303,7 +309,8 @@ async def handle_public_status(request: web.Request) -> web.Response:
             "status":     status,
             "latency_ms": latency_ms,
             "uptime":     uptime,
-            "strip_24h":  strip,
+            "strip_24h":  strip24,
+            "strip_30d":  strip30,
         }
 
     if servers:
@@ -335,6 +342,67 @@ async def handle_public_status(request: web.Request) -> web.Response:
     _status_cache["data"] = payload
     _status_cache["ts"]   = _time.monotonic()
     return web.json_response(payload)
+
+
+# Rate-limit для public incidents endpoint — те же 1 req / 6s per IP
+_incidents_rate: dict[str, float] = {}
+
+
+def _rate_limit_check_evict(bucket: dict[str, float], ip: str, now: float, window: float = 6.0) -> bool:
+    """Возвращает True если запрос разрешён (не превысил rate-limit), False если 429.
+    Защита от unbounded memory: чистит старые записи когда dict разрастается."""
+    # Lazy eviction: при росте dict'а удаляем entries старше окна.
+    # Без этого attacker с 10M уникальных IPv6 = OOM на боте (sec audit M7).
+    if len(bucket) > 1000:
+        cutoff = now - window * 2
+        stale = [k for k, v in bucket.items() if v < cutoff]
+        for k in stale:
+            del bucket[k]
+    if now - bucket.get(ip, 0.0) < window:
+        return False
+    bucket[ip] = now
+    return True
+
+
+async def handle_public_incidents(request: web.Request) -> web.Response:
+    """GET /api/status/incidents?limit=50&offset=0 — full incident history.
+
+    Public endpoint (без auth) для status-page incident history.
+    Rate limit + cache как у /api/status.
+    """
+    from services.health import all_incidents
+
+    now = _time.monotonic()
+    ip = request.remote or ""
+    if not _rate_limit_check_evict(_incidents_rate, ip, now, window=6.0):
+        return web.json_response({"error": "rate_limit"}, status=429)
+
+    try:
+        limit = max(1, min(200, int(request.query.get("limit", "50"))))
+    except ValueError:
+        limit = 50
+    try:
+        offset = max(0, int(request.query.get("offset", "0")))
+    except ValueError:
+        offset = 0
+
+    incidents, total = await all_incidents(limit=limit, offset=offset)
+    return web.json_response({
+        "incidents": [
+            {
+                "id":           inc["id"],
+                "server_name":  inc.get("server_name", "?"),
+                "flag":         inc.get("flag") or "🌍",
+                "started_at":   inc.get("started_at"),
+                "resolved_at":  inc.get("resolved_at"),
+                "duration_sec": inc.get("duration_sec"),
+            }
+            for inc in incidents
+        ],
+        "total":  total,
+        "limit":  limit,
+        "offset": offset,
+    })
 
 
 async def handle_vpn_status(request: web.Request) -> web.Response:
@@ -625,6 +693,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         stars_paid=0,
         expires_at=expires_at,
     )
+    # None = UNIQUE-constraint сработал → дубль webhook'а от CryptoBot
+    # (они любят retry на 5xx). Идемпотентный 200.
+    if sub_id is None:
+        logger.warning("CryptoBot: payment %s TOCTOU-duplicate, ignored", payment_id)
+        return web.Response(status=200)
 
     order_id = await create_order(
         user_id=user_id,
@@ -721,9 +794,18 @@ async def handle_esim_webhook(request: web.Request) -> web.Response:
       SMDP_EVENT    — события на стороне SM-DP+ сервера
       LOW_BALANCE   — баланс упал ниже 25% или 10%
     """
-    if ESIM_WEBHOOK_SECRET:
+    # Sec audit H4 (15.05): ESIM_WEBHOOK_SECRET ОБЯЗАТЕЛЕН в проде. Раньше
+    # пустой секрет тихо отключал auth → любой мог POST'ить fake ORDER_STATUS.
+    if not ESIM_WEBHOOK_SECRET:
+        if not DEBUG:
+            logger.error("eSIM webhook: ESIM_WEBHOOK_SECRET не задан в prod — отклоняем")
+            return web.json_response({"error": "webhook auth not configured"}, status=503)
+        # В DEBUG разрешаем (для локальных тестов)
+    else:
+        import hmac as _hmac_lib
         incoming = request.headers.get("X-Api-Key", "") or request.headers.get("Authorization", "").removeprefix("Bearer ")
-        if incoming != ESIM_WEBHOOK_SECRET:
+        # Constant-time compare защищает от timing-attack на secret.
+        if not _hmac_lib.compare_digest(incoming.encode(), ESIM_WEBHOOK_SECRET.encode()):
             logger.warning("eSIM webhook: bad secret from %s", request.remote)
             return web.json_response({"error": "unauthorized"}, status=401)
 
@@ -835,16 +917,27 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         })
 
     expires = datetime.fromisoformat(sub["expires_at"])
-    remaining_days = max(0, (expires - datetime.utcnow()).days)
+    now = datetime.utcnow()
+    remaining_days = max(0, (expires - now).days)
+
+    # Grace-период: подписка истекла, но 14 дней работает на 256 кбит/с.
+    # UI должен показать баннер «Подписка истекла, осталось N дней» + CTA продлить.
+    is_grace = sub.get("status") == "grace"
+    grace_days_left = 0
+    if is_grace and sub.get("grace_until"):
+        grace_until = datetime.fromisoformat(sub["grace_until"])
+        grace_days_left = max(0, (grace_until - now).days)
 
     return web.json_response({
-        "id":             sub["id"],
-        "plan":           sub["plan"],
-        "stars_paid":     sub["stars_paid"],
-        "expires_at":     sub["expires_at"],
-        "pending_plan":   sub["pending_plan"],
-        "days_remaining": remaining_days,
-        "status":         "active",
+        "id":              sub["id"],
+        "plan":            sub["plan"],
+        "stars_paid":      sub["stars_paid"],
+        "expires_at":      sub["expires_at"],
+        "pending_plan":    sub["pending_plan"],
+        "days_remaining":  remaining_days,
+        "status":          "grace" if is_grace else "active",
+        "grace_until":     sub.get("grace_until"),
+        "grace_days_left": grace_days_left,
     })
 
 
@@ -907,25 +1000,41 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     try:
         bot: Bot = request.app["bot"]
         expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
-        await bot.send_message(
-            user["id"],
-            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
-            f"📅 До: <b>{expires_str}</b>\n"
-            f"🚀 Скорость: 60 Mbps\n\n"
-            f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
-            f"<code>{result['sub_url']}</code>\n\n"
-            f"📖 Инструкция: /howto\n"
-            f"💎 После trial — выбери постоянный тариф в /start",
-            parse_mode="HTML",
-        )
+        has_awg = bool(result.get("awg_config"))
+
+        if has_awg:
+            msg = (
+                f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+                f"📅 До: <b>{expires_str}</b>\n"
+                f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
+                f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
+                f"   Открой Configs (📁 в Mini App) → скачай AWG-конфиг\n\n"
+                f"<b>2) VLESS Subscription URL</b> (для Happ / V2Box):\n"
+                f"<code>{result['sub_url']}</code>\n\n"
+                f"📖 Инструкция: /howto\n"
+                f"💎 После trial — выбери постоянный тариф в /start"
+            )
+        else:
+            msg = (
+                f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+                f"📅 До: <b>{expires_str}</b>\n"
+                f"🚀 Скорость: 60 Mbps\n\n"
+                f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
+                f"<code>{result['sub_url']}</code>\n\n"
+                f"📖 Инструкция: /howto\n"
+                f"💎 После trial — выбери постоянный тариф в /start"
+            )
+        await bot.send_message(user["id"], msg, parse_mode="HTML")
     except Exception as e:
         logger.warning("trial notify failed for user=%d: %s", user["id"], e)
 
     return web.json_response({
-        "sub_id":        result["sub_id"],
-        "sub_url":       result["sub_url"],
-        "expires_at":    result["expires_at"].isoformat(),
-        "duration_days": result["duration_days"],
+        "sub_id":         result["sub_id"],
+        "sub_url":        result["sub_url"],
+        "awg_config_id":  result.get("awg_config_id"),
+        "has_awg":        bool(result.get("awg_config")),
+        "expires_at":     result["expires_at"].isoformat(),
+        "duration_days":  result["duration_days"],
     })
 
 
@@ -1037,6 +1146,24 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     urls = [c["config_data"] for c in configs if c.get("config_data")]
     body_text = "\n".join(urls)
     encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
+
+    # Edge audit H1: если у юзера нет active/grace конфигов (post-grace expiry),
+    # вернуть НЕ пустоту, а явный «expired» header. Иначе Happ показывает
+    # «0 серверов» и юзер думает что подписка отвалилась раньше времени.
+    if not urls:
+        import time as _t
+        return web.Response(
+            text="",
+            headers={
+                "Content-Type":           "text/plain; charset=utf-8",
+                "Cache-Control":          "no-cache, no-store, must-revalidate",
+                "Subscription-Userinfo":  f"download=0; upload=0; total=1; expire={int(_t.time()) - 1}",
+                "Profile-Update-Interval": "12",
+                "Profile-Title":          "❌ MAX VPN — подписка истекла",
+                "Profile-Web-Page-Url":   "https://t.me/maxvpnesim_bot",
+                "Support-Url":            "https://t.me/maxvpnesim_bot",
+            },
+        )
 
     # ── Build Subscription-Userinfo header ───────────────────────────────────
     # Найдём активную подписку юзера + лимиты её плана + использованный трафик
@@ -1251,6 +1378,7 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_get ("/api/vpn/status",                 handle_vpn_status)
     # Public — no auth, for /status page
     app.router.add_get ("/api/status",                     handle_public_status)
+    app.router.add_get ("/api/status/incidents",           handle_public_incidents)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)

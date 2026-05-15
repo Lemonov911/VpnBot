@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
   getUserConfigs, getConfigDownloadUrl, getConfigQrUrl, getVpnServers,
-  activateSlot, revokeConfig,
-  type VpnConfig, type VpnServer,
+  activateSlot, revokeConfig, getTrialStatus, claimTrial,
+  type VpnConfig, type VpnServer, type TrialStatus,
 } from '../api'
 import { useT, useLang, type TKey } from '../i18n'
 
@@ -58,22 +58,27 @@ const PROTO_HINT: Record<string, string> = {
   awg:   'AmneziaWG · iOS · Android · Mac',
 }
 
-function QrModal({ url, onClose }: { url: string; onClose: () => void }) {
+function QrModal({ url, protocol, onClose }: { url: string; protocol?: string; onClose: () => void }) {
   const t = useT()
+  // AWG/WG QR ≠ VLESS QR. Раньше для всех писали «Отсканируй в Happ» — это
+  // wrong app для AmneziaWG: AWG QR работает только в Amnezia VPN / AmneziaWG.
+  const isWG = protocol === 'awg' || protocol === 'wg'
+  const titleKey = isWG ? 'configs_qr_title_wg' : 'configs_qr_title'
+  const subKey   = isWG ? 'configs_qr_sub_wg'   : 'configs_qr_sub'
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 bg-black/65 z-[200]" />
       <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] px-6 pt-5 pb-10 z-[201] text-center">
         <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
         <div className="font-bold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">
-          {t('configs_qr_title')}
+          {t(titleKey as never)}
         </div>
         <div className="text-[13px] text-[var(--tg-theme-hint-color)] mb-5">
-          {t('configs_qr_sub')}
+          {t(subKey as never)}
         </div>
         <img
           src={url}
-          alt={t('configs_qr_title')}
+          alt={t(titleKey as never)}
           className="w-[220px] h-[220px] rounded-xl bg-white p-2 block mx-auto mb-5"
         />
         <button onClick={onClose} className="w-full py-3 rounded-[14px] border-none bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-text-color)] text-[15px] cursor-pointer">
@@ -241,12 +246,16 @@ function SlotCard({
 
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] truncate">
-              {label} · #{slot.slot_num}
+              {/* Когда активен — показываем `#1 · Amsterdam`, без префикса протокола
+                  (его уже видно по цветной иконке слева). Когда empty — нужен label. */}
+              {isEmpty
+                ? `${label} · #${slot.slot_num}`
+                : `#${slot.slot_num} · ${slot.server_flag ? slot.server_flag + ' ' : ''}${slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}`}
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
               {isEmpty
                 ? t('configs_not_activated')
-                : `${slot.server_flag ? slot.server_flag + ' ' : ''}${slot.server_name || slot.label || slot.peer_name || `config_${slot.id}`}`}
+                : PROTO_HINT[slot.protocol] ?? label}
             </div>
             {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
               <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5 opacity-70">
@@ -282,7 +291,8 @@ function SlotCard({
               </button>
               <button
                 onClick={handleRevoke}
-                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0"
+                aria-label="revoke"
+                className="w-9 h-9 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -327,7 +337,8 @@ function SlotCard({
               </button>
               <button
                 onClick={handleRevoke}
-                className="w-9 h-9 rounded-[10px] border-none bg-danger/10 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0"
+                aria-label="revoke"
+                className="w-9 h-9 ml-1 rounded-[10px] border border-danger/30 bg-danger/15 text-[var(--tg-theme-destructive-text-color,#ff3b30)] flex items-center justify-center cursor-pointer shrink-0 active:bg-danger active:text-white"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -354,7 +365,7 @@ function SlotCard({
           activating={activating}
         />
       )}
-      {showQr && <QrModal url={getConfigQrUrl(slot.id)} onClose={() => setShowQr(false)} />}
+      {showQr && <QrModal url={getConfigQrUrl(slot.id)} protocol={slot.protocol} onClose={() => setShowQr(false)} />}
     </>
   )
 }
@@ -407,6 +418,10 @@ export default function Configs() {
   const [slots,    setSlots]    = useState<RawSlot[]>([])
   const [loading,  setLoading]  = useState(true)
   const [errMsg,  setErrMsg]   = useState('')
+  // Lazy-fetch trial status — нужен только для empty state. Если у юзера
+  // уже есть слоты, fetching не нужен.
+  const [trial,    setTrial]    = useState<TrialStatus | null>(null)
+  const [claiming, setClaiming] = useState(false)
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -418,12 +433,31 @@ export default function Configs() {
   const load = () => {
     setLoading(true)
     getUserConfigs()
-      .then(data => setSlots(data as RawSlot[]))
+      .then(data => {
+        setSlots(data as RawSlot[])
+        // Если конфигов нет — фетчим trial-статус для empty-state CTA
+        if ((data as RawSlot[]).length === 0) {
+          getTrialStatus().then(setTrial).catch(() => {})
+        }
+      })
       .catch(() => setErrMsg(t('configs_err_load')))
       .finally(() => setLoading(false))
   }
 
   useEffect(load, [])
+
+  const handleClaimTrial = async () => {
+    setClaiming(true)
+    try {
+      await claimTrial()
+      WebApp.HapticFeedback.notificationOccurred('success')
+      load()  // конфиги появились → перезагрузить
+    } catch (e) {
+      setErrMsg(e instanceof Error ? e.message : t('trial_err_generic'))
+    } finally {
+      setClaiming(false)
+    }
+  }
 
   const handleActivate = async (configId: number, serverId: number) => {
     try {
@@ -476,7 +510,23 @@ export default function Configs() {
           <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-center justify-center text-[30px]">🔒</div>
           <div className="font-semibold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">{t('configs_no_sub')}</div>
           <p className="text-[var(--tg-theme-hint-color)] text-[13px] mb-6">{t('configs_no_sub_sub')}</p>
-          <button className="btn py-[11px] px-8" onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>
+          {/* Если триал доступен — главный CTA это «бесплатно 3 дня», иначе «купить».
+              Раньше юзер landing'ом на /configs (deep-link, payment fail) не видел
+              триал-опцию вообще, шёл «Купить» или уходил. */}
+          {trial?.eligible ? (
+            <>
+              <button className="btn py-[11px] px-8 mb-3" disabled={claiming} onClick={handleClaimTrial}>
+                {claiming ? t('trial_claiming') : `🎁 ${t('trial_banner_btn')}`}
+              </button>
+              <div>
+                <button onClick={() => nav('/vpn/plans')} className="text-[12px] text-[var(--tg-theme-hint-color)] underline border-none bg-transparent cursor-pointer">
+                  {t('configs_buy')}
+                </button>
+              </div>
+            </>
+          ) : (
+            <button className="btn py-[11px] px-8" onClick={() => nav('/vpn/plans')}>{t('configs_buy')}</button>
+          )}
         </div>
       )}
 

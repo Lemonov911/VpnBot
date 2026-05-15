@@ -124,13 +124,15 @@ export function revokeConfig(configId: number): Promise<{ ok: boolean }> {
 }
 
 export interface Subscription {
-  id:             number
-  plan:           string
-  stars_paid:     number
-  expires_at:     string
-  pending_plan:   string | null
-  days_remaining: number
-  status?:        'active' | 'expired'
+  id:               number
+  plan:             string
+  stars_paid:       number
+  expires_at:       string
+  pending_plan:     string | null
+  days_remaining:   number
+  status?:          'active' | 'grace' | 'expired'
+  grace_until?:     string | null
+  grace_days_left?: number
 }
 
 export function getActiveSubscription(): Promise<Subscription | null> {
@@ -181,6 +183,7 @@ export interface PublicServerStatus {
   latency_ms:  number | null
   uptime:      { '24h': UptimeWindow; '7d': UptimeWindow; '30d': UptimeWindow }
   strip_24h:   Array<'up' | 'down' | 'unknown'>
+  strip_30d:   Array<'up' | 'down' | 'partial' | 'unknown'>
 }
 
 export interface Incident {
@@ -204,6 +207,20 @@ export async function getPublicStatus(): Promise<PublicStatus> {
   // No auth headers — endpoint is public and is reachable from a browser
   // tab that has no Telegram initData.
   const res = await fetch((import.meta.env.VITE_API_URL ?? '') + '/api/status')
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export interface IncidentHistory {
+  incidents: Incident[]
+  total:     number
+  limit:     number
+  offset:    number
+}
+
+export async function getIncidentHistory(limit = 50, offset = 0): Promise<IncidentHistory> {
+  const url = `${import.meta.env.VITE_API_URL ?? ''}/api/status/incidents?limit=${limit}&offset=${offset}`
+  const res = await fetch(url)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

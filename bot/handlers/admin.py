@@ -150,15 +150,31 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
         return (f"⚠️ Ошибка провижининга: {e}", {})
 
     expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
-    text = (
-        f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
-        f"📅 До: <b>{expires_str}</b>\n"
-        f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
-        f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
-        f"<code>{result['sub_url']}</code>\n\n"
-        f"📖 Инструкция: /howto\n"
-        f"💎 После trial — выбери постоянный тариф в /start"
-    )
+    has_awg = bool(result.get("awg_config"))
+
+    if has_awg:
+        text = (
+            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+            f"📅 До: <b>{expires_str}</b>\n"
+            f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
+            f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
+            f"   Открой Configs (/start → 📁 Конфиги) → скачай AWG-конфиг\n\n"
+            f"<b>2) VLESS Subscription URL</b> (для Happ / V2Box):\n"
+            f"<code>{result['sub_url']}</code>\n\n"
+            f"📖 Инструкция: /howto\n"
+            f"💎 После trial — выбери постоянный тариф в /start"
+        )
+    else:
+        # AWG-сервер недоступен — fallback на VLESS-only (старое поведение)
+        text = (
+            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+            f"📅 До: <b>{expires_str}</b>\n"
+            f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
+            f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
+            f"<code>{result['sub_url']}</code>\n\n"
+            f"📖 Инструкция: /howto\n"
+            f"💎 После trial — выбери постоянный тариф в /start"
+        )
     return (text, {"parse_mode": "HTML"})
 
 

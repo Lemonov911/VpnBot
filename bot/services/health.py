@@ -304,6 +304,48 @@ async def last_24h_strip(server_id: int, buckets: int = 24) -> list[str]:
     return strip
 
 
+async def last_30d_strip(server_id: int, buckets: int = 30) -> list[str]:
+    """Возвращает массив из 30 элементов — статус по дням за последние 30 дней.
+    'up' если в этом дне ≥99% проб up, 'down' если ≥5% проб down, 'partial' если
+    что-то посередине, 'unknown' если проб не было.
+
+    Полезен для long-term uptime тренда: видно когда были инциденты неделю назад.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT
+                  CAST(julianday('now') - julianday(checked_at) AS INTEGER) as days_ago,
+                  status,
+                  COUNT(*) as n
+               FROM server_health_log
+               WHERE server_id=? AND checked_at > datetime('now', '-30 days')
+               GROUP BY days_ago, status""",
+            (server_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    by_day: dict[int, dict[str, int]] = {}
+    for days_ago, status, n in rows:
+        by_day.setdefault(days_ago, {})[status] = n
+
+    strip: list[str] = []
+    for d in range(buckets):
+        bucket_idx = buckets - 1 - d  # newest on the right
+        counts = by_day.get(bucket_idx, {})
+        up = counts.get("up", 0)
+        down = counts.get("down", 0)
+        total = up + down  # ignore 'unknown' samples
+        if total == 0:
+            strip.append("unknown")
+        elif down / total >= 0.05:  # ≥5% down — incident day
+            strip.append("down")
+        elif down / total > 0:  # 0 < down < 5% — partial
+            strip.append("partial")
+        else:
+            strip.append("up")
+    return strip
+
+
 async def recent_incidents(limit: int = 10) -> list[dict]:
     """Возвращает последние N incidents — открытые и закрытые."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -318,3 +360,26 @@ async def recent_incidents(limit: int = 10) -> list[dict]:
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+async def all_incidents(limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    """Возвращает все incidents с пагинацией. (incidents, total_count).
+
+    Используется для отдельной incident history страницы. `recent_incidents`
+    оставлен как fastpath для основной /status (limit=5).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT COUNT(*) FROM incidents") as cur:
+            total = (await cur.fetchone())[0]
+        async with db.execute(
+            """SELECT i.id, i.server_id, i.started_at, i.resolved_at, i.duration_sec,
+                      s.name as server_name, s.flag, s.location
+               FROM incidents i
+               JOIN servers s ON s.id = i.server_id
+               ORDER BY i.started_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+    return rows, total

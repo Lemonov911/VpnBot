@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { getPublicStatus, type PublicStatus, type PublicServerStatus, type Incident } from '../api'
 import { useT, type TKey } from '../i18n'
 
@@ -101,17 +102,26 @@ export default function Status() {
         )}
       </div>
 
-      {/* Incidents */}
-      {data.incidents.length > 0 && (
-        <div className="rounded-[16px] p-3 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
-          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--tg-theme-hint-color)] mb-2 px-1">
+      {/* Incidents — last 5 + link to full history */}
+      <div className="rounded-[16px] p-3 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
+        <div className="flex items-center justify-between mb-2 px-1">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--tg-theme-hint-color)]">
             {t('status_incidents')}
           </div>
+          <Link to="/status/incidents" className="text-[11px] text-primary hover:underline">
+            {t('status_all_incidents')} →
+          </Link>
+        </div>
+        {data.incidents.length > 0 ? (
           <div className="flex flex-col gap-2">
             {data.incidents.map(inc => <IncidentRow key={inc.id} inc={inc} t={t} />)}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="text-[12px] text-[var(--tg-theme-hint-color)] px-1 py-2">
+            {t('status_no_incidents')}
+          </div>
+        )}
+      </div>
 
       {/* Footer hint */}
       <div className="px-2 text-center text-[10px] text-[var(--tg-theme-hint-color)]">
@@ -152,8 +162,8 @@ function ServerCard({ s, t }: { s: PublicServerStatus; t: TFn }) {
         </div>
       </div>
 
-      {/* 24h strip */}
-      <div className="flex gap-[2px] mb-2 h-[10px]">
+      {/* 24h strip — каждая полоска = час */}
+      <div className="flex gap-[2px] mb-2 h-[10px]" title="Последние 24 часа (час = полоска)">
         {s.strip_24h.map((status, i) => {
           const cls = status === 'up'   ? 'bg-emerald-500'
                     : status === 'down' ? 'bg-rose-500'
@@ -161,6 +171,19 @@ function ServerCard({ s, t }: { s: PublicServerStatus; t: TFn }) {
           return <div key={i} className={`flex-1 rounded-sm ${cls}`} title={`-${24-i}h: ${status}`} />
         })}
       </div>
+
+      {/* 30d strip — каждая полоска = день. Тоньше чтобы поместилось 30 в той же ширине */}
+      {s.strip_30d && s.strip_30d.length > 0 && (
+        <div className="flex gap-[1px] mb-2 h-[6px]" title="Последние 30 дней (день = полоска)">
+          {s.strip_30d.map((status, i) => {
+            const cls = status === 'up'      ? 'bg-emerald-500'
+                      : status === 'down'    ? 'bg-rose-500'
+                      : status === 'partial' ? 'bg-amber-400'
+                      :                        'bg-neutral-700/30'
+            return <div key={i} className={`flex-1 rounded-[1px] ${cls}`} title={`-${30-i}d: ${status}`} />
+          })}
+        </div>
+      )}
 
       {/* Uptime % for three windows */}
       <div className="flex gap-2 text-[10px] text-[var(--tg-theme-hint-color)]">

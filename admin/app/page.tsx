@@ -49,6 +49,7 @@ export default async function Dashboard() {
           <Link href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Мониторинг</Link>
           <Link href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Обращения</Link>
           <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Серверы</Link>
+          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 transition-colors ml-2 pl-3 border-l border-neutral-800">Выход</a>
         </div>
       </div>
 

@@ -165,9 +165,18 @@ export default function Support() {
           onChange={e => setMessage(e.target.value)}
           placeholder={t('support_placeholder')}
           rows={5}
+          maxLength={2000}
           aria-label={t('support_placeholder')}
-          className="w-full py-2 px-4 pb-4 border-none bg-transparent text-[var(--tg-theme-text-color)] text-sm leading-[1.6] resize-none outline-none font-sans box-border"
+          className="w-full py-2 px-4 pb-1 border-none bg-transparent text-[var(--tg-theme-text-color)] text-sm leading-[1.6] resize-none outline-none font-sans box-border"
         />
+        <div className="px-4 pb-2 text-[10px] text-[var(--tg-theme-hint-color)] text-right">
+          {message.length} / 2000
+        </div>
+      </div>
+
+      {/* Хинт когда юзер ждать ответа (раньше — нечего: тикет уходил «в пустоту») */}
+      <div className="text-[11px] text-[var(--tg-theme-hint-color)] px-1 text-center">
+        💬 Ответим прямо в чате с ботом — не выключай уведомления
       </div>
 
       {state === 'error' && (

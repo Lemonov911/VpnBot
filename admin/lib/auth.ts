@@ -4,7 +4,13 @@ import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 
 const BOT_TOKEN   = process.env.BOT_TOKEN!
-const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET ?? 'change-me-in-production')
+// Sec audit M2 (15.05): hard-fail если JWT_SECRET не задан — раньше был
+// fallback 'change-me-in-production' который позволял attacker'у minted'ить
+// admin JWTs если кто-то забывал переменную окружения в проде.
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET env var is required')
+}
+const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET)
 const ADMIN_IDS   = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
 const COOKIE_NAME = 'admin_token'
 

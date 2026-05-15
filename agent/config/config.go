@@ -99,6 +99,7 @@ func Load() *Config {
 		"vless-max":       "XRAY_MAX",
 		"vless-base-slow": "XRAY_BASE_SLOW",
 		"vless-max-slow":  "XRAY_MAX_SLOW",
+		"vless-grace":     "XRAY_GRACE",
 	}
 	tierDefaults := map[string]TierConfig{
 		"vless":           {InboundTag: "vless-in", InboundPort: 8443},
@@ -106,6 +107,7 @@ func Load() *Config {
 		"vless-max":       {InboundTag: "vless-reality-max", InboundPort: 8448},
 		"vless-base-slow": {InboundTag: "vless-reality-base-slow", InboundPort: 9443},
 		"vless-max-slow":  {InboundTag: "vless-reality-max-slow", InboundPort: 9448},
+		"vless-grace":     {InboundTag: "vless-reality-grace", InboundPort: 9453},
 	}
 	hasVLESS := false
 	for _, svc := range services {
