@@ -371,22 +371,53 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             "VPN provision FAILED 0/%d for user=%d sub=%d charge=%s — refunding",
             total, user_id, sub_id, payment_id,
         )
+        # Idempotency: проверяем не было ли уже refund'а для этого charge_id.
+        # Без этого retry от Telegram может вызвать второй refund → 400 от API
+        # + flood control + ложное "звёзды возвращены" юзеру.
+        from services.database import (
+            mark_subscription_expired, is_payment_refunded, mark_payment_refunded,
+        )
+        refund_ok = False
+        if await is_payment_refunded(payment_id):
+            logger.warning("Stars refund: already refunded charge=%s, skipping", payment_id)
+            refund_ok = True
+        else:
+            try:
+                await message.bot.refund_star_payment(user_id, payment_id)
+                await mark_payment_refunded(payment_id)
+                refund_ok = True
+            except Exception as e:
+                logger.error("Refund failed user=%d charge=%s: %s — admin alert", user_id, payment_id, e)
+                # Алерт админу — refund провалился, юзер думает что вернули
+                try:
+                    from config import ADMIN_ID
+                    if ADMIN_ID:
+                        await message.bot.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>Stars refund FAILED</b>\n\n"
+                            f"User: <code>{user_id}</code>\n"
+                            f"Charge: <code>{payment_id}</code>\n"
+                            f"Stars: {payment.total_amount}\n"
+                            f"Error: <code>{e}</code>\n\n"
+                            f"Нужно вернуть вручную через @BotSupport.",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
         try:
-            await message.bot.refund_star_payment(user_id, payment_id)
-        except Exception as e:
-            logger.error("Refund failed user=%d charge=%s: %s", user_id, payment_id, e)
-        try:
-            from services.database import mark_subscription_expired
             await mark_subscription_expired(sub_id)
-            # orders запись не трогаем — оставляем для audit-trail
         except Exception as e:
             logger.error("Mark expired failed sub=%d: %s", sub_id, e)
-        await message.answer(
+        msg = (
             "❌ <b>Не удалось создать VPN-конфиги</b>\n\n"
             "Сервера временно недоступны. Звёзды возвращены — попробуй "
-            "через несколько минут или напиши в поддержку.",
-            parse_mode="HTML",
+            "через несколько минут или напиши в поддержку."
+            if refund_ok else
+            "❌ <b>Не удалось создать VPN-конфиги</b>\n\n"
+            "Сервера временно недоступны. Я уведомил поддержку — вернут "
+            "звёзды в течение нескольких часов."
         )
+        await message.answer(msg, parse_mode="HTML")
         return
 
     if delivered == total:
@@ -442,6 +473,21 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         logger.warning("Ошибка реферального бонуса: %s", e)
 
 
+# Per-user lock — защита от race между _close_trial_on_paid_purchase и
+# scheduler'ом который параллельно может перевести триал в grace.
+# Без лока: trial-active → юзер платит → запускается close → одновременно
+# scheduler видит expires_at < now → запускает grace transition → пиры
+# удаляются из vless-base но добавляются в vless-grace в гонке.
+import asyncio as _asyncio
+_trial_close_locks: dict[int, _asyncio.Lock] = {}
+
+
+def _trial_close_lock(user_id: int) -> _asyncio.Lock:
+    if user_id not in _trial_close_locks:
+        _trial_close_locks[user_id] = _asyncio.Lock()
+    return _trial_close_locks[user_id]
+
+
 async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
     """Юзер купил тариф пока триал ещё active — закрываем триал сразу.
 
@@ -455,31 +501,42 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
     """
     from services.database import (
         get_configs_for_subscription, get_server_by_id, mark_subscription_expired,
-        reset_config_slot, update_server_peer_count,
+        reset_config_slot, update_server_peer_count, get_active_subscription_by_id,
     )
     from services.vpnctl_client import client_for_server
 
-    configs = await get_configs_for_subscription(trial_sub_id)
-    for cfg in configs:
-        server_id = cfg.get("server_id")
-        if server_id:
-            server = await get_server_by_id(server_id)
-            if server and server.get("agent_url"):
-                try:
-                    client = client_for_server(server)
-                    proto = cfg.get("protocol", "")
-                    peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                    if peer_id:
-                        if proto == "awg":
-                            await client.remove_peer("awg", peer_id)
-                        elif proto in ("vless", "vless-reality"):
-                            await client.remove_peer("vless-base", peer_id)
-                        await update_server_peer_count(server_id, -1)
-                except Exception as e:
-                    logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e)
-        await reset_config_slot(cfg["id"])
-    await mark_subscription_expired(trial_sub_id)
-    logger.info("triale закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
+    async with _trial_close_lock(user_id):
+        # Re-check внутри лока: scheduler мог уже отметить sub expired
+        sub_now = await get_active_subscription_by_id(trial_sub_id)
+        if sub_now and sub_now.get("status") == "expired":
+            logger.info("trial close skip: sub=%d уже expired", trial_sub_id)
+            return
+
+        configs = await get_configs_for_subscription(trial_sub_id)
+        for cfg in configs:
+            server_id = cfg.get("server_id")
+            if server_id:
+                server = await get_server_by_id(server_id)
+                if server and server.get("agent_url"):
+                    try:
+                        client = client_for_server(server)
+                        proto = cfg.get("protocol", "")
+                        peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                        config_data = cfg.get("config_data") or ""
+                        if peer_id:
+                            if proto == "awg":
+                                await client.remove_peer("awg", peer_id)
+                            elif proto in ("vless", "vless-reality"):
+                                # Определяем inbound по порту в config_data —
+                                # если уже grace (:9453), удаляем из vless-grace.
+                                inbound = "vless-grace" if ":9453" in config_data else "vless-base"
+                                await client.remove_peer(inbound, peer_id)
+                            await update_server_peer_count(server_id, -1)
+                    except Exception as e:
+                        logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e)
+            await reset_config_slot(cfg["id"])
+        await mark_subscription_expired(trial_sub_id)
+        logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
 
 
 async def _apply_plan_upgrade(message: Message, payment):
@@ -521,7 +578,46 @@ async def _apply_plan_upgrade(message: Message, payment):
         await message.answer("⚠️ Подписка не твоя. Если это ошибка — напиши в поддержку.")
         return
 
+    was_grace = sub.get("status") == "grace"
     await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)
+
+    # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
+    # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что
+    # change_subscription_plan только меняет БД, не трогает агента).
+    if was_grace:
+        try:
+            from services.database import (
+                get_configs_for_subscription, get_server_by_id, update_config_data,
+            )
+            from services.vpnctl_client import client_for_server
+            configs = await get_configs_for_subscription(sub_id)
+            for cfg in configs:
+                server_id = cfg.get("server_id")
+                if not server_id:
+                    continue
+                server = await get_server_by_id(server_id)
+                if not server or not server.get("agent_url"):
+                    continue
+                try:
+                    client = client_for_server(server)
+                    proto = cfg.get("protocol", "")
+                    peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                    assigned_ip = cfg.get("assigned_ip") or ""
+                    if proto == "awg" and peer_id and assigned_ip:
+                        # Снять tc-throttle на awg0 для этого пира
+                        await client.unthrottle_peer("awg", peer_id, assigned_ip)
+                    elif proto in ("vless", "vless-reality") and peer_id:
+                        # Вернуть из vless-grace в нормальный inbound по тарифу
+                        from services.plans import vless_service_for_plan
+                        target_svc = vless_service_for_plan(plan_key)
+                        new_peer = await client.add_peer(target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id)
+                        await client.remove_peer("vless-grace", peer_id)
+                        if new_peer.config:
+                            await update_config_data(cfg["id"], new_peer.config)
+                except Exception as e:
+                    logger.warning("upgrade-from-grace unthrottle cfg #%d: %s", cfg["id"], e)
+        except Exception as e:
+            logger.error("upgrade-from-grace unthrottle outer: %s", e)
 
     parts_desc = []
     if plan["awg_slots"]:

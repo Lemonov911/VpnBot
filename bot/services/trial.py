@@ -65,17 +65,24 @@ class TrialNoServer(TrialError):
 
 
 async def can_claim_trial(user_id: int) -> bool:
-    """True если у юзера нет активной подписки и последний триал был
-    больше TRIAL_COOLDOWN_DAYS назад (или вообще не было).
-    Используется для показа/скрытия trial-CTA в UI."""
+    """True если у юзера нет активной подписки и последний триал ИСТЁК
+    больше TRIAL_COOLDOWN_DAYS назад (или его вообще не было).
+
+    Считаем от `expires_at` а не `created_at`: иначе юзер активирует триал
+    день 1, истекает день 4, cooldown 30 дней — он может взять новый триал
+    в день 18 (created_at=1 + 30 = 31, ещё впереди → cooldown не сработал).
+    Правильно: ждать TRIAL_COOLDOWN_DAYS после реального окончания.
+    """
     if await has_active_subscription(user_id):
         return False
     async with aiosqlite.connect(DB_PATH) as db:
+        # Если есть trial с истечением будущим — он ещё активен или в grace
         row = await (await db.execute(
-            f"""SELECT 1 FROM subscriptions
-                WHERE user_id=? AND plan=?
-                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
-                LIMIT 1""",
+            """SELECT 1 FROM subscriptions
+               WHERE user_id=? AND plan=?
+                 AND (expires_at > datetime('now')
+                      OR expires_at > datetime('now', '-{} days'))
+               LIMIT 1""".format(TRIAL_COOLDOWN_DAYS),
             (user_id, TRIAL_PLAN),
         )).fetchone()
     return row is None

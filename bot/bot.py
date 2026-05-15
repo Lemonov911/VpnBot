@@ -30,6 +30,17 @@ async def main():
 
     await init_db()
 
+    # Cleanup: слоты застрявшие в 'activating' после непредвиденного рестарта.
+    # Они блокируют юзера (нельзя ни добавить, ни отозвать). 5min cutoff =
+    # любая реальная активация заканчивается быстрее.
+    try:
+        from services.database import cleanup_stuck_activating_slots
+        stuck = await cleanup_stuck_activating_slots()
+        if stuck:
+            logging.info("cleanup: освободили %d застрявших activating-слотов", stuck)
+    except Exception as e:
+        logging.warning("cleanup activating-slots failed: %s", e)
+
     # Mini App API
     runner = web.AppRunner(create_api_app(bot))
     await runner.setup()

@@ -145,11 +145,34 @@ async def _process_expired_subscriptions(bot: Bot):
 
     logger.info("Найдено истёкших подписок: %d", len(expired_subs))
     grace_until = (datetime.utcnow() + timedelta(days=GRACE_DAYS)).isoformat()
+    # Если бот лежал >GRACE_DAYS, sub'а expired дольше grace_period →
+    # переход в expired сразу, без grace 256 кбит/с. Иначе юзер получит
+    # одно за другим уведомления «grace» и «expired» за час, а реально
+    # сервис всё это время был недоступен.
+    cutoff_expired_long_ago = (datetime.utcnow() - timedelta(days=GRACE_DAYS)).isoformat()
 
     for sub in expired_subs:
         sub_id   = sub["id"]
         user_id  = sub["user_id"]
         plan_key = sub.get("plan", "")
+
+        # Bot-offline guard: если sub.expires_at < (now - GRACE_DAYS), значит
+        # grace window уже истёк → пропускаем grace transition, сразу к expired.
+        sub_expires = sub.get("expires_at") or ""
+        if sub_expires and sub_expires < cutoff_expired_long_ago:
+            logger.info(
+                "Подписка #%d: expires_at=%s давно истекло (>%d дней), "
+                "пропускаем grace → expired",
+                sub_id, sub_expires[:10], GRACE_DAYS,
+            )
+            try:
+                await mark_subscription_expired(sub_id)
+                # Уведомление юзеру
+                await _send_throttled(bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
+                                       reply_markup=_renew_kb())
+            except Exception as e:
+                logger.warning("late-expire sub #%d: %s", sub_id, e)
+            continue
 
         configs = await get_configs_for_subscription(sub_id)
         logger.info("Подписка #%d: переводим %d конфиг(ов) в grace", sub_id, len(configs))
@@ -224,6 +247,26 @@ async def _process_expired_subscriptions(bot: Bot):
 
             except Exception as e:
                 logger.warning("grace throttle error cfg #%d: %s", cfg_id, e)
+
+        # Применяем pending downgrade (если был запланирован) на момент истечения.
+        # Семантика: юзер на vpn_max нажал «downgrade до vpn_base» → expires_at
+        # настаёт → переключаем sub.plan и сбрасываем pending. Без этого юзер
+        # после продления продолжит платить за старый план.
+        pending = sub.get("pending_plan")
+        if pending and pending != plan_key:
+            try:
+                from services.database import apply_pending_plan_change
+                await apply_pending_plan_change(sub_id, pending)
+                logger.info(
+                    "Подписка #%d: применён pending downgrade %s → %s",
+                    sub_id, plan_key, pending,
+                )
+                plan_key = pending  # для следующих итераций (grace transition)
+            except Exception as e:
+                logger.warning(
+                    "Подписка #%d: pending downgrade failed (%s → %s): %s",
+                    sub_id, plan_key, pending, e,
+                )
 
         await mark_subscription_grace(sub_id, grace_until)
         logger.info("Подписка #%d → grace (до %s)", sub_id, grace_until[:10])

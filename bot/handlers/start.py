@@ -127,3 +127,22 @@ async def cmd_referral(message: Message):
         f"🎁 Бонусных дней получено: <b>{stats['bonus_days']}</b>",
         parse_mode="HTML",
     )
+
+
+@router.message(lambda m: m.text and m.text.strip() == "/rotate_token")
+async def cmd_rotate_token(message: Message):
+    """Ротирует subscription token — старая ссылка перестаёт работать.
+
+    Юзер: «случайно выложил Subscription URL в чат — стрёмно». Команда
+    выдаёт новый sub_token, старый отзывается. Импортировать заново в Happ.
+    """
+    from services.database import rotate_sub_token
+    user_id = message.from_user.id
+    new_token = await rotate_sub_token(user_id)
+    new_url = f"https://maxvpnesim.com/sub/{new_token}"
+    await message.answer(
+        "🔄 <b>Subscription URL обновлён</b>\n\n"
+        "Старая ссылка больше не работает. Импортируй новую в Happ:\n"
+        f"<code>{new_url}</code>",
+        parse_mode="HTML",
+    )

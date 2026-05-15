@@ -218,6 +218,13 @@ async def _migrate(db: aiosqlite.Connection):
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
+    # payments — refund tracking. Без этого Stars-refund при provision fail
+    # может быть вызван дважды (retry) → flood-control от Telegram + ложное
+    # "звёзды возвращены" сообщение юзеру.
+    async with db.execute("PRAGMA table_info(payments)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "refunded_at" not in cols:
+        await db.execute("ALTER TABLE payments ADD COLUMN refunded_at TIMESTAMP")
 
     # subscriptions — pending_plan, expiry reminders
     async with db.execute("PRAGMA table_info(subscriptions)") as cur:
@@ -547,6 +554,77 @@ async def delete_config_record(config_id: int):
         await db.commit()
 
 
+async def get_active_subscription_by_id(sub_id: int) -> dict | None:
+    """Возвращает subscription по id (любой статус). Для re-check внутри
+    critical sections где статус мог измениться параллельно (race)."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM subscriptions WHERE id=? LIMIT 1", (sub_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def apply_pending_plan_change(sub_id: int, new_plan: str):
+    """Переключает plan подписки на pending_plan и сбрасывает pending_plan.
+
+    Вызывается scheduler'ом когда подписка истекает а у юзера был
+    запланирован downgrade (vpn_max → vpn_base). После этого следующая
+    покупка/продление будет за новый тариф.
+    """
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET plan=?, pending_plan=NULL WHERE id=?",
+            (new_plan, sub_id),
+        )
+        await db.commit()
+
+
+async def is_payment_refunded(tx_id: str) -> bool:
+    """Проверка идемпотентности — refund уже был сделан?"""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT refunded_at FROM payments WHERE tx_id=? AND refunded_at IS NOT NULL LIMIT 1",
+            (tx_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
+
+async def mark_payment_refunded(tx_id: str):
+    """Фиксирует факт успешного refund'а для идемпотентности."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE payments SET refunded_at=CURRENT_TIMESTAMP, status='refunded' WHERE tx_id=?",
+            (tx_id,),
+        )
+        await db.commit()
+
+
+async def cleanup_stuck_activating_slots() -> int:
+    """Сбрасывает в 'empty' слоты которые застряли в 'activating' >5 минут.
+
+    Race: claim_config_slot_for_activation переводит slot в 'activating',
+    потом идёт provision_peer (3-10 сек), потом activate_config_slot →
+    'active'. Если бот рестартанётся между claim и activate — слот
+    зависает 'activating' навсегда (юзер не может ни добавить, ни отозвать).
+
+    Вызывается при старте бота: если activating-record старше 5 минут —
+    активация точно провалилась, чистим в 'empty'. Возвращает count.
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            """UPDATE configs
+               SET status='empty', peer_name=NULL, config_data=NULL,
+                   server_id=NULL, vless_uuid=NULL
+               WHERE status='activating'
+                 AND created_at < datetime('now', '-5 minutes')"""
+        )
+        await db.commit()
+        return cur.rowcount
+
+
 async def update_config_peer(config_id: int, peer_name: str, config_data: str | None):
     """Legacy — используй activate_config_slot."""
     async with _connect() as db:
@@ -815,7 +893,13 @@ async def mark_reminded(sub_id: int, days: int):
 # ── referrals ─────────────────────────────────────────────────────────────────
 
 async def set_referred_by(user_id: int, referrer_id: int):
-    """Записывает реферера только если у пользователя его ещё нет."""
+    """Записывает реферера только если у пользователя его ещё нет.
+
+    Защита от self-referral (юзер кидает свою ссылку себе же через
+    другой аккаунт/VPN): silent reject.
+    """
+    if user_id == referrer_id:
+        return  # self-referral — gaming
     async with _connect() as db:
         await db.execute(
             "UPDATE users SET referred_by=? WHERE id=? AND referred_by IS NULL",
@@ -1093,6 +1177,23 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
             paid_count = (await cur.fetchone())[0]
 
         if paid_count != 1:
+            return None
+
+        # Double-award guard: если ранее уже начисляли бонус за подписку
+        # этого юзера (возможно она была refund-нута), повторно не выдаём.
+        # Иначе scenario: A купил → B получил +7 → A refund → A купил снова
+        # (paid_count снова 1, т.к. предыдущая помечена expired) → B +7 опять.
+        async with db.execute(
+            """SELECT COUNT(*) FROM subscriptions
+               WHERE user_id=? AND ref_bonus_awarded_to IS NOT NULL""",
+            (user_id,),
+        ) as cur:
+            ever_awarded = (await cur.fetchone())[0]
+        if ever_awarded > 0:
+            logger.info(
+                "referral skip: user %d уже получал бонус ранее (%d sub'ов)",
+                user_id, ever_awarded,
+            )
             return None
 
         # Bonus + extend в одной транзакции

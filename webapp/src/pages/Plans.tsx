@@ -240,7 +240,12 @@ export default function Plans() {
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm">{t('plans_done_sub')}</p>
           <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
           <button className="btn w-full !bg-[var(--tg-theme-section-bg-color,#f1f1f1)] !text-[var(--tg-theme-text-color,#000)]"
-            onClick={() => { setPageStatus('idle'); getActiveSubscription().then(setSub) }}>
+            onClick={() => {
+              setPageStatus('idle')
+              // Refresh subscription, иначе пользователь остаётся на success-экране
+              // если API упадёт. Catch на null → SkeletonPage → юзер откроет /start.
+              getActiveSubscription().then(setSub).catch(() => setSub(null))
+            }}>
             {t('plans_back')}
           </button>
         </div>

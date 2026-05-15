@@ -241,6 +241,7 @@ async def handle_vpn_servers(request: web.Request) -> web.Response:
 
 _status_cache: dict = {"data": None, "ts": 0.0}
 _status_rate:  dict[str, float] = {}
+_sub_rate:     dict[str, float] = {}  # rate-limit для /sub/{token}
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -645,6 +646,12 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
     invoice = data.get("payload", {})
+    # Дополнительная проверка: invoice.status должен быть 'paid'. Если
+    # CryptoBot когда-нибудь пошлёт invoice_paid event с другим status'ом
+    # (expired/cancelled) — не обрабатываем.
+    if invoice.get("status") and invoice.get("status") != "paid":
+        logger.warning("CryptoBot webhook: invoice status not 'paid': %s", invoice.get("status"))
+        return web.Response(status=200)
     raw_payload = invoice.get("payload", "")
     logger.info("CryptoBot payment: invoice_id=%s payload=%s",
                 invoice.get("invoice_id"), raw_payload)
@@ -738,26 +745,42 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                      user_id, sub_id, e)
         delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
 
-    # Catastrophic provision failure: 0/N → нет refund API у CryptoBot,
-    # но помечаем sub expired (юзер не лишится возможности купить заново
-    # — UNIQUE-constraint на payment_id не сработает, т.к. это другой
-    # payment_id будет в следующий раз). Шлём notification + контакты support.
+    # Catastrophic provision failure: 0/N. CryptoBot не имеет refund API,
+    # юзер заплатил USDT и должен либо получить configs вручную, либо refund
+    # через CryptoBot dashboard (manual). НЕ удаляем sub и НЕ помечаем expired —
+    # юзер уже заплатил, оставляем подписку active с пустыми config-slots'ами
+    # чтобы админ мог досоздать пиры через retry. Алерт админу:
     if total > 0 and delivered == 0:
         logger.error(
-            "CryptoBot provision FAILED 0/%d user=%d sub=%d payment=%s",
+            "CryptoBot provision FAILED 0/%d user=%d sub=%d payment=%s — ADMIN ALERT",
             total, user_id, sub_id, payment_id,
         )
         try:
-            from services.database import mark_subscription_expired
-            await mark_subscription_expired(sub_id)
+            from config import ADMIN_ID
+            if ADMIN_ID:
+                paid_amount = invoice.get("paid_amount", "?")
+                paid_asset = invoice.get("paid_asset", "?")
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>CryptoBot provision FAIL</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Sub: #{sub_id}\n"
+                    f"Plan: {plan_key}\n"
+                    f"Paid: {paid_amount} {paid_asset}\n"
+                    f"Invoice: <code>{invoice.get('invoice_id')}</code>\n\n"
+                    f"Сервера не отдали пиры. Юзер уведомлён. Нужно "
+                    f"досоздать конфиги вручную ИЛИ refund через CryptoBot UI.",
+                    parse_mode="HTML",
+                )
         except Exception as e:
-            logger.error("Mark expired failed: %s", e)
+            logger.error("Admin alert failed: %s", e)
         try:
             await bot.send_message(
                 user_id,
                 "❌ <b>VPN-конфиги не создались</b>\n\n"
                 "Оплата USDT прошла, но сервера временно недоступны. "
-                "Напиши в поддержку — подключим вручную и/или вернём средства.",
+                "Я уже уведомил поддержку — они подключат вручную или вернут средства "
+                "в течение нескольких часов.",
                 parse_mode="HTML",
             )
         except Exception:
@@ -1186,6 +1209,15 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     )
     import aiosqlite
     from services.database import DB_PATH
+
+    # Rate limit: публичный endpoint без auth. Защита от brute-force token'а
+    # (32+ chars entropy, но без лимита нельзя — лог-флуд + DDoS).
+    # Happ/Streisand тянут URL раз в 12 часов (Profile-Update-Interval) →
+    # 6 сек/IP rate-limit с запасом.
+    ip = request.remote or ""
+    now = _time.monotonic()
+    if not _rate_limit_check_evict(_sub_rate, ip, now, window=6.0):
+        return web.Response(text="rate limited", status=429)
 
     token = request.match_info.get("token", "").strip()
     if not token or len(token) < 16:
