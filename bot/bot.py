@@ -47,11 +47,11 @@ async def main():
     await web.TCPSite(runner, "127.0.0.1", API_PORT).start()
     logging.info("Mini App API listening on :%d", API_PORT)
 
-    asyncio.create_task(run_scheduler(bot))
+    asyncio.create_task(run_scheduler(bot), name="scheduler")
 
     # Прогреваем кеш eSIM пакетов в фоне (чтобы первый юзер не ждал 30с)
     from services.esim_api import warm_cache
-    asyncio.create_task(warm_cache())
+    asyncio.create_task(warm_cache(), name="esim_warm_cache")
 
     try:
         await dp.start_polling(bot)

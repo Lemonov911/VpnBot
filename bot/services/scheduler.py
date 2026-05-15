@@ -550,7 +550,12 @@ async def _daily_backup(bot: Bot):
         except ValueError:
             pass  # malformed state file — игнорируем
 
-    snap = "/tmp/bot.db.snapshot"
+    # Snapshot в persistent /opt/vpnbot/.snapshots/ — не /tmp:
+    # /tmp может быть tmpfs (теряется при reboot) или tmpwatch-cleaned.
+    # На небольших VPS / partition может переполниться при `gzip` (~10 MB → 5 MB).
+    snap_dir = "/opt/vpnbot/.snapshots"
+    os.makedirs(snap_dir, exist_ok=True)
+    snap = f"{snap_dir}/bot.db.snapshot"
     if os.path.exists(snap):
         os.unlink(snap)
     if os.path.exists(snap + ".gz"):
@@ -691,10 +696,15 @@ HEALTH_CLEANUP_INTERVAL_SEC = 24 * 3600  # раз в сутки чистим л�
 _BG_TASKS: set[asyncio.Task] = set()
 
 
-def _spawn_bg(coro) -> asyncio.Task:
+def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     """Запускает фоновую корутину и удерживает ссылку. Снимает её
-    после завершения, чтобы set не рос бесконечно."""
-    task = asyncio.create_task(coro)
+    после завершения, чтобы set не рос бесконечно.
+
+    `name` помогает в debug-выводе asyncio.all_tasks() — без него видны
+    только generic "Task pending coro=<...>" что усложняет диагностику
+    зависших или утечённых тасков.
+    """
+    task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
     _BG_TASKS.add(task)
     task.add_done_callback(_BG_TASKS.discard)
     return task

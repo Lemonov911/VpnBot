@@ -14,7 +14,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Минимальная проверка синтаксиса перед deploy — чтобы не катить
+      # бота со сломанным импортом и не получить полную downtime до манUAL fix.
+      - name: Compile all bot/*.py
+        run: |
+          python -m compileall -q bot/
+
   deploy:
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       # No git checkout needed — the server pulls main itself.

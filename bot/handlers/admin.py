@@ -240,17 +240,40 @@ async def cmd_refund_referral(message: Message):
         )
         return
     sub_id = int(parts[1].strip())
-    from services.database import rollback_referral_bonus
+    from services.database import (
+        rollback_referral_bonus, mark_subscription_refunded, audit_log_record,
+    )
     result = await rollback_referral_bonus(sub_id)
+    # Помечаем подписку как refunded (если ещё не помечена) — для MRR /
+    # paid_count логики. mark_subscription_refunded идемпотентно.
+    try:
+        await mark_subscription_refunded(sub_id)
+    except Exception as e:
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "/refund_ref: mark_refunded failed sub=%d: %s", sub_id, e, exc_info=True,
+        )
     if result is None:
+        await audit_log_record(
+            message.from_user.id, "refund_ref_no_bonus",
+            target=f"sub_id={sub_id}",
+            details="Бонус не был начислен или уже откатан",
+        )
         await message.answer(
-            f"❌ Бонус не был начислен для sub #{sub_id} (или уже откатан).",
+            f"❌ Бонус не был начислен для sub #{sub_id} (или уже откатан).\n"
+            f"Подписка помечена как refunded.",
         )
         return
     referrer_id, days = result
+    await audit_log_record(
+        message.from_user.id, "refund_ref",
+        target=f"sub_id={sub_id} referrer_id={referrer_id}",
+        details=f"days={days}",
+    )
     await message.answer(
         f"✅ Откачено: <b>{days} дней</b> у юзера <code>{referrer_id}</code>.\n"
-        f"ref_bonus_days уменьшен (clamp на 0), expires_at активной подписки сдвинут назад.",
+        f"ref_bonus_days уменьшен (clamp на 0), expires_at активной подписки сдвинут назад.\n"
+        f"Подписка помечена refunded.",
         parse_mode="HTML",
     )
 
@@ -415,6 +438,12 @@ async def cmd_gift(message: Message):
         await message.answer(f"Неизвестный план. Доступны: {', '.join(VPN_PLANS)}")
         return
 
+    from services.database import audit_log_record
+    await audit_log_record(
+        message.from_user.id, "gift_self",
+        target=f"user_id={message.from_user.id}",
+        details=f"plan={plan_key}",
+    )
     await _deliver_free_vpn(message, message.from_user.id, plan_key, plan)
 
 
@@ -441,6 +470,12 @@ async def cmd_send(message: Message):
         await message.answer(f"Неизвестный план. Доступны: {', '.join(VPN_PLANS)}")
         return
 
+    from services.database import audit_log_record
+    await audit_log_record(
+        message.from_user.id, "gift_to_user",
+        target=f"user_id={target_id}",
+        details=f"plan={plan_key}",
+    )
     await message.answer(f"⏳ Создаю слоты для {target_id}...")
     await _deliver_free_vpn(message, target_id, plan_key, plan, notify_admin=True)
 

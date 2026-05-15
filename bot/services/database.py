@@ -108,6 +108,21 @@ async def init_db():
                 FOREIGN KEY (server_id) REFERENCES servers(id)
             )
         """)
+        # Audit log: запись каждого admin-действия. Compliance + post-incident.
+        # Намеренно простая schema: (admin_id, action, target, details JSON).
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id   INTEGER NOT NULL,
+                action     TEXT    NOT NULL,
+                target     TEXT,
+                details    TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_admin ON audit_log(admin_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS support_tickets (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -622,6 +637,22 @@ async def mark_payment_refunded(tx_id: str):
             (tx_id,),
         )
         await db.commit()
+
+
+async def audit_log_record(admin_id: int, action: str,
+                             target: str | None = None,
+                             details: str | None = None):
+    """Записывает admin-действие в audit_log для compliance / forensics.
+    Best-effort: ошибка записи не должна ломать саму команду."""
+    try:
+        async with _connect() as db:
+            await db.execute(
+                "INSERT INTO audit_log (admin_id, action, target, details) VALUES (?, ?, ?, ?)",
+                (admin_id, action, target, details),
+            )
+            await db.commit()
+    except Exception as e:
+        logger.warning("audit_log write failed action=%s: %s", action, e)
 
 
 async def cleanup_stuck_activating_slots() -> int:
@@ -1182,13 +1213,12 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
             return None
 
         # paid_count считает только реально оплаченные подписки (не refunded),
-        # чтобы после refund + повторной покупки бонус всё-таки начислился
-        # (если предыдущая sub была refund-нута, rollback_referral_bonus
-        # обнулил ref_bonus_awarded_to → ever_awarded ниже тоже будет 0).
+        # чтобы после refund + повторной покупки бонус всё-таки начислился.
+        # Используем refunded_at как single source of truth (status='refunded'
+        # выставляется одновременно через mark_subscription_refunded).
         async with db.execute(
             """SELECT COUNT(*) FROM subscriptions
-               WHERE user_id=? AND plan!='vpn_trial'
-                 AND (refunded_at IS NULL AND status != 'refunded')""",
+               WHERE user_id=? AND plan!='vpn_trial' AND refunded_at IS NULL""",
             (user_id,),
         ) as cur:
             paid_count = (await cur.fetchone())[0]

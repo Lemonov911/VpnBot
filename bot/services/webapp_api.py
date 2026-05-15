@@ -1178,10 +1178,14 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     is_upgrade = new_plan["stars"] > cur_plan["stars"]
 
     if is_upgrade:
-        # Доплата пропорционально оставшимся дням, в рублях
+        # Доплата пропорционально оставшимся дням, в рублях.
+        # ceil() а не round() — иначе при 29 днях остатка апгрейд дешевле
+        # на 1₽ от справедливой цены (округление вниз). Юзер не страдает,
+        # но бизнес теряет копейки на каждом апгрейде.
+        from math import ceil as _ceil
         cur_rub = int(cur_plan.get("rub", cur_plan["stars"]))
         new_rub = int(new_plan.get("rub", new_plan["stars"]))
-        rub_price = max(1, round((new_rub - cur_rub) * remaining_days / 30))
+        rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days / 30))
 
         awg_delta   = new_plan["awg_slots"]   - cur_plan["awg_slots"]
         vless_delta = new_plan["vless_slots"] - cur_plan["vless_slots"]
