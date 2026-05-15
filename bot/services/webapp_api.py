@@ -708,24 +708,62 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     )
     await complete_order(order_id, payment_id=payment_id)
 
-    for _ in range(plan["awg_slots"]):
-        await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="awg")
-    for _ in range(plan["vless_slots"]):
-        await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="vless")
-    for _ in range(plan.get("wg_slots", 0)):
-        await create_config_record(subscription_id=sub_id, user_id=user_id, protocol="wg")
-
-    # Уведомляем пользователя в Telegram
+    # Provisioning peers через vpnctl. Раньше CryptoBot-flow создавал пустые
+    # config_record-ы без peer'ов → юзер платил USDT, видел "оплачен", но в
+    # Mini App конфиги вечно empty. Теперь делаем реальный провижининг —
+    # тот же helper что Stars-flow.
+    bot: Bot = request.app["bot"]
     try:
-        bot: Bot = request.app["bot"]
+        from handlers.vpn import provision_vpn_slots_async
+        delivered, total = await provision_vpn_slots_async(
+            bot, user_id, sub_id, plan, plan_key,
+        )
+    except Exception as e:
+        logger.error("CryptoBot: provision crashed for user=%d sub=%d: %s",
+                     user_id, sub_id, e)
+        delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
+
+    # Catastrophic provision failure: 0/N → нет refund API у CryptoBot,
+    # но помечаем sub expired (юзер не лишится возможности купить заново
+    # — UNIQUE-constraint на payment_id не сработает, т.к. это другой
+    # payment_id будет в следующий раз). Шлём notification + контакты support.
+    if total > 0 and delivered == 0:
+        logger.error(
+            "CryptoBot provision FAILED 0/%d user=%d sub=%d payment=%s",
+            total, user_id, sub_id, payment_id,
+        )
+        try:
+            from services.database import mark_subscription_expired
+            await mark_subscription_expired(sub_id)
+        except Exception as e:
+            logger.error("Mark expired failed: %s", e)
+        try:
+            await bot.send_message(
+                user_id,
+                "❌ <b>VPN-конфиги не создались</b>\n\n"
+                "Оплата USDT прошла, но сервера временно недоступны. "
+                "Напиши в поддержку — подключим вручную и/или вернём средства.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return web.Response(status=200)
+
+    # Happy path — уведомляем юзера
+    try:
         paid_amount = invoice.get("paid_amount", "")
         paid_asset  = invoice.get("paid_asset", "")
+        note = (
+            "Открой мини-апп → <b>Мои конфиги</b>."
+            if delivered == total
+            else f"Часть конфигов ({delivered}/{total}) готова. Остальные появятся в мини-апп."
+        )
         await bot.send_message(
             user_id,
             f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
             f"💎 Оплата: {paid_amount} {paid_asset}\n"
             f"📅 Действует до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
-            "Открой мини-апп → <b>Мои конфиги</b> и добавь конфиг на устройство.",
+            f"{note}",
             parse_mode="HTML",
         )
     except Exception as e:

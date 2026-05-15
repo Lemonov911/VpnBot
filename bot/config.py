@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -12,6 +13,19 @@ ADMIN_IDS: set[int] = {ADMIN_ID} | {int(x) for x in _extra_ids.split(",") if x.s
 WEBAPP_URL       = os.getenv("WEBAPP_URL", "")
 API_PORT         = int(os.getenv("API_PORT") or 8080)
 DEBUG            = os.getenv("DEBUG", "").lower() == "true"
+
+# ── Production safety: DEBUG=true пропускает initData-проверку как ADMIN.
+# Случайно оставленный флаг = открытый бэкдор. Crash на старте если случилось.
+# Триггер "production" — наличие WEBAPP_URL (на dev это пусто или localhost).
+_is_production = WEBAPP_URL and "localhost" not in WEBAPP_URL and "127.0.0.1" not in WEBAPP_URL
+if DEBUG and _is_production:
+    sys.stderr.write(
+        "FATAL: DEBUG=true on production (WEBAPP_URL=%s). "
+        "DEBUG disables initData/HMAC checks and treats every request as ADMIN. "
+        "Remove DEBUG=true from .env or set WEBAPP_URL=localhost for dev.\n"
+        % WEBAPP_URL
+    )
+    sys.exit(2)
 
 # Feature flag — спрятать eSIM из UI (бот-меню + Mini App). Когда хочется
 # чистого VPN-only продукта без отвлекающего side-product'а. Сам код eSIM

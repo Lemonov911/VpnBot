@@ -115,10 +115,15 @@ async def show_howto(callback: CallbackQuery):
 
 @router.callback_query(F.data == "menu:start")
 async def back_to_start(callback: CallbackQuery):
-    from handlers.start import MAIN_MENU
+    # start.py экспортирует функцию _main_menu(), не объект MAIN_MENU.
+    # Без trial_eligible проверки кнопка trial может пропасть, но это OK —
+    # юзер всегда может вернуться в /start чтобы получить актуальное меню.
+    from handlers.start import _main_menu
+    from services.trial import can_claim_trial
+    trial_eligible = await can_claim_trial(callback.from_user.id)
     await callback.message.edit_text(
         "👋 Привет! Выбери, что тебя интересует:",
-        reply_markup=MAIN_MENU,
+        reply_markup=_main_menu(trial_eligible=trial_eligible),
     )
     await callback.answer()
 
@@ -356,6 +361,33 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
 
     delivered = created_wg + created_vless + created_plain_wg
     total     = awg_slots + vless_slots + wg_slots
+
+    # ─── Safety net: 0/N доставлено → catastrophic provision failure ────────
+    # Юзер заплатил, но НИ ОДИН пир не создался (агент лежит / нет серверов).
+    # Возвращаем Stars + помечаем подписку expired, чтобы юзер мог купить заново.
+    # Если хоть один пир создался — оставляем как есть (юзер видит хотя бы один).
+    if total > 0 and delivered == 0:
+        logger.error(
+            "VPN provision FAILED 0/%d for user=%d sub=%d charge=%s — refunding",
+            total, user_id, sub_id, payment_id,
+        )
+        try:
+            await message.bot.refund_star_payment(user_id, payment_id)
+        except Exception as e:
+            logger.error("Refund failed user=%d charge=%s: %s", user_id, payment_id, e)
+        try:
+            from services.database import mark_subscription_expired
+            await mark_subscription_expired(sub_id)
+            # orders запись не трогаем — оставляем для audit-trail
+        except Exception as e:
+            logger.error("Mark expired failed sub=%d: %s", sub_id, e)
+        await message.answer(
+            "❌ <b>Не удалось создать VPN-конфиги</b>\n\n"
+            "Сервера временно недоступны. Звёзды возвращены — попробуй "
+            "через несколько минут или напиши в поддержку.",
+            parse_mode="HTML",
+        )
+        return
 
     if delivered == total:
         note = "Конфиги отправлены выше 👆"
@@ -692,3 +724,78 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
         )
     except Exception as e:
         logger.error("Refund failed: %s", e)
+
+
+async def provision_vpn_slots_async(
+    bot: Bot,
+    user_id: int,
+    sub_id: int,
+    plan: dict,
+    plan_key: str,
+) -> tuple[int, int]:
+    """Создаёт реальные пиры VPN на агенте для уже-созданной подписки.
+
+    Используется CryptoBot webhook'ом (там нет message-объекта).
+    Не шлёт .conf-файлы документами — юзер увидит конфиги в Mini App «Мои конфиги».
+
+    Возвращает (delivered, total). Если delivered == 0 — caller должен
+    помечать sub expired и слать notification юзеру.
+    """
+    awg_slots   = plan.get("awg_slots", 0)
+    vless_slots = plan.get("vless_slots", 0)
+    wg_slots    = plan.get("wg_slots", 0)
+    total       = awg_slots + vless_slots + wg_slots
+    delivered   = 0
+
+    for i in range(awg_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="awg")
+        server = await get_best_server("awg")
+        if not server:
+            continue
+        try:
+            label = f"user_{user_id}_wg_{i+1}"
+            peer = await provision_peer(server, label, "awg")
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                config_id, server["id"], peer.id, peer_ip, peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            delivered += 1
+        except VpnctlError as e:
+            logger.warning("crypto-flow: WG peer error: %s", e)
+
+    vless_service = vless_service_for_plan(plan_key)
+    for i in range(vless_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="vless")
+        server = await get_best_server("vless")
+        if not server:
+            continue
+        try:
+            label = f"user_{user_id}_vless_{i+1}"
+            peer = await provision_peer(server, label, vless_service)
+            await save_peer_to_config(
+                config_id, server["id"], peer.id, "", peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            delivered += 1
+        except VpnctlError as e:
+            logger.warning("crypto-flow: VLess peer error: %s", e)
+
+    for i in range(wg_slots):
+        config_id = await create_config_record(sub_id, user_id, protocol="wg")
+        server = await get_best_server("wg")
+        if not server:
+            continue
+        try:
+            label = f"user_{user_id}_plainwg_{i+1}"
+            peer = await provision_peer(server, label, "wg")
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                config_id, server["id"], peer.id, peer_ip, peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            delivered += 1
+        except VpnctlError as e:
+            logger.warning("crypto-flow: plain-WG peer error: %s", e)
+
+    return delivered, total
