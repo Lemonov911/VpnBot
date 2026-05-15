@@ -17,11 +17,14 @@ export default function TicketActions({ ticketId, userId }: { ticketId: number; 
   const [done,    setDone]    = useState(false)
   const [showForm, setShowForm] = useState(false)
 
+  // basePath = '/admin'. fetch с относительным path резолвится против origin,
+  // НЕ против страницы — без префикса попадает на /api/... (это бот, не админка)
+  // и даёт 404. Хардкодим /admin/ — единственный production basePath.
   const reply = async () => {
     setErr('')
     setSending(true)
     try {
-      const res = await fetch(`/api/tickets/${ticketId}/reply`, {
+      const res = await fetch(`/admin/api/tickets/${ticketId}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text.trim(), close }),
@@ -42,7 +45,7 @@ export default function TicketActions({ ticketId, userId }: { ticketId: number; 
     if (!confirm('Закрыть тикет без ответа?')) return
     setSending(true)
     try {
-      const res = await fetch(`/api/tickets/${ticketId}/close`, { method: 'POST' })
+      const res = await fetch(`/admin/api/tickets/${ticketId}/close`, { method: 'POST' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       router.refresh()
     } catch (e) {
