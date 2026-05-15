@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { topClients, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import AdminNav from '../_components/AdminNav'
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -38,20 +39,7 @@ export default async function Clients() {
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-extrabold tracking-tight">Клиенты</div>
-          <div className="text-xs text-neutral-500 mt-0.5">Топ по LTV. Кто реально приносит деньги.</div>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Link href="/"            className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
-          <Link href="/analytics"   className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
-          <Link href="/monitoring"  className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
-          <Link href="/tickets"     className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
-          <Link href="/servers"     className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
-          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">Выход</a>
-        </div>
-      </div>
+      <AdminNav />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

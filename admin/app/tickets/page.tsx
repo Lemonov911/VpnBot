@@ -3,6 +3,7 @@ import { requireSession } from '@/lib/auth'
 import { allTicketsWithUser } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import TicketActions from './TicketActions'
+import AdminNav from '../_components/AdminNav'
 
 const CATEGORY: Record<string, string> = {
   payment: '💳 Оплата',
@@ -48,20 +49,7 @@ export default async function Tickets({
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-extrabold tracking-tight">Обращения</div>
-          <div className="text-xs text-neutral-500 mt-0.5">Тикеты от пользователей</div>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Link href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
-          <Link href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
-          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</Link>
-          <Link href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
-          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
-          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">Выход</a>
-        </div>
-      </div>
+      <AdminNav />
 
       <div className="flex gap-2">
         <TabLink k="open"   label="Открытые" />

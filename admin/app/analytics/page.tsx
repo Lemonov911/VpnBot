@@ -1,4 +1,3 @@
-import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import {
   analyticsSummary,
@@ -8,6 +7,8 @@ import {
   topReferrers,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import AdminNav from '../_components/AdminNav'
+import { RevenueArea } from '../_components/RevenueChart'
 
 function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -28,24 +29,6 @@ function planName(key: string) {
   return map[key] ?? key
 }
 
-// Простой ASCII-sparkline без зависимостей. Для нашего объёма данных хватит.
-function Sparkline({ values, w = 320, h = 60, accent = '#10b981' }: { values: number[]; w?: number; h?: number; accent?: string }) {
-  if (values.length === 0) return <div className="text-xs text-neutral-500">нет данных</div>
-  const max = Math.max(...values, 1)
-  const pts = values.map((v, i) => {
-    const x = (i / Math.max(1, values.length - 1)) * w
-    const y = h - (v / max) * h
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
-  const area = `0,${h} ${pts} ${w},${h}`
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-[60px]">
-      <polygon points={area} fill={accent} fillOpacity="0.15" />
-      <polyline points={pts} fill="none" stroke={accent} strokeWidth="2" />
-    </svg>
-  )
-}
-
 export default async function Analytics() {
   const session = await requireSession()
   if (!session) redirect('/login')
@@ -56,25 +39,15 @@ export default async function Analytics() {
   const funnel = trialFunnel30d()
   const refs   = topReferrers(10)
 
-  const revSeries  = daily.map(d => d.stars)
-  const subsSeries = daily.map(d => d.paid_subs)
   const totalMixCount = mix.reduce((a, b) => a + b.count, 0) || 1
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-extrabold tracking-tight">Аналитика</div>
-          <div className="text-xs text-neutral-500 mt-0.5">За последние 30 дней</div>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Link href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
-          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</Link>
-          <Link href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300">Мониторинг</Link>
-          <Link href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
-          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
-          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">Выход</a>
-        </div>
+      <AdminNav username={session.username} />
+
+      <div>
+        <div className="text-xl font-extrabold tracking-tight">Аналитика</div>
+        <div className="text-xs text-neutral-500 mt-0.5">За последние 30 дней</div>
       </div>
 
       {/* Headline KPIs */}
@@ -85,17 +58,21 @@ export default async function Analytics() {
         <StatCard label="Истекли (30д)"        value={s.expired_30d} hint="churn-сигнал" />
       </div>
 
-      {/* Charts row */}
+      {/* Charts row — Recharts вместо inline SVG-sparkline (теперь с осями и тултипами) */}
       <div className="grid md:grid-cols-2 gap-6">
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
           <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">⭐ Выручка по дням</div>
-          <Sparkline values={revSeries} accent="#facc15" />
-          <div className="text-[10px] text-neutral-600 mt-1">{daily.length > 0 ? `${daily[0].day} → ${daily[daily.length - 1].day}` : 'нет данных за 30 дней'}</div>
+          <RevenueArea data={daily} metric="stars" color="#facc15" />
+          <div className="text-[10px] text-neutral-600 mt-2">
+            {daily.length > 0 ? `${daily[0].day} → ${daily[daily.length - 1].day}` : 'нет данных за 30 дней'}
+          </div>
         </div>
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
           <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">Платные подписки по дням</div>
-          <Sparkline values={subsSeries} accent="#10b981" />
-          <div className="text-[10px] text-neutral-600 mt-1">{daily.reduce((a, b) => a + b.paid_subs, 0)} за период</div>
+          <RevenueArea data={daily} metric="paid_subs" color="#10b981" />
+          <div className="text-[10px] text-neutral-600 mt-2">
+            {daily.reduce((a, b) => a + b.paid_subs, 0)} за период
+          </div>
         </div>
       </div>
 

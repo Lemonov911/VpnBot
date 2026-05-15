@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { monitoringSnapshot } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import AdminNav from '../_components/AdminNav'
 
 function StatCard({ label, value, warn, hint }: { label: string; value: string | number; warn?: boolean; hint?: string }) {
   return (
@@ -29,20 +30,7 @@ export default async function Monitoring() {
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-extrabold tracking-tight">Мониторинг</div>
-          <div className="text-xs text-neutral-500 mt-0.5">Инфра + операционные сигналы</div>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Link href="/"           className="text-xs text-neutral-500 hover:text-neutral-300">Дашборд</Link>
-          <Link href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300">Аналитика</Link>
-          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300">Клиенты</Link>
-          <Link href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300">Обращения</Link>
-          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300">Серверы</Link>
-          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">Выход</a>
-        </div>
-      </div>
+      <AdminNav />
 
       {/* Headline */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

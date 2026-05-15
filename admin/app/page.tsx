@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { stats, recentPayments, allTickets, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import AdminNav from './_components/AdminNav'
 
 // Stars → ₽ rough conversion. Telegram Stars exchange rate ≈ 1 ⭐ = 1.4₽ (varies).
 // Используется только для дисплея — фактические выплаты от Telegram идут в их курсе.
@@ -60,20 +61,7 @@ export default async function Dashboard() {
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
 
       {/* Header */}
-      <div className="flex items-center justify-between pt-2">
-        <div>
-          <div className="text-xl font-extrabold tracking-tight">MAX VPN &amp; eSIM</div>
-          <div className="text-xs text-neutral-500 mt-0.5">Привет, {session.username}</div>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Link href="/analytics"  className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Аналитика</Link>
-          <Link href="/clients"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Клиенты</Link>
-          <Link href="/monitoring" className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Мониторинг</Link>
-          <Link href="/tickets"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Обращения</Link>
-          <Link href="/servers"    className="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Серверы</Link>
-          <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 transition-colors ml-2 pl-3 border-l border-neutral-800">Выход</a>
-        </div>
-      </div>
+      <AdminNav username={session.username} />
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

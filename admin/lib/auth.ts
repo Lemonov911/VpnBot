@@ -4,13 +4,17 @@ import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 
 const BOT_TOKEN   = process.env.BOT_TOKEN!
+
 // Sec audit M2 (15.05): hard-fail если JWT_SECRET не задан — раньше был
 // fallback 'change-me-in-production' который позволял attacker'у minted'ить
-// admin JWTs если кто-то забывал переменную окружения в проде.
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET env var is required')
+// admin JWTs. Проверка lazy (на использование, не на импорт), чтобы build-time
+// page-data collection не падал когда env-vars недоступны (next build пытается
+// «прогреть» все routes).
+function getJwtSecret(): Uint8Array {
+  const s = process.env.JWT_SECRET
+  if (!s) throw new Error('JWT_SECRET env var is required')
+  return new TextEncoder().encode(s)
 }
-const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET)
 const ADMIN_IDS   = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
 const COOKIE_NAME = 'admin_token'
 
@@ -46,14 +50,14 @@ export async function createSession(userId: number, username: string): Promise<s
     .setProtectedHeader({ alg: 'HS256' })
     .setExpirationTime('7d')
     .setIssuedAt()
-    .sign(JWT_SECRET)
+    .sign(getJwtSecret())
 }
 
 export async function getSession(): Promise<{ userId: number; username: string } | null> {
   try {
     const token = (await cookies()).get(COOKIE_NAME)?.value
     if (!token) return null
-    const { payload } = await jwtVerify(token, JWT_SECRET)
+    const { payload } = await jwtVerify(token, getJwtSecret())
     return payload as { userId: number; username: string }
   } catch {
     return null

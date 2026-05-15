@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 
-const JWT_SECRET  = new TextEncoder().encode(process.env.JWT_SECRET!)
-if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET env var is required')
-const ADMIN_IDS   = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
+// Lazy чтобы build-time page-data collection не падал когда env недоступны.
+function getJwtSecret(): Uint8Array {
+  const s = process.env.JWT_SECRET
+  if (!s) throw new Error('JWT_SECRET env var is required')
+  return new TextEncoder().encode(s)
+}
+const ADMIN_IDS = (process.env.ADMIN_IDS ?? process.env.ADMIN_ID ?? '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
 const PUBLIC      = ['/login', '/api/auth']
 
 export async function middleware(req: NextRequest) {
@@ -14,7 +18,7 @@ export async function middleware(req: NextRequest) {
   if (!token) return NextResponse.redirect(new URL('/login', req.url))
 
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET)
+    const { payload } = await jwtVerify(token, getJwtSecret())
     const userId = payload.userId as number
     if (!ADMIN_IDS.includes(userId)) {
       return NextResponse.redirect(new URL('/login?error=forbidden', req.url))
