@@ -45,6 +45,7 @@ jobs:
           VITE_BASE_PATH: /VpnBot/
           VITE_BOT_USERNAME: ${{ secrets.VITE_BOT_USERNAME }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_SHOW_ESIM: "false"
 
       - uses: actions/configure-pages@v4
         with:
@@ -72,6 +73,7 @@ jobs:
           VITE_BASE_PATH: /
           VITE_BOT_USERNAME: ${{ secrets.VITE_BOT_USERNAME }}
           VITE_API_URL: ""
+          VITE_SHOW_ESIM: "false"
 
       - name: Deploy to production server (rsync)
         run: |
