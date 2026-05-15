@@ -177,13 +177,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Service cards ── */}
-        <div className="grid grid-cols-2 gap-2.5">
+        {/* ── Service cards ── (VPN-only layout — full-width VPN-карточка) */}
+        <div className={`grid ${SHOW_ESIM ? 'grid-cols-2' : 'grid-cols-1'} gap-2.5`}>
 
           {/* VPN card */}
           {sub === undefined ? (
-            <div className="skeleton h-[178px] rounded-[20px]" />
-          ) : (
+            <div className={`skeleton ${SHOW_ESIM ? 'h-[178px]' : 'h-[160px]'} rounded-[20px]`} />
+          ) : SHOW_ESIM ? (
+            // Compact-mode (parity с eSIM-карточкой рядом)
             <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
               <div className="h-[3px] bg-gradient-to-r from-primary to-[#5856d6] shrink-0" />
               <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
@@ -195,21 +196,15 @@ export default function Home() {
                   </svg>
                 </div>
 
-                <div className="text-[10px] font-bold uppercase tracking-[0.7px] mb-1.5 text-[var(--tg-theme-hint-color)]">
-                  VPN
-                </div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.7px] mb-1.5 text-[var(--tg-theme-hint-color)]">VPN</div>
 
                 {sub ? (
                   <>
                     <div className="flex items-center gap-[5px] mb-[3px]">
                       <span className="w-[7px] h-[7px] rounded-full bg-success shrink-0 block" />
-                      <span className="text-xs font-bold text-success">
-                        {t('home_active')}
-                      </span>
+                      <span className="text-xs font-bold text-success">{t('home_active')}</span>
                     </div>
-                    <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
-                      {planLabel(sub.plan)}
-                    </div>
+                    <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">{planLabel(sub.plan)}</div>
                     <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
                       {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
                     </div>
@@ -225,13 +220,9 @@ export default function Home() {
                   <>
                     <div className="flex items-center gap-[5px] mb-[3px]">
                       <span className="w-[7px] h-[7px] rounded-full bg-gray-500/35 shrink-0 block" />
-                      <span className="text-xs font-semibold text-[var(--tg-theme-hint-color)]">
-                        {t('home_no_sub')}
-                      </span>
+                      <span className="text-xs font-semibold text-[var(--tg-theme-hint-color)]">{t('home_no_sub')}</span>
                     </div>
-                    <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
-                      {t('home_sub_from')}
-                    </div>
+                    <div className="text-[11px] text-[var(--tg-theme-hint-color)]">{t('home_sub_from')}</div>
                     <div className="flex-1 min-h-[20px]" />
                     <button
                       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
@@ -241,6 +232,63 @@ export default function Home() {
                     </button>
                   </>
                 )}
+              </div>
+            </div>
+          ) : (
+            // Hero-mode — full-width VPN-карточка когда eSIM скрыт.
+            // Icon крупнее (56px), горизонтальный layout, акцент на статус.
+            <div className="fade-in rounded-[24px] overflow-hidden bg-gradient-to-br from-primary/[0.08] to-[#5856d6]/[0.05] border border-primary/15">
+              <div className="h-[4px] bg-gradient-to-r from-primary to-[#5856d6]" />
+              <div className="px-5 py-[18px]">
+                <div className="flex items-start gap-[14px]">
+                  <div className="w-[56px] h-[56px] rounded-[16px] bg-gradient-to-br from-primary to-[#5856d6] flex items-center justify-center shrink-0 shadow-[0_6px_20px_rgba(36,129,204,0.45)]">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                      <path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z"
+                        stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      {sub && <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>}
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.7px] text-[var(--tg-theme-hint-color)]">VPN</div>
+                    {sub ? (
+                      <>
+                        <div className="flex items-center gap-[6px] mt-1">
+                          <span className="w-[8px] h-[8px] rounded-full bg-success shrink-0" />
+                          <span className="text-[13px] font-bold text-success">{t('home_active')}</span>
+                        </div>
+                        <div className="text-[18px] font-extrabold text-[var(--tg-theme-text-color)] mt-1 leading-tight">
+                          {planLabel(sub.plan)}
+                        </div>
+                        <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                          {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-[6px] mt-1">
+                          <span className="w-[8px] h-[8px] rounded-full bg-gray-500/40 shrink-0" />
+                          <span className="text-[13px] font-semibold text-[var(--tg-theme-hint-color)]">{t('home_no_sub')}</span>
+                        </div>
+                        <div className="text-[16px] font-bold text-[var(--tg-theme-text-color)] mt-1 leading-tight">
+                          {t('home_hero_sub').split('\n')[0]}
+                        </div>
+                        <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                          {t('home_sub_from')}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
+                  className={`w-full py-[11px] rounded-[12px] border-none text-[14px] font-bold cursor-pointer mt-[14px] ${
+                    sub
+                      ? 'bg-primary/[0.13] text-primary'
+                      : 'bg-gradient-to-br from-primary to-[#5856d6] text-white shadow-[0_4px_14px_rgba(36,129,204,0.35)]'
+                  }`}
+                >
+                  {sub ? `${t('home_manage')} →` : t('home_buy_vpn')}
+                </button>
               </div>
             </div>
           )}
