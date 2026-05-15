@@ -19,7 +19,7 @@ export const PLANS: Plan[] = [
   // тарифам — мы не получаем их с API, потому что они редко меняются и UI
   // должен рендериться даже без подключения к боту).
   { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 1, awg: 2, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
-  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 3, awg: 3, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 5, awg: 3, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
 ]
 
 // alias for callers that imported VISIBLE_PLANS — keep backwards-compat for one cycle

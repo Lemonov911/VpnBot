@@ -45,10 +45,11 @@ VPN_PLANS: dict[str, dict] = {
         "rub":            "500",
         "usd":            "5.50",
         "duration_days":  30,
-        # 3 AWG для основной семьи (3 телефона/устройства), 3 VLESS = достаточно
-        # для backup-устройств + роутер. Раньше было 10 VLESS — overkill.
+        # 3 AWG для основной семьи (3 телефона/устройства).
+        # 5 VLESS — комфортный запас: роутер, Linux/гости/планшет + 1-2 ещё.
+        # Раньше было 10 — overkill. 3 — впритык. 5 — sweet spot.
         "awg_slots":      3,
-        "vless_slots":    3,
+        "vless_slots":    5,
         "wg_slots":       0,
         "speed_mbps":     120,
         "soft_cap_gb":    1000,
