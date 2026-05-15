@@ -67,27 +67,58 @@ export default async function Monitoring() {
             <table className="w-full text-sm">
               <thead className="text-xs text-neutral-500 uppercase tracking-wide">
                 <tr className="border-b border-neutral-800">
-                  <th className="text-left px-4 py-2 font-medium w-12">Live</th>
+                  <th className="text-left px-4 py-2 font-medium w-16">Live</th>
                   <th className="text-left px-4 py-2 font-medium">Сервер</th>
                   <th className="text-left px-4 py-2 font-medium">Протокол</th>
+                  <th className="text-left px-4 py-2 font-medium w-[80px]">Uptime 24h</th>
+                  <th className="text-left px-4 py-2 font-medium w-[80px]">Latency</th>
                   <th className="text-left px-4 py-2 font-medium">Нагрузка</th>
                   <th className="text-right px-4 py-2 font-medium">Пиров</th>
-                  <th className="text-left px-4 py-2 font-medium">Agent URL</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
                 {s.servers.map(srv => {
                   const load = loadBucket(srv.active_peers, srv.capacity)
+                  // Live статус = последняя проба, не is_active колонка БД
+                  const liveStatus = srv.last_probe_status ?? (srv.is_active ? 'unknown' : 'down')
+                  const liveDot =
+                    liveStatus === 'up'   ? 'bg-emerald-500'
+                    : liveStatus === 'down' ? 'bg-rose-500 animate-pulse'
+                    :                         'bg-neutral-600'
+                  const liveLabel =
+                    liveStatus === 'up'   ? 'UP'
+                    : liveStatus === 'down' ? 'DOWN'
+                    :                         '—'
+                  const liveTxt =
+                    liveStatus === 'up'   ? 'text-emerald-500'
+                    : liveStatus === 'down' ? 'text-rose-500'
+                    :                         'text-neutral-600'
+
+                  const uptimeColor =
+                    srv.uptime_24h_pct == null  ? 'text-neutral-600'
+                    : srv.uptime_24h_pct >= 99  ? 'text-emerald-500'
+                    : srv.uptime_24h_pct >= 95  ? 'text-amber-400'
+                    :                              'text-rose-500'
+
                   return (
                     <tr key={srv.id} className="hover:bg-neutral-800/30 transition-colors">
                       <td className="px-4 py-2">
-                        <span className={`inline-block w-2.5 h-2.5 rounded-full ${srv.is_active ? 'bg-emerald-500' : 'bg-neutral-600'}`} />
+                        <div className="flex items-center gap-1.5">
+                          <span className={`inline-block w-2.5 h-2.5 rounded-full ${liveDot}`} />
+                          <span className={`text-[10px] font-bold ${liveTxt}`}>{liveLabel}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-2">
                         <div className="font-medium">{srv.flag || '🌍'} {srv.name}</div>
                         <div className="text-[10px] text-neutral-500">{srv.city || '—'} · {srv.host}</div>
                       </td>
                       <td className="px-4 py-2 text-neutral-400 font-mono text-xs uppercase">{srv.protocol}</td>
+                      <td className={`px-4 py-2 font-mono text-xs ${uptimeColor}`}>
+                        {srv.uptime_24h_pct == null ? '—' : `${srv.uptime_24h_pct}%`}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs text-neutral-400">
+                        {srv.last_probe_latency != null ? `${srv.last_probe_latency} ms` : '—'}
+                      </td>
                       <td className="px-4 py-2 w-[150px]">
                         <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
                           <div className={`h-full ${load.cls}`} style={{ width: `${Math.min(100, load.pct)}%` }} />
@@ -96,9 +127,6 @@ export default async function Monitoring() {
                       </td>
                       <td className="px-4 py-2 text-right font-mono text-xs">
                         {srv.active_peers} <span className="text-neutral-600">/ {srv.capacity}</span>
-                      </td>
-                      <td className="px-4 py-2 text-[10px] text-neutral-500 font-mono truncate max-w-[200px]">
-                        {srv.agent_url || <span className="text-neutral-700">— нет агента</span>}
                       </td>
                     </tr>
                   )
@@ -111,8 +139,9 @@ export default async function Monitoring() {
 
       {/* Hint */}
       <div className="text-xs text-neutral-600 text-center px-4">
-        ⚠ Эта страница — снэпшот из БД. Реальный live-статус агентов смотри на <a href="/status" target="_blank" rel="noopener" className="text-sky-400 underline">/status</a>.
-        Health-checker (auto-deactivate dead servers) пока не реализован — см. P1#6 в roadmap.
+        Live-статус из последней пробы (health-probe каждые 60с). Полный публичный
+        view — <a href="/status" target="_blank" rel="noopener" className="text-sky-400 underline">/status</a>.
+        Auto-deactivate работает: 10 down подряд → `is_active=0` + alert админу.
       </div>
     </div>
   )

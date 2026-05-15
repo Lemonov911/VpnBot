@@ -217,18 +217,54 @@ export function moneyTotals() {
 export function monitoringSnapshot() {
   const d = db()
   const r = (sql: string) => (d.prepare(sql).get() as { n: number }).n
+
+  // Сервера + последняя проба из server_health_log + uptime 24h. Раньше
+  // monitoring был «снэпшот из БД, реальный live смотри на /status».
+  // Теперь админка сразу показывает кто живой/мёртвый по последнему probe.
+  const servers = d.prepare(`
+    SELECT s.id, s.name, s.flag, s.city, s.host, s.protocol,
+           s.active_peers, s.capacity, s.is_active, s.status, s.agent_url, s.created_at,
+           (SELECT status FROM server_health_log
+             WHERE server_id=s.id ORDER BY id DESC LIMIT 1) as last_probe_status,
+           (SELECT latency_ms FROM server_health_log
+             WHERE server_id=s.id ORDER BY id DESC LIMIT 1) as last_probe_latency,
+           (SELECT checked_at FROM server_health_log
+             WHERE server_id=s.id ORDER BY id DESC LIMIT 1) as last_probe_at
+    FROM servers s ORDER BY s.is_active DESC, s.protocol, s.id
+  `).all() as Array<{
+    id: number; name: string; flag: string | null; city: string | null;
+    host: string; protocol: string;
+    active_peers: number; capacity: number;
+    is_active: number; status: string | null; agent_url: string | null;
+    created_at: string;
+    last_probe_status: 'up' | 'down' | 'unknown' | null;
+    last_probe_latency: number | null;
+    last_probe_at: string | null;
+  }>
+
+  // Uptime 24h из health log для каждого активного сервера
+  const uptimeRows = d.prepare(`
+    SELECT server_id,
+           SUM(CASE WHEN status='up'   THEN 1 ELSE 0 END) as up_n,
+           SUM(CASE WHEN status='down' THEN 1 ELSE 0 END) as down_n
+    FROM server_health_log
+    WHERE checked_at > datetime('now','-24 hours')
+    GROUP BY server_id
+  `).all() as Array<{ server_id: number; up_n: number; down_n: number }>
+
+  const uptimeMap: Record<number, number | null> = {}
+  uptimeRows.forEach(r => {
+    const total = r.up_n + r.down_n
+    uptimeMap[r.server_id] = total > 0 ? Math.round((r.up_n / total) * 1000) / 10 : null
+  })
+
+  const serversWithUptime = servers.map(s => ({
+    ...s,
+    uptime_24h_pct: uptimeMap[s.id] ?? null,
+  }))
+
   return {
-    servers: d.prepare(`
-      SELECT id, name, flag, city, host, protocol,
-             active_peers, capacity, is_active, status, agent_url, created_at
-      FROM servers ORDER BY is_active DESC, protocol, id
-    `).all() as Array<{
-      id: number; name: string; flag: string | null; city: string | null;
-      host: string; protocol: string;
-      active_peers: number; capacity: number;
-      is_active: number; status: string | null; agent_url: string | null;
-      created_at: string;
-    }>,
+    servers: serversWithUptime,
     active_configs:     r("SELECT COUNT(*) as n FROM configs WHERE status='active'"),
     empty_slots:        r("SELECT COUNT(*) as n FROM configs WHERE status='empty'"),
     revoked_configs:    r("SELECT COUNT(*) as n FROM configs WHERE status='revoked'"),

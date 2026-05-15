@@ -19,3 +19,9 @@ VPN_SERVER_USER  = os.getenv("VPN_SERVER_USER", "root")
 VPN_SERVER_KEY   = os.getenv("VPN_SERVER_KEY_PATH", "~/.ssh/id_rsa")
 VPN_SERVER_PASS  = os.getenv("VPN_SERVER_PASSWORD", "")
 CRYPTOBOT_TOKEN  = os.getenv("CRYPTOBOT_TOKEN", "")
+
+# Shared secret для admin API (Next.js админка → bot REST).
+# Админка проксирует write-операции через бота (reply на тикет, etc) чтобы не
+# открывать write-доступ к SQLite + чтоб бот мог отправлять сообщения юзерам.
+# Без этого секрета такие endpoints возвращают 403.
+ADMIN_API_SECRET = os.getenv("ADMIN_API_SECRET", "")

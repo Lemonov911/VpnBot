@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
 import { allTicketsWithUser } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import TicketActions from './TicketActions'
 
 const CATEGORY: Record<string, string> = {
   payment: '💳 Оплата',
@@ -96,13 +97,17 @@ export default async function Tickets({
                   {t.username && <span className="text-neutral-500"> @{t.username}</span>}
                   <span className="text-[10px] text-neutral-600 font-mono ml-2">id {t.user_id}</span>
                 </div>
-                <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">
+                <div className="text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed mb-3">
                   {t.message || <span className="text-neutral-600 italic">пустое сообщение</span>}
                 </div>
                 {t.admin_msg_id && (
-                  <div className="text-[10px] text-neutral-600 mt-2">
+                  <div className="text-[10px] text-neutral-600 mb-2">
                     forwarded to admin chat (msg #{t.admin_msg_id})
                   </div>
+                )}
+                {/* Reply/close UI только для open тикетов */}
+                {t.status === 'open' && (
+                  <TicketActions ticketId={t.id} userId={t.user_id} />
                 )}
               </div>
             ))}
@@ -111,7 +116,7 @@ export default async function Tickets({
       </div>
 
       <div className="text-xs text-neutral-600 text-center">
-        💡 Ответ на тикет: в Telegram chat → reply на forward'нутое сообщение → ответ улетит юзеру в чат бота.
+        💡 Можно ответить прямо отсюда — сообщение уйдёт юзеру от имени бота. Или в Telegram (reply на forward).
       </div>
     </div>
   )

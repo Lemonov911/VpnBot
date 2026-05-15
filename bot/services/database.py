@@ -728,6 +728,33 @@ async def get_ticket_by_admin_msg(admin_msg_id: int) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_ticket_by_id(ticket_id: int) -> dict | None:
+    """Возвращает тикет с данными юзера для админ-панели."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT t.id, t.user_id, t.category, t.message, t.status,
+                      t.created_at, t.admin_msg_id,
+                      u.username, u.first_name
+               FROM support_tickets t
+               JOIN users u ON u.id = t.user_id
+               WHERE t.id=?""",
+            (ticket_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def close_ticket(ticket_id: int):
+    """Закрывает тикет — простой UPDATE статуса. Идемпотентно (close-on-closed = ok)."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE support_tickets SET status='closed' WHERE id=?",
+            (ticket_id,),
+        )
+        await db.commit()
+
+
 # ── expiry reminders ───────────────────────────────────────────────────────────
 
 async def get_subscriptions_expiring_soon(days: int) -> list[dict]:

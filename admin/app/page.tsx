@@ -1,13 +1,34 @@
 import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
-import { stats, recentPayments, allTickets } from '@/lib/db'
+import { stats, recentPayments, allTickets, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
+
+// Stars → ₽ rough conversion. Telegram Stars exchange rate ≈ 1 ⭐ = 1.4₽ (varies).
+// Используется только для дисплея — фактические выплаты от Telegram идут в их курсе.
+const STARS_TO_RUB = 1.4
+
+function rubFromStars(stars: number): string {
+  if (!stars) return '0'
+  return Math.round(stars * STARS_TO_RUB).toLocaleString('ru')
+}
 
 function StatCard({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
   return (
     <div className={`bg-neutral-900 border rounded-2xl p-5 ${warn ? 'border-yellow-500/30' : 'border-neutral-800'}`}>
       <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-3xl font-bold ${warn ? 'text-yellow-400' : 'text-white'}`}>{value}</div>
+    </div>
+  )
+}
+
+function MoneyCell({ label, stars, highlight }: { label: string; stars: number; highlight?: boolean }) {
+  return (
+    <div>
+      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${highlight ? 'text-emerald-400' : 'text-white'}`}>
+        ⭐ {stars.toLocaleString('ru')}
+      </div>
+      <div className="text-[10px] text-neutral-500">≈ {rubFromStars(stars)} ₽</div>
     </div>
   )
 }
@@ -33,6 +54,7 @@ export default async function Dashboard() {
   const s        = stats()
   const payments = recentPayments(10) as any[]
   const tickets  = allTickets('open') as any[]
+  const money    = moneyTotals()
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
@@ -59,6 +81,41 @@ export default async function Dashboard() {
         <StatCard label="Активных подписок"  value={s.activeSubs} />
         <StatCard label="Stars заработано"   value={`⭐ ${s.totalStars}`} />
         <StatCard label="Тикетов открыто"    value={s.openTickets} warn={s.openTickets > 0} />
+      </div>
+
+      {/* Деньги — totals + временные окна */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
+        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-3">💰 Выручка</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <MoneyCell label="Всего"        stars={money.total_revenue_stars} highlight />
+          <MoneyCell label="За 7 дней"    stars={money.revenue_7d} />
+          <MoneyCell label="За 30 дней"   stars={money.revenue_30d} />
+          <MoneyCell label="За 90 дней"   stars={money.revenue_90d} />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-neutral-800">
+          <div>
+            <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Платящих юзеров</div>
+            <div className="text-xl font-bold text-white">{money.paying_users}</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Повторных покупок</div>
+            <div className="text-xl font-bold text-white">{money.repeat_buyers}</div>
+            <div className="text-[10px] text-neutral-500">retention proxy</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Средний LTV</div>
+            <div className="text-xl font-bold text-white">
+              {money.paying_users > 0
+                ? `⭐ ${Math.round(money.total_revenue_stars / money.paying_users)}`
+                : '—'}
+            </div>
+            <div className="text-[10px] text-neutral-500">
+              ≈ {money.paying_users > 0
+                ? `${rubFromStars(Math.round(money.total_revenue_stars / money.paying_users))} ₽`
+                : '—'}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">

@@ -27,7 +27,7 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.types import LabeledPrice
 
-from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET
+from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET
 from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
@@ -1364,6 +1364,84 @@ async def cors_middleware(request: web.Request, handler):
     return response
 
 
+# ── Admin API (для Next.js admin панели) ──────────────────────────────────────
+
+def _check_admin_secret(request: web.Request) -> bool:
+    """Проверяет X-Admin-Secret header. Без него все admin endpoints — 403."""
+    import hmac as _hmac_lib
+    if not ADMIN_API_SECRET:
+        return False
+    incoming = request.headers.get("X-Admin-Secret", "")
+    return _hmac_lib.compare_digest(incoming.encode(), ADMIN_API_SECRET.encode())
+
+
+async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
+    """POST /api/admin/tickets/{id}/reply
+    Body: { "text": "...", "close": true|false }
+    Шлёт юзеру ответ от имени бота. Опционально закрывает тикет.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    from services.database import get_ticket_by_id, close_ticket
+
+    ticket_id_str = request.match_info.get("id", "")
+    try:
+        ticket_id = int(ticket_id_str)
+    except ValueError:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+
+    text = (body.get("text") or "").strip()
+    close = bool(body.get("close", True))
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+    if len(text) > 4000:
+        return web.json_response({"error": "text too long (max 4000)"}, status=400)
+
+    ticket = await get_ticket_by_id(ticket_id)
+    if not ticket:
+        return web.json_response({"error": "ticket not found"}, status=404)
+
+    bot: Bot = request.app["bot"]
+    msg_text = (
+        f"💬 <b>Ответ от поддержки</b> (#{ticket_id})\n\n"
+        f"<i>На твоё обращение:</i>\n"
+        f"<blockquote>{(ticket.get('message') or '')[:300]}</blockquote>\n\n"
+        f"{text}"
+    )
+    try:
+        await bot.send_message(ticket["user_id"], msg_text, parse_mode="HTML")
+    except Exception as e:
+        logger.warning("admin reply to user %d failed: %s", ticket["user_id"], e)
+        return web.json_response({"error": f"send failed: {e}"}, status=502)
+
+    if close:
+        await close_ticket(ticket_id)
+
+    return web.json_response({"ok": True, "closed": close})
+
+
+async def handle_admin_ticket_close(request: web.Request) -> web.Response:
+    """POST /api/admin/tickets/{id}/close — закрыть тикет без отправки сообщения."""
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    from services.database import close_ticket
+    ticket_id_str = request.match_info.get("id", "")
+    try:
+        ticket_id = int(ticket_id_str)
+    except ValueError:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    await close_ticket(ticket_id)
+    return web.json_response({"ok": True})
+
+
 # ── Фабрика приложения ─────────────────────────────────────────────────────────
 
 def create_api_app(bot: Bot) -> web.Application:
@@ -1379,6 +1457,9 @@ def create_api_app(bot: Bot) -> web.Application:
     # Public — no auth, for /status page
     app.router.add_get ("/api/status",                     handle_public_status)
     app.router.add_get ("/api/status/incidents",           handle_public_incidents)
+    # Admin (Next.js админка проксирует с X-Admin-Secret header)
+    app.router.add_post("/api/admin/tickets/{id}/reply",   handle_admin_ticket_reply)
+    app.router.add_post("/api/admin/tickets/{id}/close",   handle_admin_ticket_close)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)
