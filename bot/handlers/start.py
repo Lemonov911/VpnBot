@@ -8,7 +8,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from config import ADMIN_ID
+from config import ADMIN_ID, SHOW_ESIM
 from services.database import upsert_user, set_referred_by, get_referral_stats, add_referral_bonus
 from services.trial import can_claim_trial, TRIAL_DAYS
 
@@ -37,7 +37,7 @@ def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKey
         # Deep link: открываем нужный раздел через startapp param
         if start_param.startswith("plan_"):
             url = f"{WEBAPP_URL}/vpn/plans"
-        elif start_param == "esim":
+        elif start_param == "esim" and SHOW_ESIM:
             url = f"{WEBAPP_URL}/esim"
         elif start_param == "support":
             url = f"{WEBAPP_URL}/support"
@@ -50,7 +50,8 @@ def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKey
         ])
     else:
         buttons.append([InlineKeyboardButton(text="🌐 VPN",  callback_data="menu:vpn")])
-        buttons.append([InlineKeyboardButton(text="📱 eSIM", callback_data="menu:esim")])
+        if SHOW_ESIM:
+            buttons.append([InlineKeyboardButton(text="📱 eSIM", callback_data="menu:esim")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -89,7 +90,13 @@ async def cmd_start(message: Message):
             "Дальше — тарифы от 200 ₽/мес."
         )
     elif WEBAPP_URL:
-        text = "👋 С возвращением! Открывай магазин VPN & eSIM кнопкой ниже."
+        # Текст подстраивается под feature flag — если eSIM скрыт, не упоминаем
+        # его в приветствии. Юзеры приходящие за чистым VPN не должны видеть
+        # «магазин eSIM» который им недоступен.
+        if SHOW_ESIM:
+            text = "👋 С возвращением! Открывай магазин VPN & eSIM кнопкой ниже."
+        else:
+            text = "👋 С возвращением. Тарифы и подписка — в приложении ниже."
     else:
         text = (
             "👋 Привет! Я помогу тебе получить доступ к интернету без ограничений.\n\n"

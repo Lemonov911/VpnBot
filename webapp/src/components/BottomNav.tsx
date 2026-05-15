@@ -2,13 +2,19 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { useT } from '../i18n'
 
-const TABS = [
+// Feature flag — VITE_SHOW_ESIM=false убирает eSIM-вкладку. Vite bundles
+// env at build time, поэтому изменения требуют пересборки/деплоя webapp.
+// Дефолт true — eSIM включён, не ломаем существующих юзеров.
+const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
+
+const TABS_ALL = [
   { path: '/',        key: 'nav_home'    as const, icon: HomeIcon    },
   { path: '/vpn',     key: 'nav_vpn'     as const, icon: ShieldIcon  },
   { path: '/esim',    key: 'nav_esim'    as const, icon: SimIcon     },
   { path: '/support', key: 'nav_support' as const, icon: HelpIcon    },
   { path: '/referral',key: 'nav_ref'     as const, icon: FriendsIcon },
 ]
+const TABS = SHOW_ESIM ? TABS_ALL : TABS_ALL.filter(t => t.path !== '/esim')
 
 function iconColor(active: boolean, dark: boolean) {
   if (dark) return active ? '#fff' : 'rgba(255,255,255,0.50)'

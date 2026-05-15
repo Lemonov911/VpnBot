@@ -8,6 +8,9 @@ import {
 } from '../api'
 import { useT, usePlural } from '../i18n'
 
+// Feature flag — VITE_SHOW_ESIM=false скрывает eSIM-блок (parity с BottomNav).
+const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
+
 export default function Home() {
   const nav    = useNavigate()
   const t      = useT()
@@ -242,7 +245,11 @@ export default function Home() {
             </div>
           )}
 
-          {/* eSIM card */}
+          {/* eSIM card — скрыта при SHOW_ESIM=false. Сетка grid-cols-2 выше
+              остаётся, VPN-карточка просто растягивается на 1 ряд (Tailwind
+              grid auto-fills). Если в будущем будут другие side-продукты —
+              можно добавить заглушку «Скоро…». */}
+          {SHOW_ESIM && (
           <div className="fade-in rounded-[20px] overflow-hidden bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] flex flex-col">
             <div className="h-[3px] bg-gradient-to-r from-success to-[#00b4d8] shrink-0" />
             <div className="px-[14px] pt-[14px] pb-4 flex flex-col flex-1 min-h-[158px]">
@@ -273,6 +280,7 @@ export default function Home() {
               </button>
             </div>
           </div>
+          )}
         </div>
 
         {/* ── Quick actions ── */}
