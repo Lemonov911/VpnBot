@@ -59,9 +59,12 @@ export function userFull(userId: number) {
 }
 
 export function allServers() {
+  // Note: колонки `status` в `servers` нет (не в migration). is_active — это
+  // тот флаг что нам нужен. status оставлен для совместимости в типе если кто
+  // ещё дергает — но из SELECT убран.
   return db().prepare(`
     SELECT id, name, flag, city, host, agent_url, protocol,
-           capacity, active_peers, status, is_active, created_at,
+           capacity, active_peers, is_active, created_at,
            wg_pubkey
     FROM servers ORDER BY created_at DESC
   `).all()
@@ -227,9 +230,12 @@ export function monitoringSnapshot() {
   // Сервера + последняя проба из server_health_log + uptime 24h. Раньше
   // monitoring был «снэпшот из БД, реальный live смотри на /status».
   // Теперь админка сразу показывает кто живой/мёртвый по последнему probe.
+  // `status` колонки в `servers` нет в migration — убрана из SELECT.
+  // last_probe_* подтягиваем из server_health_log (создаётся health-probe
+  // scheduler'ом в боте).
   const servers = d.prepare(`
     SELECT s.id, s.name, s.flag, s.city, s.host, s.protocol,
-           s.active_peers, s.capacity, s.is_active, s.status, s.agent_url, s.created_at,
+           s.active_peers, s.capacity, s.is_active, s.agent_url, s.created_at,
            (SELECT status FROM server_health_log
              WHERE server_id=s.id ORDER BY id DESC LIMIT 1) as last_probe_status,
            (SELECT latency_ms FROM server_health_log
@@ -241,7 +247,7 @@ export function monitoringSnapshot() {
     id: number; name: string; flag: string | null; city: string | null;
     host: string; protocol: string;
     active_peers: number; capacity: number;
-    is_active: number; status: string | null; agent_url: string | null;
+    is_active: number; agent_url: string | null;
     created_at: string;
     last_probe_status: 'up' | 'down' | 'unknown' | null;
     last_probe_latency: number | null;
