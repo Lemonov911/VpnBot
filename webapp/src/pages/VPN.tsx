@@ -8,6 +8,7 @@ import {
 } from '../api'
 import { useT, usePlural } from '../i18n'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
+import PostPayOnboarding from '../components/PostPayOnboarding'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
@@ -99,6 +100,7 @@ export default function VPN() {
   const [buyLoading, setBuyLoading] = useState<string | null>(null)
   const [paid,       setPaid]       = useState(false)
   const [cancelLoading, setCancelLoading] = useState(false)
+  const [postPayOpen, setPostPayOpen]     = useState(false)
 
   const handleCancelRenewal = async () => {
     if (cancelLoading || !sub) return
@@ -163,15 +165,18 @@ export default function VPN() {
         const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
         setBuyLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       } else if (method === 'lavatop') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceLavatop(planKey)
         setBuyLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       } else {
         const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
         setBuyLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       }
     } catch {
       setBuyLoading(null)
@@ -309,6 +314,13 @@ export default function VPN() {
             </div>
           </div>
         )}
+
+        {postPayOpen && (
+          <PostPayOnboarding
+            onClose={() => setPostPayOpen(false)}
+            onGoConfigs={() => { setPostPayOpen(false); nav('/configs') }}
+          />
+        )}
       </>
     )
   }
@@ -414,6 +426,13 @@ export default function VPN() {
               </div>
             </div>
           </div>
+        )}
+
+        {postPayOpen && (
+          <PostPayOnboarding
+            onClose={() => setPostPayOpen(false)}
+            onGoConfigs={() => { setPostPayOpen(false); nav('/configs') }}
+          />
         )}
       </>
     )

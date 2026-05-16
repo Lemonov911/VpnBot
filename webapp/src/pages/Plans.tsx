@@ -6,6 +6,7 @@ import {
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
+import PostPayOnboarding from '../components/PostPayOnboarding'
 import { useT } from '../i18n'
 import type { TKey } from '../i18n'
 
@@ -185,6 +186,10 @@ export default function Plans() {
   const [pageStatus, setPageStatus] = useState<PageStatus>('idle')
   const [errMsg,     setErrMsg]     = useState('')
   const [sheetPlan,  setSheetPlan]  = useState<Plan | null>(null)
+  // Onboarding overlay показывается после openLink (Lava/Cryptomus/CryptoBot) —
+  // юзер ушёл в браузер платить, мы показываем «что произойдёт дальше»
+  // чтобы он не запутался при возврате.
+  const [postPayOpen, setPostPayOpen] = useState(false)
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -239,15 +244,18 @@ export default function Plans() {
         const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
         setLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       } else if (method === 'lavatop') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceLavatop(planKey)
         setLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       } else {
         const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
         setLoading(null)
         WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       }
     } catch (e) {
       setLoading(null); setPageStatus('error')
@@ -416,6 +424,13 @@ export default function Plans() {
             </div>
           </div>
         </div>
+      )}
+
+      {postPayOpen && (
+        <PostPayOnboarding
+          onClose={() => setPostPayOpen(false)}
+          onGoConfigs={() => { setPostPayOpen(false); nav('/configs') }}
+        />
       )}
 
       {sheetPlan && (
