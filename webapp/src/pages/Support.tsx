@@ -105,11 +105,11 @@ function DownloadChip({ href, label }: { href: string; label: string }) {
 function AppChoiceAnswer() {
   return (
     <div className="space-y-3">
-      <p>Зависит от того, что бот тебе прислал:</p>
+      <p>Открой <strong className="text-[var(--tg-theme-text-color)]">«Мои конфиги»</strong> в этом приложении и посмотри что там есть:</p>
       <div className="pl-2 border-l-2 border-purple/40">
         <p className="mb-1">
-          <span className="font-mono text-[11px] text-[var(--tg-theme-text-color)]">https://maxvpnesim.com/sub/…</span>
-          <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Импорт: «+» → «Из подписки» → вставь ссылку.
+          Видишь карточку <strong className="text-[var(--tg-theme-text-color)]">«Ссылка для Happ»</strong>
+          <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Скопируй ссылку, в приложении: «+» → «Из подписки» → вставь.
         </p>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
           <DownloadChip href="https://apps.apple.com/app/happ-proxy-utility/id6504287215" label="iOS" />
@@ -119,7 +119,7 @@ function AppChoiceAnswer() {
       </div>
       <div className="pl-2 border-l-2 border-cyan-500/40">
         <p className="mb-1">
-          Файл <span className="font-mono text-[11px] text-[var(--tg-theme-text-color)]">.conf</span> или QR-код AmneziaWG
+          Видишь <strong className="text-[var(--tg-theme-text-color)]">AmneziaWG-слот</strong> с кнопками QR / скачать
           <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Amnezia VPN</strong> (полный клиент) или <strong className="text-[var(--tg-theme-text-color)]">AmneziaWG</strong> (легче, только для этого протокола).
           Импорт: «+» → «Сканировать QR» или «Из файла».
         </p>
