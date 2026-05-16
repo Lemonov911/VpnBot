@@ -7,6 +7,7 @@ import {
   type VpnConfig, type VpnServer, type TrialStatus,
 } from '../api'
 import { useT, useLang, type TKey } from '../i18n'
+import { copyText } from '../utils/clipboard'
 
 function formatDate(iso: string, lang: string): string {
   try {
@@ -279,7 +280,7 @@ function SlotCard({
               <button
                 onClick={() => {
                   WebApp.HapticFeedback.impactOccurred('light')
-                  navigator.clipboard.writeText(slot.vless_url || '').then(() => {
+                  copyText(slot.vless_url || '', () => {
                     setCopied(true)
                     setTimeout(() => setCopied(false), 1500)
                   })

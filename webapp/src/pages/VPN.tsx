@@ -117,7 +117,16 @@ export default function VPN() {
     try {
       if (method === 'stars') {
         const { invoice_url } = await createVpnInvoice(plan.key)
+        let callbackFired = false
+        // Safety timeout: если Telegram закроется или сеть упадёт до окончания
+        // платежа — openInvoice callback может не сработать. Через 5 минут
+        // принудительно снимаем loading, иначе кнопка зависнет.
+        const guardId = setTimeout(() => {
+          if (!callbackFired) setBuyLoading(null)
+        }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, s => {
+          callbackFired = true
+          clearTimeout(guardId)
           setBuyLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
         })

@@ -8,10 +8,14 @@ SQLite через aiosqlite.
   (revoked удалён — отзыв сбрасывает слот в empty, слот не исчезает)
 """
 
+import logging
+
 import aiosqlite
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent.parent / "bot.db"
 
@@ -203,6 +207,19 @@ async def init_db():
         # делает full table scan по configs (worst case 10k+ строк, 5+ сек).
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_configs_status_created ON configs(status, created_at)"
+        )
+        # Lookups, бьющие в эти индексы: get_active_subscription (user_id),
+        # try_award_referral_bonus + ref-стата (referred_by), и
+        # get_configs_for_subscription / revoke-flows (subscription_id).
+        # Без них — full table scan при росте до десятков тысяч строк.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_configs_subscription_id ON configs(subscription_id)"
         )
         await _migrate(db)
         await db.commit()
@@ -644,9 +661,14 @@ async def apply_pending_plan_change(sub_id: int, new_plan: str):
     покупка/продление будет за новый тариф.
     """
     async with _connect() as db:
+        # WHERE pending_plan=? — guard от race: если юзер успел сделать
+        # upgrade параллельно, pending_plan уже NULL → UPDATE no-op, не
+        # перезаписываем актуальный plan. apply_pending_plan_change
+        # вызывается из scheduler на момент истечения подписки.
         await db.execute(
-            "UPDATE subscriptions SET plan=?, pending_plan=NULL WHERE id=?",
-            (new_plan, sub_id),
+            "UPDATE subscriptions SET plan=?, pending_plan=NULL "
+            "WHERE id=? AND pending_plan=?",
+            (new_plan, sub_id, new_plan),
         )
         await db.commit()
 
@@ -662,14 +684,21 @@ async def is_payment_refunded(tx_id: str) -> bool:
             return row is not None
 
 
-async def mark_payment_refunded(tx_id: str):
-    """Фиксирует факт успешного refund'а для идемпотентности."""
+async def mark_payment_refunded(tx_id: str) -> bool:
+    """Фиксирует факт успешного refund'а для идемпотентности.
+
+    `WHERE refunded_at IS NULL` — защита от двойной отметки если webhook
+    дойдёт повторно или админ вручную нажмёт refund после уже-успешного.
+    Возвращает True если запись была обновлена впервые, False — повтор.
+    """
     async with _connect() as db:
-        await db.execute(
-            "UPDATE payments SET refunded_at=CURRENT_TIMESTAMP, status='refunded' WHERE tx_id=?",
+        cur = await db.execute(
+            "UPDATE payments SET refunded_at=CURRENT_TIMESTAMP, status='refunded' "
+            "WHERE tx_id=? AND refunded_at IS NULL",
             (tx_id,),
         )
         await db.commit()
+        return cur.rowcount > 0
 
 
 async def audit_log_record(admin_id: int, action: str,

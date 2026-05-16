@@ -3,25 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getReferralStats, type ReferralStats } from '../api'
 import { useT, useLang } from '../i18n'
-
-// Fallback для устройств где navigator.clipboard недоступен (старые iOS WebView,
-// insecure contexts). Создаём временный textarea, выделяем, document.execCommand('copy').
-function legacyCopy(text: string): boolean {
-  try {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.focus()
-    ta.select()
-    const ok = document.execCommand('copy')
-    document.body.removeChild(ta)
-    return ok
-  } catch {
-    return false
-  }
-}
+import { copyText } from '../utils/clipboard'
 
 export default function Referral() {
   const nav    = useNavigate()
@@ -52,20 +34,10 @@ export default function Referral() {
   const handleCopy = () => {
     if (!stats) return
     WebApp.HapticFeedback.impactOccurred('light')
-    // navigator.clipboard может отсутствовать (Safari в insecure context,
-    // старый WebView). Fallback на legacy execCommand для iOS<16 WebView.
-    const text = stats.ref_link
-    const onSuccess = () => {
+    copyText(stats.ref_link, () => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    }
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
-        legacyCopy(text) && onSuccess()
-      })
-    } else {
-      if (legacyCopy(text)) onSuccess()
-    }
+    })
   }
 
   const handleShare = () => {
