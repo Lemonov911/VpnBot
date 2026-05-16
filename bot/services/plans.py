@@ -24,7 +24,7 @@ VPN_PLANS: dict[str, dict] = {
     # ── v2 тарифы по скорости (Reality + plain WG) ──
     "vpn_base": {
         "name":           "База",
-        "stars":          145,            # ≈ 200 ₽
+        "stars":          180,            # ≈ 235 ₽ (+25% буфер на Telegram 30%-комиссию)
         "rub":            "200",
         "usd":            "2.20",
         "duration_days":  30,
@@ -41,7 +41,7 @@ VPN_PLANS: dict[str, dict] = {
     },
     "vpn_max": {
         "name":           "Макс",
-        "stars":          360,            # ≈ 500 ₽
+        "stars":          450,            # ≈ 590 ₽ (+25% буфер на Telegram 30%-комиссию)
         "rub":            "500",
         "usd":            "5.50",
         "duration_days":  30,
@@ -69,42 +69,42 @@ VPN_PLANS: dict[str, dict] = {
     # Скидочная лестница (vs ровно-перемноженной 1м цены):
     #   3м: −15%   6м: −20%   12м: −30%
     "vpn_base_3m": {
-        "name": "База 3 мес", "stars": 370, "rub": "510", "usd": "5.60",
+        "name": "База 3 мес", "stars": 465, "rub": "510", "usd": "5.60",
         "duration_days": 90,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,  # доступно только в Stars+Cryptomus
     },
     "vpn_base_6m": {
-        "name": "База 6 мес", "stars": 695, "rub": "960", "usd": "10.50",
+        "name": "База 6 мес", "stars": 870, "rub": "960", "usd": "10.50",
         "duration_days": 180,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,
     },
     "vpn_base_12m": {
-        "name": "База 1 год", "stars": 1220, "rub": "1680", "usd": "18.50",
+        "name": "База 1 год", "stars": 1525, "rub": "1680", "usd": "18.50",
         "duration_days": 365,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,
     },
     "vpn_max_3m": {
-        "name": "Макс 3 мес", "stars": 920, "rub": "1275", "usd": "14.00",
+        "name": "Макс 3 мес", "stars": 1150, "rub": "1275", "usd": "14.00",
         "duration_days": 90,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
         "multi_period": True,
     },
     "vpn_max_6m": {
-        "name": "Макс 6 мес", "stars": 1725, "rub": "2400", "usd": "26.50",
+        "name": "Макс 6 мес", "stars": 2155, "rub": "2400", "usd": "26.50",
         "duration_days": 180,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
         "multi_period": True,
     },
     "vpn_max_12m": {
-        "name": "Макс 1 год", "stars": 3025, "rub": "4200", "usd": "46.00",
+        "name": "Макс 1 год", "stars": 3780, "rub": "4200", "usd": "46.00",
         "duration_days": 365,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,

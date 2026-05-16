@@ -9,9 +9,12 @@ export type PayPeriod = '1m' | '3m' | '6m' | '12m'
 // Multi-period цены — синхронизировано с bot/services/plans.py.
 // Stars + Cryptomus поддерживают 1/3/6/12. CryptoBot + Lava — только 1m
 // (бэкенд блокирует multi_period для них через 400).
+// Stars цены — выше RUB-эквивалента на ~25% (буфер на Telegram 30%-комиссию +
+// 2-3% TON spread). Юзеру Stars дороже Lava — но Stars остаётся единственным
+// методом без email/карт + работает у всех вне РФ.
 export const STARS_PRICES: Record<string, Record<PayPeriod, number>> = {
-  vpn_base: { '1m': 145,  '3m': 370,  '6m': 695,  '12m': 1220 },
-  vpn_max:  { '1m': 360,  '3m': 920,  '6m': 1725, '12m': 3025 },
+  vpn_base: { '1m': 180,  '3m': 465,  '6m': 870,  '12m': 1525 },
+  vpn_max:  { '1m': 450,  '3m': 1150, '6m': 2155, '12m': 3780 },
 }
 
 // RUB-цены multi-period (для Cryptomus). Та же скидочная лестница:
@@ -47,8 +50,8 @@ export const PLANS: Plan[] = [
   // Слоты синхронизированы с bot/services/plans.py (единый источник правды по
   // тарифам — мы не получаем их с API, потому что они редко меняются и UI
   // должен рендериться даже без подключения к боту).
-  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 145, rub: 200, usd: 2.2, vless: 1, awg: 2, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
-  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 360, rub: 500, usd: 5.5, vless: 5, awg: 3, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
+  { key: 'vpn_base', nameKey: 'vpn_plan_base', stars: 180, rub: 200, usd: 2.2, vless: 1, awg: 2, speedMbps: 60,  softCapGb: 500,  throttleMbps: 5 },
+  { key: 'vpn_max',  nameKey: 'vpn_plan_max',  stars: 450, rub: 500, usd: 5.5, vless: 5, awg: 3, speedMbps: 120, softCapGb: 1000, throttleMbps: 15, badge: 'hit' },
 ]
 
 // alias for callers that imported VISIBLE_PLANS — keep backwards-compat for one cycle
