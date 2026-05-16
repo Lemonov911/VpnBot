@@ -1567,9 +1567,26 @@ async def handle_admin_ticket_close(request: web.Request) -> web.Response:
 
 # ── Фабрика приложения ─────────────────────────────────────────────────────────
 
+async def handle_health(request: web.Request) -> web.Response:
+    """Public health-check + версия. Используется monitoring'ом и manual debug
+    «какая версия катится сейчас». No auth — для внешних probes."""
+    try:
+        from bot import BOT_VERSION
+    except Exception:
+        BOT_VERSION = "unknown"
+    return web.json_response({
+        "status": "ok",
+        "version": BOT_VERSION,
+        "service": "vpnbot",
+    })
+
+
 def create_api_app(bot: Bot) -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app["bot"] = bot
+
+    # Health-check — public, для monitoring + version probe
+    app.router.add_get ("/api/health",                     handle_health)
 
     # VPN
     app.router.add_post("/api/vpn/invoice",                handle_vpn_invoice)

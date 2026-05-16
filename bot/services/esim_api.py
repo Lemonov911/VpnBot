@@ -48,22 +48,36 @@ SKIP_SLUG_TOKENS = ("_nonhkip", "_1Mbps")
 
 
 # ── HTTP layer ────────────────────────────────────────────────────────────────
+# Shared session — переиспользует TCP/TLS соединения. Без него каждый _post
+# делает full handshake (~100-200ms overhead на запрос). При polling order
+# raz в 5 сек × 6 попыток = 1+ секунды лишних handshake'ов.
+_session: aiohttp.ClientSession | None = None
+_session_lock = asyncio.Lock()
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        async with _session_lock:
+            if _session is None or _session.closed:
+                connector = aiohttp.TCPConnector(ssl=False, limit=10)
+                _session = aiohttp.ClientSession(connector=connector)
+    return _session
+
 
 async def _post(endpoint: str, body: dict, timeout: int = 60) -> dict:
     headers = {"RT-AccessCode": ESIM_API_KEY, "Content-Type": "application/json"}
-    # ssl=False: macOS Python missing system certs; на Linux VPS это no-op (default ssl)
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as s:
-        async with s.post(
-            f"{BASE}{endpoint}", json=body, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as r:
-            text = await r.text()
-            try:
-                return json.loads(text)
-            except Exception as exc:
-                logger.error("eSIM API JSON parse error: %s | body: %.200s", exc, text)
-                return {}
+    session = await _get_session()
+    async with session.post(
+        f"{BASE}{endpoint}", json=body, headers=headers,
+        timeout=aiohttp.ClientTimeout(total=timeout),
+    ) as r:
+        text = await r.text()
+        try:
+            return json.loads(text)
+        except Exception as exc:
+            logger.error("eSIM API JSON parse error: %s | body: %.200s", exc, text)
+            return {}
 
 
 # ── Catalog cache ─────────────────────────────────────────────────────────────

@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import subprocess
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -13,11 +15,34 @@ from services.scheduler import run_scheduler
 from services.webapp_api import create_api_app
 
 
+def _resolve_version() -> str:
+    """Версия для логов + /api/health. Источники в порядке приоритета:
+       1. BOT_VERSION env (CI устанавливает при deploy)
+       2. git rev-parse HEAD (если репо доступен на проде)
+       3. 'dev' fallback
+    """
+    v = os.getenv("BOT_VERSION", "").strip()
+    if v:
+        return v
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL, timeout=2,
+        ).decode().strip()
+    except Exception:
+        return "dev"
+
+
+BOT_VERSION = _resolve_version()
+
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    logging.info("Bot starting: version=%s pid=%d", BOT_VERSION, os.getpid())
 
     bot = Bot(
         token=BOT_TOKEN,

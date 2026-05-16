@@ -75,6 +75,35 @@ EXPIRY_NOTICE = (
 
 CHECK_INTERVAL = 3600  # секунд (1 час)
 
+
+def _bot_version() -> str:
+    """Lazy lookup BOT_VERSION чтобы избежать circular import."""
+    try:
+        from bot import BOT_VERSION
+        return BOT_VERSION
+    except Exception:
+        return "dev"
+
+
+async def _weekly_vacuum():
+    """SQLite VACUUM — освобождает пустые страницы после delete/update.
+    Без этого bot.db растёт на 5-10% в месяц (fragmentation).
+    VACUUM требует exclusive lock — будет ждать пока все writers закроют
+    connections. Делаем в run_in_executor чтобы не блокировать loop.
+    """
+    import sqlite3 as _sqlite
+    from services.database import DB_PATH
+    def _vacuum_sync():
+        conn = _sqlite.connect(str(DB_PATH))
+        try:
+            conn.execute("VACUUM")
+            conn.commit()
+        finally:
+            conn.close()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _vacuum_sync)
+    logger.info("weekly VACUUM completed")
+
 # Inline-кнопка «Продлить» во всех retention-уведомлениях. Открывает Plans
 # внутри Mini App одним кликом — это разница между «продлил из дивана» и
 # «забыл и ушёл к конкуренту».
@@ -561,38 +590,46 @@ async def _daily_backup(bot: Bot):
     if os.path.exists(snap + ".gz"):
         os.unlink(snap + ".gz")
 
-    # SQLite-aware backup (учитывает WAL+SHM, в отличие от shutil.copy)
-    src = sqlite3.connect(str(DB_PATH))
-    try:
-        dst = sqlite3.connect(snap)
+    # Backup + redact + gzip — все blocking-операции. На больших БД (50+ MB)
+    # это 5-10 секунд блокировки event loop'а. polling замораживается, юзеры
+    # видят "бот не отвечает". Переносим в default executor (thread pool).
+    def _backup_blocking() -> bytes:
+        # SQLite-aware backup (учитывает WAL+SHM, в отличие от shutil.copy)
+        src = sqlite3.connect(str(DB_PATH))
         try:
-            src.backup(dst)
+            dst = sqlite3.connect(snap)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
         finally:
-            dst.close()
-    finally:
-        src.close()
+            src.close()
 
-    # Redact sensitive columns на копии — sub_token даёт постоянный
-    # доступ к VLESS-конфигам через /sub/{token}, payment_id может
-    # быть переиспользован в анализе.
-    conn = sqlite3.connect(snap)
-    try:
-        conn.execute("UPDATE users SET sub_token=NULL")
-        # payment_id оставляем — он нужен для идемпотентности при restore
-        conn.commit()
-    finally:
-        conn.close()
+        # Redact sensitive columns на копии — sub_token даёт постоянный
+        # доступ к VLESS-конфигам через /sub/{token}.
+        conn = sqlite3.connect(snap)
+        try:
+            conn.execute("UPDATE users SET sub_token=NULL")
+            conn.commit()
+        finally:
+            conn.close()
 
-    with open(snap, "rb") as src_f, gzip.open(snap + ".gz", "wb", compresslevel=9) as dst_f:
-        for chunk in iter(lambda: src_f.read(64 * 1024), b""):
-            dst_f.write(chunk)
-    with open(snap + ".gz", "rb") as f:
-        data = f.read()
+        with open(snap, "rb") as src_f, gzip.open(snap + ".gz", "wb", compresslevel=9) as dst_f:
+            for chunk in iter(lambda: src_f.read(64 * 1024), b""):
+                dst_f.write(chunk)
+        with open(snap + ".gz", "rb") as f:
+            return f.read()
+
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, _backup_blocking)
 
     try:
         await bot.send_document(
             ADMIN_ID,
-            BufferedInputFile(data, filename=f"bot-db-{today}.gz"),
+            BufferedInputFile(
+                data,
+                filename=f"bot-db-{today}-{_bot_version()[:7]}.gz",
+            ),
             caption=f"📦 Daily backup · {today} · {len(data)//1024} KB · sub_tokens redacted",
         )
         with open(state_file, "w") as f:
@@ -780,3 +817,8 @@ async def run_scheduler(bot: Bot):
         await _safe("daily_backup",     _daily_backup(bot),              timeout=240)
         if _TICK % _ESIM_SYNC_EVERY_N_TICKS == 0:
             await _safe("esim_usage",   _sync_esim_usage(),              timeout=180)
+        # VACUUM раз в неделю (168 тиков). Без него БД растёт после
+        # delete/update — SQLite не освобождает страницы автоматически.
+        # incremental_vacuum дешевле full VACUUM (не блокирует БД целиком).
+        if _TICK % (24 * 7) == 0:
+            await _safe("db_vacuum",    _weekly_vacuum(),                timeout=300)

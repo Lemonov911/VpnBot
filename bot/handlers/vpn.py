@@ -187,7 +187,27 @@ async def initiate_purchase(callback: CallbackQuery, bot: Bot):
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery):
-    await query.answer(ok=True)
+    """Подтверждаем pre_checkout если payload валидный.
+    Если план был удалён между invoice creation и оплатой — отбиваем
+    pre_checkout с ok=False, Telegram отменит платёж до charge'а."""
+    payload = query.invoice_payload or ""
+    if not payload:
+        await query.answer(ok=False, error_message="Некорректный payload — попробуй создать платёж заново.")
+        return
+    # Валидация по payload-type. Stars-invoice payload:
+    #   "vpn_base" / "vpn_max"            — обычная покупка
+    #   "esim:pkg_code:price"             — eSIM
+    #   "plan_upgrade:sub_id:plan_key:.." — апгрейд
+    #   "free_*"                          — admin gift (не должно прийти через pre_checkout)
+    if payload.startswith("esim:") or payload.startswith("plan_upgrade:"):
+        await query.answer(ok=True)
+        return
+    if payload in VPN_PLANS:
+        await query.answer(ok=True)
+        return
+    # Unknown plan_key (мог быть удалён из VPN_PLANS пока юзер тормозил)
+    logger.warning("pre_checkout: unknown payload=%r user=%d", payload, query.from_user.id)
+    await query.answer(ok=False, error_message="Тариф больше недоступен. Открой меню заново.")
 
 
 # ── Обработка успешного платежа ────────────────────────────────────────────────
@@ -690,7 +710,10 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
     )
     await complete_order(order_id, payment_id=charge_id)
 
-    tx_id = f"tg_{user_id}_{order_id}_{uuid.uuid4().hex[:8]}"
+    # tx_id detrministic by order_id — без uuid suffix'а. esimaccess использует
+    # transactionId для idempotency: если timeout → retry → тот же tx_id →
+    # esimaccess вернёт тот же orderNo вместо создания второго заказа.
+    tx_id = f"tg_{user_id}_{order_id}"
     profile_id = await create_esim_profile(
         user_id=user_id, order_id=order_id, tx_id=tx_id,
         package_code=pkg_code, package_name=pkg["name"],

@@ -33,7 +33,35 @@ async def _connect():
         yield db
 
 
+async def _pre_migrate_snapshot():
+    """Snapshot БД перед миграциями. Если ALTER TABLE упадёт (constraints,
+    disk space, etc), бот не стартует — но юзер может вручную восстановить
+    snapshot из /opt/vpnbot/.snapshots/pre-migrate-*.db и откатить commit.
+    """
+    import shutil
+    if not DB_PATH.exists():
+        return  # первая инициализация, нет что снапшотить
+    snap_dir = DB_PATH.parent / ".snapshots"
+    snap_dir.mkdir(exist_ok=True)
+    snap_path = snap_dir / f"pre-migrate-{int(datetime.utcnow().timestamp())}.db"
+    try:
+        shutil.copy2(DB_PATH, snap_path)
+        # Ротация: оставляем только последние 5 pre-migrate snapshots
+        snaps = sorted(snap_dir.glob("pre-migrate-*.db"))
+        for old in snaps[:-5]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+        logger.info("pre-migrate snapshot: %s", snap_path)
+    except Exception as e:
+        logger.warning("pre-migrate snapshot failed: %s", e)
+
+
 async def init_db():
+    # Snapshot перед миграциями (idempotent — если ALTER TABLE некритичный,
+    # snapshot всё равно ротируется через 5 запусков)
+    await _pre_migrate_snapshot()
     async with aiosqlite.connect(DB_PATH) as db:
         # WAL — persistent, переживает рестарт; устанавливается один раз.
         # synchronous=NORMAL — fsync только при checkpoint, +производительность,
@@ -170,6 +198,11 @@ async def init_db():
         )
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_esim_order_no ON esim_profiles(order_no)"
+        )
+        # Индекс для cleanup_stuck_activating_slots — без него startup
+        # делает full table scan по configs (worst case 10k+ строк, 5+ сек).
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_configs_status_created ON configs(status, created_at)"
         )
         await _migrate(db)
         await db.commit()

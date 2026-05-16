@@ -172,15 +172,22 @@ export default function Plans() {
     WebApp.BackButton.show()
     const goBack = () => nav('/vpn')
     WebApp.BackButton.onClick(goBack)
+    // Защита от unmount-race: если юзер быстро уходит со страницы,
+    // pending fetch не должен setState на unmounted component.
+    let cancelled = false
     getActiveSubscription().then(sub => {
+      if (cancelled) return
       setSub(sub)
       const preselect = (location.state as { planKey?: string } | null)?.planKey
       if (preselect && !sub) {
         const plan = PLANS.find(p => p.key === preselect)
         if (plan) setSheetPlan(plan)
       }
-    }).catch(() => setSub(null))
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
+    }).catch(() => { if (!cancelled) setSub(null) })
+    return () => {
+      cancelled = true
+      WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack)
+    }
   }, [nav, location.state])
 
   const handleBuy = async (plan: Plan, method: PayMethod) => {
@@ -191,7 +198,16 @@ export default function Plans() {
     try {
       if (method === 'stars') {
         const { invoice_url } = await createVpnInvoice(plan.key)
+        let callbackFired = false
+        // Safety timeout: если юзер закроет Telegram до окончания платежа
+        // или сеть упадёт — openInvoice callback может не сработать, кнопка
+        // зависнет «загрузка». Через 5 минут принудительно снимаем loading.
+        const guardId = setTimeout(() => {
+          if (!callbackFired) setLoading(null)
+        }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, (s) => {
+          callbackFired = true
+          clearTimeout(guardId)
           setLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
           else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
