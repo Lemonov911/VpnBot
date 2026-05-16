@@ -15,6 +15,7 @@ const NAV_ITEMS = [
   { href: '/',           label: 'Дашборд'   },
   { href: '/analytics',  label: 'Аналитика' },
   { href: '/clients',    label: 'Клиенты'   },
+  { href: '/payments',   label: 'Платежи'   },
   { href: '/monitoring', label: 'Мониторинг' },
   { href: '/tickets',    label: 'Обращения' },
   { href: '/servers',    label: 'Серверы'   },
@@ -36,7 +37,10 @@ export default function AdminNav({ username }: { username?: string }) {
       </div>
       <div className="flex gap-4 items-center">
         {NAV_ITEMS.map(item => {
-          const active = current === item.href
+          // / должен матчить только /, остальные — точное совпадение или префикс /clients/123
+          const active = item.href === '/'
+            ? current === '/'
+            : current === item.href || current.startsWith(item.href + '/')
           return (
             <Link
               key={item.href}

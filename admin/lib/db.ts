@@ -65,6 +65,65 @@ export function recentPayments(limit = 20) {
   `).all(limit)
 }
 
+export type PaymentRow = {
+  id: number
+  user_id: number
+  plan: string
+  stars_paid: number
+  amount_rub: number
+  payment_id: string | null
+  status: string
+  refunded_at: string | null
+  created_at: string
+  expires_at: string | null
+  method: string  // 'stars' | 'crypto' | 'free'
+  username: string | null
+  first_name: string | null
+}
+
+export function allPayments(filters: {
+  method?: 'stars' | 'crypto' | 'free'
+  plan?: string
+  days?: number          // last N days
+  includeRefunds?: boolean
+  limit?: number
+} = {}) {
+  const { method, plan, days, includeRefunds = true, limit = 500 } = filters
+  const excl = excludeAdminsClause('s.user_id')
+
+  // Метод определяем по payment_id префиксу — единственное, что у нас есть:
+  //   "crypto_*" → CryptoBot
+  //   "free_*"   → admin gift / trial reward
+  //   иначе      → Telegram Stars (sha256 charge_id или legacy формат)
+  const where: string[] = ['1=1']
+  const params: unknown[] = []
+
+  if (method === 'crypto')      where.push("s.payment_id LIKE 'crypto_%'")
+  else if (method === 'free')   where.push("s.payment_id LIKE 'free_%'")
+  else if (method === 'stars')  where.push("s.payment_id NOT LIKE 'crypto_%' AND s.payment_id NOT LIKE 'free_%' AND s.payment_id IS NOT NULL")
+
+  if (plan) { where.push('s.plan = ?'); params.push(plan) }
+  if (days) where.push(`s.created_at > datetime('now', '-${Number(days)} days')`)
+  if (!includeRefunds) where.push('s.refunded_at IS NULL')
+
+  const sql = `
+    SELECT s.id, s.user_id, s.plan, s.stars_paid, s.amount_rub, s.payment_id,
+           s.status, s.refunded_at, s.created_at, s.expires_at,
+           CASE
+             WHEN s.payment_id LIKE 'crypto_%' THEN 'crypto'
+             WHEN s.payment_id LIKE 'free_%'   THEN 'free'
+             ELSE 'stars'
+           END as method,
+           u.username, u.first_name
+    FROM subscriptions s
+    JOIN users u ON u.id = s.user_id
+    WHERE ${where.join(' AND ')} ${excl}
+    ORDER BY s.created_at DESC LIMIT ?
+  `
+  params.push(limit)
+  return db().prepare(sql).all(...params) as PaymentRow[]
+}
+
 export function allTickets(status = 'open') {
   return db().prepare(`
     SELECT t.id, t.category, t.message, t.status, t.created_at,
@@ -76,12 +135,49 @@ export function allTickets(status = 'open') {
   `).all(status)
 }
 
+export type UserRow = {
+  id: number
+  username: string | null
+  first_name: string | null
+  created_at: string
+  referred_by: number | null
+  ref_bonus_days: number
+}
+
+export type SubRow = {
+  id: number
+  user_id: number
+  plan: string
+  payment_id: string | null
+  stars_paid: number
+  amount_rub: number
+  status: string
+  expires_at: string | null
+  grace_until: string | null
+  pending_plan: string | null
+  refunded_at: string | null
+  created_at: string
+}
+
+export type UserTicketRow = {
+  id: number
+  user_id: number
+  category: string
+  message: string
+  status: string
+  created_at: string
+}
+
 export function userFull(userId: number) {
   const d = db()
-  const user = d.prepare('SELECT * FROM users WHERE id = ?').get(userId)
-  const subs = d.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC').all(userId)
-  const tickets = d.prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 5').all(userId)
-  return { user, subs, tickets }
+  const user    = d.prepare('SELECT * FROM users WHERE id = ?').get(userId) as UserRow | undefined
+  const subs    = d.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC').all(userId) as SubRow[]
+  const tickets = d.prepare('SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC LIMIT 5').all(userId) as UserTicketRow[]
+  // Активные конфиги (для каждой подписки) — чтобы понять есть ли реальные пиры
+  const configCount = (d.prepare(
+    "SELECT COUNT(*) as n FROM configs WHERE user_id = ? AND status='active'"
+  ).get(userId) as { n: number }).n
+  return { user, subs, tickets, configCount }
 }
 
 export function allServers() {
@@ -146,13 +242,14 @@ export function planMix30d() {
   const excl = excludeAdminsClause('user_id')
   return db().prepare(`
     SELECT plan,
-           COUNT(*) as count,
-           COALESCE(SUM(stars_paid),0) as stars
+           COUNT(*)                    as count,
+           COALESCE(SUM(stars_paid),0) as stars,
+           COALESCE(SUM(amount_rub),0) as amount_rub
     FROM subscriptions
     WHERE created_at > datetime('now','-30 days') ${excl}
     GROUP BY plan
     ORDER BY count DESC
-  `).all() as Array<{ plan: string; count: number; stars: number }>
+  `).all() as Array<{ plan: string; count: number; stars: number; amount_rub: number }>
 }
 
 export function trialFunnel30d() {

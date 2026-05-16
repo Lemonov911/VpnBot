@@ -83,11 +83,13 @@ export default async function Clients() {
                   <tr key={c.id} className="hover:bg-neutral-800/30 transition-colors">
                     <td className="px-4 py-2 text-neutral-500 font-mono">{i + 1}</td>
                     <td className="px-4 py-2">
-                      <div className="font-medium truncate max-w-[200px]">
-                        {c.first_name || 'unknown'}
-                        {c.username && <span className="text-neutral-500"> @{c.username}</span>}
-                      </div>
-                      <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
+                      <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
+                        <div className="font-medium truncate max-w-[200px]">
+                          {c.first_name || 'unknown'}
+                          {c.username && <span className="text-neutral-500"> @{c.username}</span>}
+                        </div>
+                        <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
+                      </Link>
                     </td>
                     <td className="px-4 py-2 text-right font-semibold text-yellow-400">⭐ {c.total_stars}</td>
                     <td className="px-4 py-2 text-right">

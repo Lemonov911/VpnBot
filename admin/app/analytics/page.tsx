@@ -29,6 +29,10 @@ function planName(key: string) {
   return map[key] ?? key
 }
 
+// Stars → ₽ для отображения суммарной выручки по тарифу в едином знаменателе.
+// Курс примерный, реальная выплата от Telegram идёт по их курсу.
+const STARS_TO_RUB = 1.4
+
 export default async function Analytics() {
   const session = await requireSession()
   if (!session) redirect('/login')
@@ -101,12 +105,29 @@ export default async function Analytics() {
               {mix.map(m => {
                 const pct = Math.round((m.count / totalMixCount) * 100)
                 const isTrial = m.plan === 'vpn_trial'
+                // Суммарный ₽-эквивалент: Stars в рубли + прямые CryptoBot платежи.
+                // Раздельно показываем ⭐ и 💎 в подсказке для прозрачности.
+                const totalRub = Math.round(m.stars * STARS_TO_RUB) + (m.amount_rub || 0)
                 return (
                   <div key={m.plan}>
                     <div className="flex justify-between text-sm mb-1">
                       <span className={isTrial ? 'text-neutral-400' : 'text-white'}>{planName(m.plan)}</span>
-                      <span className="text-neutral-500">{m.count} · {pct}%{!isTrial && ` · ⭐${m.stars}`}</span>
+                      <span className="text-neutral-500">
+                        {m.count} · {pct}%
+                        {!isTrial && totalRub > 0 && (
+                          <>
+                            {' · '}
+                            <span className="text-emerald-400">≈ {totalRub.toLocaleString('ru')} ₽</span>
+                          </>
+                        )}
+                      </span>
                     </div>
+                    {!isTrial && (m.stars > 0 || m.amount_rub > 0) && (
+                      <div className="text-[10px] text-neutral-600 mb-1 flex gap-2">
+                        {m.stars > 0 && <span>⭐ {m.stars.toLocaleString('ru')}</span>}
+                        {m.amount_rub > 0 && <span>💎 {m.amount_rub.toLocaleString('ru')} ₽</span>}
+                      </div>
+                    )}
                     <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
                       <div
                         className={isTrial ? 'h-full bg-neutral-600' : 'h-full bg-emerald-500'}
