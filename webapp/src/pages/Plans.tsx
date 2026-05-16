@@ -5,7 +5,7 @@ import {
   createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
-import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
 import { useT } from '../i18n'
 import type { TKey } from '../i18n'
 
@@ -208,14 +208,16 @@ export default function Plans() {
     }
   }, [nav, location.state])
 
-  const handleBuy = async (plan: Plan, method: PayMethod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod) => {
     setSheetPlan(null)
     if (loading) return
     WebApp.HapticFeedback.impactOccurred('light')
     setLoading(plan.key); setPageStatus('idle')
     try {
       if (method === 'stars') {
-        const { invoice_url } = await createVpnInvoice(plan.key)
+        // Multi-period Stars: подставляем suffixed plan_key (vpn_base_3m / _6m / _12m)
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { invoice_url } = await createVpnInvoice(planKey)
         let callbackFired = false
         // Safety timeout: если юзер закроет Telegram до окончания платежа
         // или сеть упадёт — openInvoice callback может не сработать, кнопка
@@ -416,7 +418,7 @@ export default function Plans() {
         <PaymentSheet
           plan={sheetPlan}
           onClose={() => setSheetPlan(null)}
-          onPay={(method) => handleBuy(sheetPlan, method)}
+          onPay={(method, period) => handleBuy(sheetPlan, method, period)}
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
           defaultMethod="crypto"

@@ -57,6 +57,55 @@ VPN_PLANS: dict[str, dict] = {
         "description":    "Семья 3+ человек, стриминг и торренты",
     },
 
+    # ── Multi-period Stars-варианты (скрыты из VISIBLE_PLANS — открываются
+    # только через period-chip в PaymentSheet при выборе ⭐ Stars). Те же
+    # слоты/скорость что у базового vpn_base/vpn_max, отличается только
+    # duration_days + stars (со скидкой за длинный период).
+    # Lava/CryptoBot/Cryptomus не поддерживаются для этих ключей (см.
+    # webapp_api invoice-endpoints — там фильтр по 1-месячным).
+    "vpn_base_3m": {
+        "name": "База 3 мес", "stars": 370, "rub": "600", "usd": "6.60",
+        "duration_days": 90,
+        "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
+        "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
+        "stars_only": True,  # отметка: не показываем для не-Stars методов оплаты
+    },
+    "vpn_base_6m": {
+        "name": "База 6 мес", "stars": 695, "rub": "1140", "usd": "12.50",
+        "duration_days": 180,
+        "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
+        "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
+        "stars_only": True,
+    },
+    "vpn_base_12m": {
+        "name": "База 1 год", "stars": 1220, "rub": "2000", "usd": "22.00",
+        "duration_days": 365,
+        "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
+        "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
+        "stars_only": True,
+    },
+    "vpn_max_3m": {
+        "name": "Макс 3 мес", "stars": 920, "rub": "1500", "usd": "16.50",
+        "duration_days": 90,
+        "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
+        "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
+        "stars_only": True,
+    },
+    "vpn_max_6m": {
+        "name": "Макс 6 мес", "stars": 1725, "rub": "2850", "usd": "31.50",
+        "duration_days": 180,
+        "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
+        "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
+        "stars_only": True,
+    },
+    "vpn_max_12m": {
+        "name": "Макс 1 год", "stars": 3025, "rub": "5000", "usd": "55.00",
+        "duration_days": 365,
+        "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
+        "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
+        "stars_only": True,
+    },
+
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
     "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
     "vpn_popular": {"name": "Популярный", "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30,  "awg_slots": 2, "vless_slots": 0, "legacy": True},

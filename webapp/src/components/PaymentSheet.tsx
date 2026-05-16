@@ -4,6 +4,20 @@ import { useT } from '../i18n'
 import { getFeatures } from '../api'
 
 export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'lavatop'
+export type StarsPeriod = '1m' | '3m' | '6m' | '12m'
+
+// Stars-only multi-period planы — синхронизировано с bot/services/plans.py.
+// Lava/CryptoBot/Cryptomus поддерживают только 1m (stars_only=True блокирует).
+const STARS_PRICES: Record<string, Record<StarsPeriod, number>> = {
+  vpn_base: { '1m': 145,  '3m': 370,  '6m': 695,  '12m': 1220 },
+  vpn_max:  { '1m': 360,  '3m': 920,  '6m': 1725, '12m': 3025 },
+}
+
+// Plan_key суффикс по периоду. 1m остаётся без суффикса (vpn_base / vpn_max),
+// остальные — с _3m/_6m/_12m (см. plans.py).
+export function starsPlanKey(baseKey: string, period: StarsPeriod): string {
+  return period === '1m' ? baseKey : `${baseKey}_${period}`
+}
 
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
@@ -31,7 +45,7 @@ export default function PaymentSheet({
 }: {
   plan: Plan
   onClose: () => void
-  onPay: (method: PayMethod) => void
+  onPay: (method: PayMethod, starsPeriod?: StarsPeriod) => void
   defaultMethod?: PayMethod
   hasActiveTrial?: boolean
 }) {
@@ -42,6 +56,17 @@ export default function PaymentSheet({
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
   const [showCryptomus, setShowCryptomus] = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
+  const [starsPeriod, setStarsPeriod]     = useState<StarsPeriod>('1m')
+
+  // Stars-цена для текущего плана + периода. Fallback на plan.stars если в
+  // STARS_PRICES нет (например legacy-планы) — там всегда 1м.
+  const starsPrice = STARS_PRICES[plan.key]?.[starsPeriod] ?? plan.stars
+  const starsBaseMonthly = STARS_PRICES[plan.key]?.['1m'] ?? plan.stars
+  const periodMonths = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 }[starsPeriod]
+  // % скидки vs ровно-перемноженной 1м цены
+  const discountPct = starsPeriod === '1m'
+    ? 0
+    : Math.round((1 - starsPrice / (starsBaseMonthly * periodMonths)) * 100)
 
   useEffect(() => {
     let cancelled = false
@@ -96,38 +121,83 @@ export default function PaymentSheet({
             ...(showLavatop
               ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${plan.rub} ₽`]]
               : []),
-            ['stars',    '⭐', t('pay_method_stars'),     `${plan.stars} ⭐`],
+            ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
             ['crypto',   '💎', t('pay_method_crypto'),    `${plan.rub} ₽`],
             ...(showCryptomus
               ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${plan.rub} ₽`]]
               : []),
           ]) as [PayMethod, string, string, string][]).map(([val, icon, label, price], i, arr) => (
-            <div
-              key={val}
-              onClick={() => setMethod(val)}
-              className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
-            >
-              <span className="text-[22px] w-8 text-center shrink-0">{icon}</span>
-              <span className="flex-1 text-[15px] text-[var(--tg-theme-text-color,#000)] font-medium">{label}</span>
-              <span className={`text-[13px] font-semibold ${method === val ? 'text-[var(--tg-theme-button-color,#2481cc)]' : 'text-[var(--tg-theme-hint-color,#707579)]'}`}>{price}</span>
-              <div className={`w-5 h-5 rounded-full shrink-0 border-2 flex items-center justify-center ${
-                method === val
-                  ? 'border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)]'
-                  : 'border-gray-500/35 bg-transparent'
-              }`}>
-                {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
+            <div key={val}>
+              <div
+                onClick={() => setMethod(val)}
+                className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i < arr.length - 1 && method !== val ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
+              >
+                <span className="text-[22px] w-8 text-center shrink-0">{icon}</span>
+                <span className="flex-1 text-[15px] text-[var(--tg-theme-text-color,#000)] font-medium">{label}</span>
+                <span className={`text-[13px] font-semibold ${method === val ? 'text-[var(--tg-theme-button-color,#2481cc)]' : 'text-[var(--tg-theme-hint-color,#707579)]'}`}>{price}</span>
+                <div className={`w-5 h-5 rounded-full shrink-0 border-2 flex items-center justify-center ${
+                  method === val
+                    ? 'border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)]'
+                    : 'border-gray-500/35 bg-transparent'
+                }`}>
+                  {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
+                </div>
               </div>
+              {/* Period chips появляются только под выбранным Stars-методом */}
+              {val === 'stars' && method === 'stars' && (
+                <div className={`px-3 pt-1 pb-3 ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''}`}>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {(['1m','3m','6m','12m'] as StarsPeriod[]).map(p => {
+                      const stars = STARS_PRICES[plan.key]?.[p] ?? 0
+                      if (stars === 0) return null
+                      const monthlyAvg = stars / { '1m':1,'3m':3,'6m':6,'12m':12 }[p]
+                      const labelMap = { '1m':'1 мес','3m':'3 мес','6m':'6 мес','12m':'1 год' }
+                      const baseMonthly = STARS_PRICES[plan.key]?.['1m'] ?? 1
+                      const discount = p === '1m' ? 0 : Math.round((1 - stars / (baseMonthly * { '1m':1,'3m':3,'6m':6,'12m':12 }[p])) * 100)
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => setStarsPeriod(p)}
+                          className={`flex-1 min-w-[64px] py-2 px-2 rounded-[10px] border text-[11px] font-semibold leading-tight cursor-pointer transition-colors ${
+                            starsPeriod === p
+                              ? 'border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)] text-white'
+                              : 'border-gray-500/20 bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)]'
+                          }`}
+                        >
+                          <div>{labelMap[p]}</div>
+                          <div className={`text-[10px] font-normal mt-0.5 ${starsPeriod === p ? 'opacity-90' : 'opacity-60'}`}>
+                            {stars} ⭐
+                          </div>
+                          {discount > 0 && (
+                            <div className={`text-[9px] font-bold mt-0.5 ${starsPeriod === p ? 'text-white' : 'text-success'}`}>
+                              −{discount}%
+                            </div>
+                          )}
+                          <div className={`text-[9px] mt-0.5 ${starsPeriod === p ? 'opacity-80' : 'opacity-50'}`}>
+                            {Math.round(monthlyAvg)}⭐/мес
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
         <button
           className="btn !w-full !text-base !py-3.5"
-          onClick={() => onPay(method)}
+          onClick={() => onPay(method, method === 'stars' ? starsPeriod : undefined)}
         >
           {method === 'stars'
-            ? `${t('pay_pay_btn')} ${plan.stars} ⭐`
+            ? `${t('pay_pay_btn')} ${starsPrice} ⭐`
             : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
+        {method === 'stars' && discountPct > 0 && (
+          <div className="mt-1.5 text-center text-[11px] text-success font-semibold">
+            {t('pay_stars_save' as never).replace('{pct}', String(discountPct))}
+          </div>
+        )}
         {/* После оплаты юзер уходит в CryptoBot / Stars-диалог.  Без подсказки
             что делать дальше — теряются: «я заплатил, а где конфиг?». */}
         <div className="mt-2 text-[11px] text-[var(--tg-theme-hint-color)] text-center px-2">

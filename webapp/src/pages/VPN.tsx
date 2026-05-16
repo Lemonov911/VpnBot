@@ -7,7 +7,7 @@ import {
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
 import { useT, usePlural } from '../i18n'
-import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
@@ -135,14 +135,15 @@ export default function VPN() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
-  const handleBuy = async (plan: Plan, method: PayMethod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod) => {
     setSheetPlan(null)
     if (buyLoading) return
     WebApp.HapticFeedback.impactOccurred('light')
     setBuyLoading(plan.key)
     try {
       if (method === 'stars') {
-        const { invoice_url } = await createVpnInvoice(plan.key)
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { invoice_url } = await createVpnInvoice(planKey)
         let callbackFired = false
         // Safety timeout: если Telegram закроется или сеть упадёт до окончания
         // платежа — openInvoice callback может не сработать. Через 5 минут
@@ -285,7 +286,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method) => handleBuy(sheetPlan, method)}
+            onPay={(method, period) => handleBuy(sheetPlan, method, period)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
@@ -391,7 +392,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method) => handleBuy(sheetPlan, method)}
+            onPay={(method, period) => handleBuy(sheetPlan, method, period)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */

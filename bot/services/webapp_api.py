@@ -611,6 +611,11 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
+    if plan.get("stars_only"):
+        # Multi-period планы (3/6/12 мес) доступны только через Stars.
+        # Без этой проверки юзер мог бы заплатить за 12-месячный план
+        # рублями со Stars-скидкой (vpn_base_12m = 2000 ₽ vs обычные 12×200=2400).
+        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
 
     currency = body.get("currency", "RUB").upper()
     if currency not in ("RUB", "USD"):
@@ -870,6 +875,8 @@ async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
+    if plan.get("stars_only"):
+        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
 
     currency = (body.get("currency") or "RUB").upper()
     if currency not in ("RUB", "USD"):
@@ -1132,6 +1139,8 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
+    if plan.get("stars_only"):
+        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
 
     offer_id = LAVATOP_OFFERS.get(plan_key)
     if not offer_id:
