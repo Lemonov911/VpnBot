@@ -853,6 +853,26 @@ async def disable_auto_renew(sub_id: int):
         await db.commit()
 
 
+async def get_recurring_sub_for_renewal(user_id: int, plan_key: str) -> dict | None:
+    """Stars renewal lookup: ищем последнюю auto_renew подписку юзера на этот план.
+
+    Используется в _handle_stars_renewal — мы получили renewal-charge от Telegram
+    и нужно найти existing sub чтобы extend expires_at (а не создавать новую).
+    Расширяем поиск со statuses ('active', 'grace') до ('active','grace','expired')
+    потому что Telegram может прислать renewal даже если sub была короткое время expired.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM subscriptions
+               WHERE user_id=? AND plan=? AND auto_renew=1 AND payment_provider='stars'
+               ORDER BY id DESC LIMIT 1""",
+            (user_id, plan_key),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
 async def is_payment_refunded(tx_id: str) -> bool:
     """Проверка идемпотентности — refund уже был сделан?"""
     async with _connect() as db:

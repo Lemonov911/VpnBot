@@ -208,7 +208,7 @@ export default function Plans() {
     }
   }, [nav, location.state])
 
-  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     setSheetPlan(null)
     if (loading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -217,7 +217,9 @@ export default function Plans() {
       if (method === 'stars') {
         // Multi-period Stars: подставляем suffixed plan_key (vpn_base_3m / _6m / _12m)
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
-        const { invoice_url } = await createVpnInvoice(planKey)
+        // recurring=true → Telegram Stars subscription (30-day cycle). Только для 1m.
+        const isRecurring = (starsPeriod ?? '1m') === '1m' && !!recurring
+        const { invoice_url } = await createVpnInvoice(planKey, isRecurring)
         let callbackFired = false
         // Safety timeout: если юзер закроет Telegram до окончания платежа
         // или сеть упадёт — openInvoice callback может не сработать, кнопка
@@ -419,7 +421,7 @@ export default function Plans() {
         <PaymentSheet
           plan={sheetPlan}
           onClose={() => setSheetPlan(null)}
-          onPay={(method, period) => handleBuy(sheetPlan, method, period)}
+          onPay={(method, period, recurring) => handleBuy(sheetPlan, method, period, recurring)}
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
           defaultMethod="crypto"

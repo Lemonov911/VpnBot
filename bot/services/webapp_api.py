@@ -129,15 +129,27 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
         )
 
     bot: Bot = request.app["bot"]
-    url = await bot.create_invoice_link(
+
+    # Auto-renew подписка через Telegram Stars: subscription_period=2592000 (30 дней).
+    # Доступно ТОЛЬКО для 1м планов (vpn_base, vpn_max без суффикса) — Telegram
+    # не поддерживает другие периоды subscription'ов.
+    # Multi-period (3/6/12) — всегда one-time, флаг recurring игнорируем.
+    recurring = bool(body.get("recurring")) and not plan.get("multi_period")
+
+    invoice_kwargs: dict = dict(
         title=f"VPN {plan['name']}",
-        description=f"Доступ к VPN на 30 дней. VLESS-Reality.",
+        description=f"Доступ к VPN на {plan['duration_days']} дней. VLESS-Reality.",
         payload=body["plan_key"],
         currency="XTR",
         prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
         provider_token="",
     )
-    logger.info("VPN invoice: user=%s plan=%s", user.get("id"), body["plan_key"])
+    if recurring:
+        invoice_kwargs["subscription_period"] = 2592000  # 30 days, единственное поддерживаемое значение
+
+    url = await bot.create_invoice_link(**invoice_kwargs)
+    logger.info("VPN invoice: user=%s plan=%s recurring=%s",
+                user.get("id"), body["plan_key"], recurring)
     return web.json_response({"invoice_url": url})
 
 

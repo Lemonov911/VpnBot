@@ -59,7 +59,7 @@ export default function PaymentSheet({
 }: {
   plan: Plan
   onClose: () => void
-  onPay: (method: PayMethod, starsPeriod?: StarsPeriod) => void
+  onPay: (method: PayMethod, period?: PayPeriod, recurring?: boolean) => void
   defaultMethod?: PayMethod
   hasActiveTrial?: boolean
 }) {
@@ -71,6 +71,8 @@ export default function PaymentSheet({
   const [showCryptomus, setShowCryptomus] = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
   const [period, setPeriod]               = useState<PayPeriod>('1m')
+  // Stars 1m auto-renew (subscription_period=2592000). Только для stars+1m.
+  const [recurring, setRecurring]         = useState(true)
 
   // Какие методы поддерживают multi-period (3/6/12). Lava + CryptoBot — только 1м.
   const methodSupportsMultiPeriod = method === 'stars' || method === 'cryptomus'
@@ -216,9 +218,40 @@ export default function PaymentSheet({
             </div>
           ))}
         </div>
+        {/* Auto-renew toggle для Stars+1m subscription. Telegram поддерживает
+            только 30-дневный subscription_period — поэтому для 3/6/12 toggle
+            скрыт (длинные периоды всегда one-time). По дефолту ON — экономит
+            юзеру клик и улучшает retention; отключить можно одним тапом. */}
+        {method === 'stars' && period === '1m' && (
+          <div
+            onClick={() => setRecurring(r => !r)}
+            className="flex items-center gap-3 p-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color,#f1f1f1)] cursor-pointer mb-3"
+          >
+            <span className="text-base shrink-0">🔁</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-[var(--tg-theme-text-color,#000)]">
+                {t('pay_stars_autorenew' as never)}
+              </div>
+              <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                {t('pay_stars_autorenew_hint' as never).replace('{stars}', String(starsPrice))}
+              </div>
+            </div>
+            <div className={`relative w-10 h-6 rounded-full shrink-0 transition-colors ${
+              recurring ? 'bg-[var(--tg-theme-button-color,#2481cc)]' : 'bg-gray-500/30'
+            }`}>
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform ${
+                recurring ? 'translate-x-[18px]' : 'translate-x-0.5'
+              }`} />
+            </div>
+          </div>
+        )}
         <button
           className="btn !w-full !text-base !py-3.5"
-          onClick={() => onPay(method, methodSupportsMultiPeriod ? period : undefined)}
+          onClick={() => onPay(
+            method,
+            methodSupportsMultiPeriod ? period : undefined,
+            method === 'stars' && period === '1m' ? recurring : undefined,
+          )}
         >
           {method === 'stars'
             ? `${t('pay_pay_btn')} ${starsPrice} ⭐`

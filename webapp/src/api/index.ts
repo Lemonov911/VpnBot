@@ -39,8 +39,10 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
 
 // ── VPN ───────────────────────────────────────────────────────────────────────
 
-export function createVpnInvoice(planKey: string): Promise<{ invoice_url: string }> {
-  return post('/api/vpn/invoice', { plan_key: planKey })
+export function createVpnInvoice(planKey: string, recurring = false): Promise<{ invoice_url: string }> {
+  // recurring=true → Telegram Stars subscription (subscription_period=30d).
+  // Только для 1m планов; backend игнорирует флаг для multi-period.
+  return post('/api/vpn/invoice', { plan_key: planKey, recurring })
 }
 
 export function createVpnInvoiceCrypto(

@@ -251,10 +251,86 @@ async def on_successful_payment(message: Message, bot: Bot):
         await message.answer("⚠️ Ошибка: неизвестный тариф. Напиши в поддержку.")
         return
 
-    await _deliver_vpn(message, payment, plan, payload)
+    # Telegram Stars subscription auto-renewal:
+    #   is_first_recurring=True → первая оплата подписки (создаём sub с auto_renew=True)
+    #   is_recurring=True (без first) → ежемесячное продление (extend существующего sub)
+    # Если оба флага отсутствуют — обычный one-time платёж (старый flow).
+    if getattr(payment, "is_recurring", False) and not getattr(payment, "is_first_recurring", False):
+        await _handle_stars_renewal(message, bot, payment, plan, payload)
+        return
+
+    is_first_recurring = bool(getattr(payment, "is_first_recurring", False))
+    await _deliver_vpn(message, payment, plan, payload, auto_renew=is_first_recurring)
 
 
-async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
+async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict, plan_key: str):
+    """Stars recurring renewal — продлевает existing sub user'а на duration_days.
+
+    Каждое продление приходит с новым telegram_payment_charge_id, поэтому
+    UNIQUE на payment_id не сработает (это хорошо — каждое списание = отдельная
+    запись по дизайну). Но нам надо найти ПЕРВУЮ recurring-подписку юзера
+    (auto_renew=True + payment_provider='stars') и extend её expires_at.
+    """
+    user_id = message.from_user.id
+    payment_id = payment.telegram_payment_charge_id
+    logger.info("Stars renewal: user=%d plan=%s charge_id=%s", user_id, plan_key, payment_id)
+
+    # Дубль-guard: если этот renewal charge_id мы уже видели — игнорируем
+    from services.database import (
+        get_subscription_by_payment_id, get_recurring_sub_for_renewal,
+        extend_subscription_expires_at, record_payment,
+    )
+    existing = await get_subscription_by_payment_id(payment_id)
+    if existing:
+        logger.warning("Stars renewal: duplicate charge_id %s, ignored", payment_id)
+        return
+
+    sub = await get_recurring_sub_for_renewal(user_id, plan_key)
+    if not sub:
+        logger.warning(
+            "Stars renewal: no parent sub for user=%d plan=%s (создаём как первый платёж)",
+            user_id, plan_key,
+        )
+        # Fallback — обработаем как первый платёж, если по какой-то причине
+        # is_first_recurring не пришёл (баг Telegram или потеря в логах).
+        await _deliver_vpn(message, payment, plan, plan_key, auto_renew=True)
+        return
+
+    # Extend expires_at от max(now, current) + plan duration. Если sub был в grace
+    # или просрочен — extend от now (не теряем неоплаченное время).
+    try:
+        cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
+    except Exception:
+        cur_expires = datetime.utcnow()
+    base = max(cur_expires, datetime.utcnow())
+    new_expires = base + timedelta(days=plan["duration_days"])
+    await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+
+    # Фиксируем платёж для аналитики (не sub-row, отдельный payments-record).
+    try:
+        await record_payment(
+            user_id=user_id, subscription_id=sub["id"],
+            method="stars",
+            stars=payment.total_amount,
+            tx_id=payment_id,
+        )
+    except Exception as e:
+        logger.warning("Stars renewal: record_payment failed %s", e, exc_info=True)
+
+    try:
+        await bot.send_message(
+            user_id,
+            f"🔁 <b>Подписка продлена автоматически</b>\n\n"
+            f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>.\n"
+            f"Списано: <b>{payment.total_amount} ⭐</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Stars renewal notify failed user=%d: %s", user_id, e, exc_info=True)
+
+
+async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
+                       *, auto_renew: bool = False):
     """Доставка VPN-конфигов после успешной оплаты."""
     user_id    = message.from_user.id
     payment_id = payment.telegram_payment_charge_id
@@ -276,6 +352,8 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         payment_id=payment_id,
         stars_paid=payment.total_amount,
         expires_at=expires_at,
+        auto_renew=auto_renew,
+        payment_provider="stars",
     )
     # None = UNIQUE-constraint сработал → дубль проскочил TOCTOU. Идемпотентный exit.
     if sub_id is None:

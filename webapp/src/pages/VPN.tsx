@@ -135,7 +135,7 @@ export default function VPN() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
-  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     setSheetPlan(null)
     if (buyLoading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -143,7 +143,8 @@ export default function VPN() {
     try {
       if (method === 'stars') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
-        const { invoice_url } = await createVpnInvoice(planKey)
+        const isRecurring = (starsPeriod ?? '1m') === '1m' && !!recurring
+        const { invoice_url } = await createVpnInvoice(planKey, isRecurring)
         let callbackFired = false
         // Safety timeout: если Telegram закроется или сеть упадёт до окончания
         // платежа — openInvoice callback может не сработать. Через 5 минут
@@ -287,7 +288,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method, period) => handleBuy(sheetPlan, method, period)}
+            onPay={(method, period, recurring) => handleBuy(sheetPlan, method, period, recurring)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
@@ -393,7 +394,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method, period) => handleBuy(sheetPlan, method, period)}
+            onPay={(method, period, recurring) => handleBuy(sheetPlan, method, period, recurring)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
@@ -503,21 +504,25 @@ export default function VPN() {
           </div>
         )}
 
-        {/* Auto-renewal status (Lava recurring). Если sub куплен через Lava
-            и юзер не отменял — показываем баннер + кнопка cancel. После cancel
-            флаг auto_renew=false → юзер увидит "отключено" + срок дослужит. */}
-        {sub.payment_provider === 'lavatop' && sub.parent_contract_id && (
+        {/* Auto-renewal status. Показывается для Lava recurring (parent_contract_id)
+            И для Stars subscription (payment_provider='stars' + auto_renew=True).
+            Cancel-flow отличается:
+              - Lava: дёргаем backend → Lava API cancel + disable_auto_renew
+              - Stars: можем только подсказать юзеру отменить в Telegram UI
+                (Settings → Stars and Premium → подписка → Cancel)
+        */}
+        {sub.auto_renew && (sub.payment_provider === 'lavatop' || sub.payment_provider === 'stars') && (
           <div className="mt-3">
-            {sub.auto_renew ? (
-              <div className="p-[10px_12px] rounded-lg bg-success/10 border border-success/20 flex items-start gap-2.5">
-                <span className="text-base shrink-0">🔁</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[12px] font-semibold text-success">
-                    {t('vpn_autorenew_on' as never)}
-                  </div>
-                  <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
-                    {(t('vpn_autorenew_next' as never)).replace('{date}', formatDate(sub.expires_at))}
-                  </div>
+            <div className="p-[10px_12px] rounded-lg bg-success/10 border border-success/20 flex items-start gap-2.5">
+              <span className="text-base shrink-0">🔁</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[12px] font-semibold text-success">
+                  {t('vpn_autorenew_on' as never)}
+                </div>
+                <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                  {(t('vpn_autorenew_next' as never)).replace('{date}', formatDate(sub.expires_at))}
+                </div>
+                {sub.payment_provider === 'lavatop' ? (
                   <button
                     onClick={() => handleCancelRenewal()}
                     disabled={cancelLoading}
@@ -525,16 +530,21 @@ export default function VPN() {
                   >
                     {cancelLoading ? '...' : t('vpn_cancel_renewal' as never)}
                   </button>
-                </div>
+                ) : (
+                  <div className="mt-1.5 text-[11px] text-[var(--tg-theme-hint-color)]">
+                    {t('vpn_cancel_renewal_stars_hint' as never)}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="p-[8px_10px] rounded-lg bg-[var(--tg-theme-section-bg-color)]/60 flex items-center gap-2">
-                <span className="text-sm">❎</span>
-                <span className="text-[11px] text-[var(--tg-theme-hint-color)]">
-                  {t('vpn_autorenew_off' as never)}
-                </span>
-              </div>
-            )}
+            </div>
+          </div>
+        )}
+        {sub.payment_provider === 'lavatop' && sub.parent_contract_id && !sub.auto_renew && (
+          <div className="mt-3 p-[8px_10px] rounded-lg bg-[var(--tg-theme-section-bg-color)]/60 flex items-center gap-2">
+            <span className="text-sm">❎</span>
+            <span className="text-[11px] text-[var(--tg-theme-hint-color)]">
+              {t('vpn_autorenew_off' as never)}
+            </span>
           </div>
         )}
 
