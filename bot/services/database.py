@@ -12,7 +12,7 @@ import logging
 
 import aiosqlite
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -366,6 +366,14 @@ async def _migrate(db: aiosqlite.Connection):
     # Для аналитики + чтобы знать какой refund-API использовать.
     if "payment_provider" not in sub_cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN payment_provider TEXT")
+    # reminded_renewal_3d — отдельный флаг для напоминания о предстоящем
+    # auto-charge (Lava/Stars recurring) за 3 дня. Не путать с reminded_3d
+    # который про истечение обычной подписки. Сбрасывается в 0 при extend
+    # (расширение через successful renewal) — следующий цикл стартует.
+    if "reminded_renewal_3d" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN reminded_renewal_3d INTEGER NOT NULL DEFAULT 0"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -828,20 +836,55 @@ async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
 async def extend_subscription_expires_at(sub_id: int, new_expires_at: str, *, reset_status: bool = True):
     """Продлевает подписку (Lava recurring success). Сбрасывает status='active'
     если он был 'grace' — recurring деньги пришли вовремя или с задержкой,
-    значит юзер хочет оставаться на VPN.
+    значит юзер хочет оставаться на VPN. Сбрасываются все reminded_*
+    флаги — следующий цикл начнётся с чистого листа.
     """
     async with _connect() as db:
         if reset_status:
             await db.execute(
                 "UPDATE subscriptions SET expires_at=?, status='active', "
-                "grace_until=NULL, reminded_3d=0, reminded_1d=0 WHERE id=?",
+                "grace_until=NULL, reminded_3d=0, reminded_1d=0, "
+                "reminded_renewal_3d=0 WHERE id=?",
                 (new_expires_at, sub_id),
             )
         else:
             await db.execute(
-                "UPDATE subscriptions SET expires_at=? WHERE id=?",
+                "UPDATE subscriptions SET expires_at=?, reminded_renewal_3d=0 "
+                "WHERE id=?",
                 (new_expires_at, sub_id),
             )
+        await db.commit()
+
+
+async def get_recurring_renewal_due_soon(days_before: int = 3) -> list[dict]:
+    """Returns recurring sub'ы у которых auto_renew=1 + expires_at <= now+N дней
+    + reminded_renewal_3d=0. Используется в scheduler для напоминания о
+    предстоящем автосписании (за 3 дня до charge'а).
+    """
+    cutoff = (datetime.utcnow() + timedelta(days=days_before)).isoformat()
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, user_id, plan, payment_provider, expires_at, amount_rub,
+                   parent_contract_id
+            FROM subscriptions
+            WHERE auto_renew=1
+              AND payment_provider IN ('lavatop', 'stars')
+              AND expires_at <= ?
+              AND expires_at > ?
+              AND COALESCE(reminded_renewal_3d, 0) = 0
+              AND status IN ('active','grace')
+        """, (cutoff, datetime.utcnow().isoformat())) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_renewal_reminded(sub_id: int):
+    """Ставит reminded_renewal_3d=1 чтобы не слать второе напоминание."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET reminded_renewal_3d=1 WHERE id=?",
+            (sub_id,),
+        )
         await db.commit()
 
 

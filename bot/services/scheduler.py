@@ -689,6 +689,58 @@ async def _send_expiry_reminders(bot: Bot):
             await mark_reminded(sub["id"], days)
 
 
+async def _send_renewal_reminders(bot: Bot):
+    """За 3 дня до auto-charge на recurring subs (Lava + Stars) шлём
+    уведомление: «через 3 дня спишется N₽/⭐ — отменить можно тут».
+
+    Снижает chargeback risk + строит trust («предупредил, не сюрприз»).
+    """
+    from services.database import get_recurring_renewal_due_soon, mark_renewal_reminded
+    subs = await get_recurring_renewal_due_soon(days_before=3)
+    if not subs:
+        return
+    logger.info("renewal reminders: %d sub'ов готовы напомнить", len(subs))
+
+    for sub in subs:
+        user_id = sub["user_id"]
+        plan_key = sub.get("plan") or ""
+        provider = sub.get("payment_provider") or ""
+        plan = VPN_PLANS.get(plan_key, {})
+        plan_name = plan.get("name", plan_key)
+        amount_rub = sub.get("amount_rub") or int(float(plan.get("rub", 0)))
+        stars = plan.get("stars", 0)
+
+        try:
+            cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
+            days_left = max(0, (cur_expires - datetime.utcnow()).days)
+        except Exception:
+            days_left = 3
+
+        if provider == "lavatop":
+            text = (
+                f"🔁 <b>Через {days_left} {'день' if days_left == 1 else 'дня' if days_left < 5 else 'дней'} "
+                f"спишется {amount_rub} ₽ с твоей карты</b>\n\n"
+                f"Тариф: <b>{plan_name}</b>\n"
+                f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
+                f"Если не хочешь продлевать — отмени в Mini App "
+                f"(VPN → кнопка «Отменить автопродление»). "
+                f"VPN продолжит работать до конца оплаченного периода."
+            )
+        else:  # stars
+            text = (
+                f"🔁 <b>Через {days_left} {'день' if days_left == 1 else 'дня' if days_left < 5 else 'дней'} "
+                f"Telegram спишет {stars} ⭐ за продление</b>\n\n"
+                f"Тариф: <b>{plan_name}</b>\n"
+                f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
+                f"Если не хочешь продлевать — отмени в Telegram: "
+                f"Настройки → Звёзды → Подписки → выбери MAX VPN → Cancel."
+            )
+
+        sent = await _send_throttled(bot, user_id, text, parse_mode="HTML")
+        if sent:
+            await mark_renewal_reminded(sub["id"])
+
+
 async def _sync_esim_usage():
     """Раз в 3 часа батчем тянет /esim/usage/query для активных eSIM-профилей.
     Лимит API: 10 esimTranNo за один запрос; rate limit 8 req/sec.
@@ -812,6 +864,7 @@ async def run_scheduler(bot: Bot):
         # Критичные retention первыми и с коротким timeout — чтобы даже если
         # медленный agent залип, юзеры получили уведомления вовремя.
         await _safe("expiry_reminders", _send_expiry_reminders(bot),     timeout=120)
+        await _safe("renewal_reminders", _send_renewal_reminders(bot),   timeout=60)
         await _safe("expired_subs",     _process_expired_subscriptions(bot),       timeout=180)
         await _safe("grace_expired",    _process_grace_expired_subscriptions(bot), timeout=180)
         await _safe("expired_orders",   _process_expired_orders(bot),    timeout=60)
