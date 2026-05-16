@@ -203,6 +203,17 @@ async def pre_checkout(query: PreCheckoutQuery):
         await query.answer(ok=True)
         return
     if payload in VPN_PLANS:
+        # Defensive: invoice создаётся серверно (сумма не достижима из клиента),
+        # но если когда-нибудь добавим клиентский путь — занижение суммы ниже
+        # plan.stars сразу даёт юзеру тариф «за дёшево». Дешёвая проверка.
+        expected = VPN_PLANS[payload]["stars"]
+        if query.total_amount < expected:
+            logger.error(
+                "pre_checkout SECURITY: payload=%s total_amount=%d < expected=%d user=%d",
+                payload, query.total_amount, expected, query.from_user.id,
+            )
+            await query.answer(ok=False, error_message="Неверная сумма платежа.")
+            return
         await query.answer(ok=True)
         return
     # Unknown plan_key (мог быть удалён из VPN_PLANS пока юзер тормозил)
@@ -586,10 +597,16 @@ async def _apply_plan_upgrade(message: Message, payment):
 
     _, sub_id_str, plan_key, awg_delta_str, vless_delta_str = parts[:5]
     wg_delta_str = parts[5] if len(parts) == 6 else "0"
-    sub_id      = int(sub_id_str)
-    awg_delta   = int(awg_delta_str)
-    vless_delta = int(vless_delta_str)
-    wg_delta    = int(wg_delta_str)
+    try:
+        sub_id      = int(sub_id_str)
+        awg_delta   = int(awg_delta_str)
+        vless_delta = int(vless_delta_str)
+        wg_delta    = int(wg_delta_str)
+    except ValueError:
+        logger.error("upgrade payload parse failed: %r (payment=%s)",
+                     payment.invoice_payload, payment.telegram_payment_charge_id)
+        await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
+        return
     user_id     = message.from_user.id
 
     plan = VPN_PLANS.get(plan_key)

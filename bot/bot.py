@@ -72,11 +72,24 @@ async def main():
     await web.TCPSite(runner, "127.0.0.1", API_PORT).start()
     logging.info("Mini App API listening on :%d", API_PORT)
 
-    asyncio.create_task(run_scheduler(bot), name="scheduler")
+    # Fire-and-forget tasks с done-callback: иначе исключение в таске
+    # тихо съедается, и (для scheduler'а) retention/grace перестанут
+    # работать без единой записи в логе.
+    def _log_task_death(t: asyncio.Task):
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            logging.error("background task '%s' died: %s",
+                          t.get_name(), exc, exc_info=exc)
+
+    sched_task = asyncio.create_task(run_scheduler(bot), name="scheduler")
+    sched_task.add_done_callback(_log_task_death)
 
     # Прогреваем кеш eSIM пакетов в фоне (чтобы первый юзер не ждал 30с)
     from services.esim_api import warm_cache
-    asyncio.create_task(warm_cache(), name="esim_warm_cache")
+    warm_task = asyncio.create_task(warm_cache(), name="esim_warm_cache")
+    warm_task.add_done_callback(_log_task_death)
 
     try:
         await dp.start_polling(bot)

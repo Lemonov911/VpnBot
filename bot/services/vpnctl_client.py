@@ -271,7 +271,7 @@ async def _probe_server(server_id: int) -> int:
         return 1
 
     print(f"Probing server #{server_id}: {server.get('name')} ({server['agent_url']})")
-    print(f"Token: {server['agent_token'][:8]}...{server['agent_token'][-4:]}  (length: {len(server['agent_token'])})")
+    print(f"Token: ****  (length: {len(server['agent_token'])})")
     print()
 
     client = VpnctlClient(server["agent_url"], server["agent_token"])

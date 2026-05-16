@@ -75,8 +75,8 @@ async def _post(endpoint: str, body: dict, timeout: int = 60) -> dict:
         text = await r.text()
         try:
             return json.loads(text)
-        except Exception as exc:
-            logger.error("eSIM API JSON parse error: %s | body: %.200s", exc, text)
+        except Exception:
+            logger.exception("eSIM API JSON parse error | body: %.200s", text)
             return {}
 
 

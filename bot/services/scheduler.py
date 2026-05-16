@@ -796,10 +796,15 @@ async def run_scheduler(bot: Bot):
     async def _safe(name: str, coro, timeout: int = 180):
         try:
             await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.CancelledError:
+            # При shutdown event-loop'а CancelledError должен прокинуться
+            # дальше, иначе scheduler становится «не убиваемым» и graceful
+            # shutdown зависает на await.
+            raise
         except asyncio.TimeoutError:
             logger.error("scheduler task '%s' timed out after %ds", name, timeout)
         except Exception as e:
-            logger.error("scheduler task '%s' failed: %s", name, e)
+            logger.exception("scheduler task '%s' failed: %s", name, e)
 
     while True:
         await asyncio.sleep(FIRST_TICK_DELAY if _TICK == 0 else CHECK_INTERVAL)

@@ -677,7 +677,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning("CryptoBot webhook: unexpected payload %s", raw_payload)
         return web.Response(status=200)
 
-    user_id  = int(parts[1])
+    try:
+        user_id  = int(parts[1])
+    except ValueError:
+        logger.warning("CryptoBot webhook: bad user_id in payload %r", raw_payload)
+        return web.Response(status=200)
     plan_key = parts[2]
     plan     = VPN_PLANS.get(plan_key)
     if not plan:
