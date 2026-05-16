@@ -81,6 +81,10 @@ jobs:
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # SSH-ключ ограничен forced-command `rrsync /opt/vpnbot/webapp/dist` —
+          # клиент работает с виртуальным «./» внутри этой директории.
+          # DEPLOY_PATH secret игнорируется (раньше там был абсолютный путь,
+          # но rrsync его реджектит).
           # --omit-dir-times: пропускаем mtime у директорий — иначе rsync пытается
           #   set times на dir и падает с EPERM если её владелец — другой юзер
           # --chmod: новые файлы/dirs группа-writable, чтобы другие (root, ручной
@@ -89,4 +93,4 @@ jobs:
             --chmod=Du=rwx,Dg=rwxs,Do=rx,Fu=rw,Fg=rw,Fo=r \
             -e "ssh -i ~/.ssh/deploy -o StrictHostKeyChecking=yes" \
             webapp/dist/ \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}"
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:./"
