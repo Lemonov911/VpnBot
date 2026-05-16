@@ -220,6 +220,9 @@ const T = {
     vpn_done_sub:          'Слоты подписки готовы. Выбери сервер и скачай конфиг.',
     vpn_to_configs:        'Мои конфиги',
     vpn_to_plans:          'К тарифам',
+    plans_fair_use:        'До {cap} ГБ/мес — затем {throttle} Мбит/с',
+    plans_upgrade_hint:    'за остаток текущего тарифа',
+    pay_fair_use:          'Лимит трафика: {cap} ГБ/мес, после — снижение до {throttle} Мбит/с',
     vpn_sub_url_title:     'Ссылка для Happ',
     vpn_sub_url_hint:      'Открой Happ → «+» → «Из подписки»',
     vpn_sub_url_paste_hint:'Теперь вставь в Happ: «+» → «Из подписки»',
@@ -358,9 +361,9 @@ const T = {
     pay_method_crypto:   'CryptoBot (₽ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Оплатить',
-    pay_trust_1:         'Если VPN не работает в первые 24 часа — вернём деньги',
+    pay_trust_1:         'Поможем настроить за 24 часа или вернём звёзды через поддержку',
     pay_trust_2:         'Поддержка отвечает в чате бота, обычно за пару часов',
-    pay_trust_3:         'Без рекламы, без логов сёрфинга, без передачи третьим',
+    pay_trust_3:         'Без рекламы, без логов сёрфинга, не передаём данные третьим лицам',
 
     // Shared
     payment_failed:   'Платёж не прошёл. Попробуй ещё раз.',
@@ -649,6 +652,9 @@ const T = {
     vpn_done_sub:          'Your configs are ready.',
     vpn_to_configs:        'My configs',
     vpn_to_plans:          'Back to plans',
+    plans_fair_use:        'Up to {cap} GB/mo — then {throttle} Mbps',
+    plans_upgrade_hint:    'for remainder of current plan',
+    pay_fair_use:          'Traffic limit: {cap} GB/mo, then throttled to {throttle} Mbps',
     vpn_sub_url_title:     'Happ subscription',
     vpn_sub_url_hint:      'Open Happ → "+" → "From subscription"',
     vpn_sub_url_paste_hint:'Now paste in Happ: "+" → "From subscription"',
@@ -787,9 +793,9 @@ const T = {
     pay_method_crypto:   'CryptoBot ($ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Pay',
-    pay_trust_1:         'Money back if VPN doesn\'t work in the first 24 hours',
+    pay_trust_1:         'We will help you set it up within 24h, or refund your Stars via support',
     pay_trust_2:         'Support replies in bot chat, usually within hours',
-    pay_trust_3:         'No ads, no browsing logs, no third-party sharing',
+    pay_trust_3:         'No ads, no browsing logs, we do not share data with third parties',
 
     // Shared
     payment_failed:   'Payment failed. Try again.',

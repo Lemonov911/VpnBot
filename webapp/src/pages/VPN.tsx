@@ -253,6 +253,7 @@ export default function VPN() {
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
             onPay={method => handleBuy(sheetPlan, method)}
+            defaultMethod="crypto"
           />
         )}
       </>
@@ -342,6 +343,7 @@ export default function VPN() {
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
             onPay={method => handleBuy(sheetPlan, method)}
+            defaultMethod="crypto"
           />
         )}
       </>

@@ -26,14 +26,18 @@ export const PLANS: Plan[] = [
 export const VISIBLE_PLANS: Plan[] = PLANS
 
 export default function PaymentSheet({
-  plan, onClose, onPay,
+  plan, onClose, onPay, defaultMethod = 'crypto',
 }: {
   plan: Plan
   onClose: () => void
   onPay: (method: PayMethod) => void
+  defaultMethod?: PayMethod
 }) {
   const t      = useT()
-  const [method, setMethod] = useState<PayMethod>('stars')
+  // Preselect crypto (₽) — юзер на странице тарифов видит цену 200₽, ожидает
+  // что нажав «купить» он попадёт в RUB-флоу.  Stars preselected раньше
+  // вызывало когнитивный mismatch: «я нажал 200₽, а тут 145⭐».
+  const [method, setMethod] = useState<PayMethod>(defaultMethod)
 
   return (
     <>
@@ -53,6 +57,13 @@ export default function PaymentSheet({
             {plan.awg ? ` · ${plan.awg} AmneziaWG` : ''}
             {' · '}{plan.vless} VLESS
             {plan.wg ? ` · ${plan.wg} WireGuard` : ''}
+          </div>
+          {/* Лимит трафика и throttle — показываем явно, иначе юзер ловит
+              throttle на 500 ГБ и винит сервис (UX agent finding #2). */}
+          <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-1.5">
+            {t('pay_fair_use')
+              .replace('{cap}', String(plan.softCapGb))
+              .replace('{throttle}', String(plan.throttleMbps))}
           </div>
         </div>
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">

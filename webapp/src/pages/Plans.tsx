@@ -137,9 +137,23 @@ function PlanCard({
             ) : null}
           </span>
         </div>
+        {/* Soft-cap трафика и throttle после него — показываем явно,
+            иначе юзер ловит замедление на 500 ГБ и винит сервис. */}
+        <div className="text-[10px] text-[var(--tg-theme-hint-color,#707579)] mt-0.5 opacity-80">
+          {t('plans_fair_use')
+            .replace('{cap}', String(plan.softCapGb))
+            .replace('{throttle}', String(plan.throttleMbps))}
+        </div>
       </div>
 
-      {btn}
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        {btn}
+        {mode === 'upgrade' && upgradePrice > 0 && (
+          <div className="text-[9px] text-[var(--tg-theme-hint-color,#707579)] text-right whitespace-nowrap max-w-[100px]">
+            {t('plans_upgrade_hint')}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -348,6 +362,9 @@ export default function Plans() {
           plan={sheetPlan}
           onClose={() => setSheetPlan(null)}
           onPay={(method) => handleBuy(sheetPlan, method)}
+          /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
+             когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
+          defaultMethod="crypto"
         />
       )}
     </>
