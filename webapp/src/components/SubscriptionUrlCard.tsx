@@ -4,22 +4,14 @@ import { useT, type TKey } from '../i18n'
 
 /**
  * Subscription URL row — one slim line styled like a slot card.
- * Primary action: «Открыть в Happ» (deep-link `happ://add/<base64>`).
- * Secondary: copy icon button (для случаев когда Happ не установлен или
- * desktop, где deep-link не работает).
- *
- * Используется на VPN-странице и Configs-странице для всех VLESS-юзеров
- * (включая trial).  Одна ссылка = все локации в Happ-дропдауне.
+ * Single action: copy to clipboard (юзер вставляет в Happ / V2Box / Streisand
+ * сам).  Deep-link в Happ убрали — он работает только если Happ установлен,
+ * а на десктопе и без приложения только сбивает с толку.
  */
 export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
   const t = useT()
   const [copied, setCopied] = useState(false)
-  const happDeepLink = `happ://add/${btoa(subUrl)}`
 
-  const handleHapp = () => {
-    WebApp.HapticFeedback.impactOccurred('medium')
-    WebApp.openLink(happDeepLink, { try_instant_view: false })
-  }
   const handleCopy = async () => {
     WebApp.HapticFeedback.impactOccurred('light')
     try {
@@ -53,30 +45,27 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
           </div>
         </div>
 
-        <div className="flex gap-2 shrink-0">
-          <button
-            onClick={handleHapp}
-            className="bg-purple text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none"
-          >
-            {t('vpn_sub_url_open_happ' as TKey)}
-          </button>
-          <button
-            onClick={handleCopy}
-            aria-label="copy"
-            className="w-11 h-11 rounded-[10px] border border-[var(--card-border)] bg-transparent text-[var(--tg-theme-text-color)] flex items-center justify-center cursor-pointer shrink-0"
-          >
-            {copied ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M4 12l5 5 11-13" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <button
+          onClick={handleCopy}
+          className="bg-purple text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none flex items-center gap-[5px] shrink-0"
+        >
+          {copied ? (
+            <>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <path d="M4 12l5 5 11-13" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {t('vpn_sub_url_copied' as TKey)}
+            </>
+          ) : (
+            <>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
               </svg>
-            )}
-          </button>
-        </div>
+              {t('vpn_sub_url_copy' as TKey)}
+            </>
+          )}
+        </button>
       </div>
     </div>
   )
