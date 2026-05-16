@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, getActiveSubscription, changeSubscriptionPlan,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
@@ -230,6 +230,10 @@ export default function Plans() {
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
           else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
         })
+      } else if (method === 'cryptomus') {
+        const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        setLoading(null)
+        WebApp.openLink(pay_url)
       } else {
         const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
         setLoading(null)

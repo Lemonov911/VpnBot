@@ -50,6 +50,29 @@ export function createVpnInvoiceCrypto(
   return post('/api/vpn/invoice/crypto', { plan_key: planKey, currency })
 }
 
+export function createVpnInvoiceCryptomus(
+  planKey: string,
+  currency: 'RUB' | 'USD',
+): Promise<{ pay_url: string }> {
+  return post('/api/vpn/invoice/cryptomus', { plan_key: planKey, currency })
+}
+
+// Feature flags из /api/health — кэшируем на сессию.
+let _featuresCache: Promise<Features> | null = null
+export interface Features {
+  esim: boolean
+  cryptobot: boolean
+  cryptomus: boolean
+}
+export function getFeatures(): Promise<Features> {
+  if (_featuresCache) return _featuresCache
+  _featuresCache = fetch(API_BASE + '/api/health')
+    .then(r => r.json())
+    .then(d => (d.features as Features) ?? { esim: false, cryptobot: false, cryptomus: false })
+    .catch(() => ({ esim: false, cryptobot: false, cryptomus: false }))
+  return _featuresCache
+}
+
 export interface VpnConfig {
   id:          number
   protocol:    'vless' | 'awg' | 'wg'

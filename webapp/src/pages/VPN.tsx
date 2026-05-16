@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus,
   getActiveSubscription, getUserConfigs, getVpnStatus,
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
@@ -132,6 +132,10 @@ export default function VPN() {
           setBuyLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
         })
+      } else if (method === 'cryptomus') {
+        const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        setBuyLoading(null)
+        WebApp.openLink(pay_url)
       } else {
         const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
         setBuyLoading(null)

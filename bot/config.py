@@ -43,6 +43,14 @@ VPN_SERVER_KEY   = os.getenv("VPN_SERVER_KEY_PATH", "~/.ssh/id_rsa")
 VPN_SERVER_PASS  = os.getenv("VPN_SERVER_PASSWORD", "")
 CRYPTOBOT_TOKEN  = os.getenv("CRYPTOBOT_TOKEN", "")
 
+# Cryptomus — альтернативный крипто-провайдер с прямыми on-chain платежами
+# (BTC/ETH/USDT не через @CryptoBot, ниже комиссии, резерв если CryptoBot упадёт).
+# Включается двумя env'ами + флагом — все три нужны, иначе endpoint'ы 503.
+CRYPTOMUS_MERCHANT_UUID = os.getenv("CRYPTOMUS_MERCHANT_UUID", "")
+CRYPTOMUS_PAYMENT_KEY   = os.getenv("CRYPTOMUS_PAYMENT_KEY", "")
+CRYPTOMUS_ENABLED = bool(CRYPTOMUS_MERCHANT_UUID and CRYPTOMUS_PAYMENT_KEY) and \
+                   os.getenv("CRYPTOMUS_ENABLED", "false").lower() == "true"
+
 # Shared secret для admin API (Next.js админка → bot REST).
 # Админка проксирует write-операции через бота (reply на тикет, etc) чтобы не
 # открывать write-доступ к SQLite + чтоб бот мог отправлять сообщения юзерам.

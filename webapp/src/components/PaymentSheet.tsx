@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import WebApp from '@twa-dev/sdk'
 import { useT } from '../i18n'
+import { getFeatures } from '../api'
 
-export type PayMethod = 'stars' | 'crypto'
+export type PayMethod = 'stars' | 'crypto' | 'cryptomus'
 
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
@@ -38,6 +39,12 @@ export default function PaymentSheet({
   // что нажав «купить» он попадёт в RUB-флоу.  Stars preselected раньше
   // вызывало когнитивный mismatch: «я нажал 200₽, а тут 145⭐».
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
+  const [showCryptomus, setShowCryptomus] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    getFeatures().then(f => { if (!cancelled) setShowCryptomus(!!f.cryptomus) })
+    return () => { cancelled = true }
+  }, [])
 
   return (
     <>
@@ -70,14 +77,17 @@ export default function PaymentSheet({
           {t('pay_method')}
         </div>
         <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-5">
-          {([
-            ['stars',  '⭐', t('pay_method_stars'),    `${plan.stars} ⭐`] as [PayMethod, string, string, string],
-            ['crypto', '💎', t('pay_method_crypto'),   `${plan.rub} ₽`] as [PayMethod, string, string, string],
-          ]).map(([val, icon, label, price], i) => (
+          {(([
+            ['stars',    '⭐', t('pay_method_stars'),     `${plan.stars} ⭐`],
+            ['crypto',   '💎', t('pay_method_crypto'),    `${plan.rub} ₽`],
+            ...(showCryptomus
+              ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${plan.rub} ₽`]]
+              : []),
+          ]) as [PayMethod, string, string, string][]).map(([val, icon, label, price], i, arr) => (
             <div
               key={val}
               onClick={() => setMethod(val)}
-              className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i === 0 ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
+              className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
             >
               <span className="text-[22px] w-8 text-center shrink-0">{icon}</span>
               <span className="flex-1 text-[15px] text-[var(--tg-theme-text-color,#000)] font-medium">{label}</span>
@@ -96,7 +106,9 @@ export default function PaymentSheet({
           className="btn !w-full !text-base !py-3.5"
           onClick={() => onPay(method)}
         >
-          {method === 'stars' ? `${t('pay_pay_btn')} ${plan.stars} ⭐` : `${t('pay_pay_btn')} ${plan.rub} ₽`}
+          {method === 'stars'
+            ? `${t('pay_pay_btn')} ${plan.stars} ⭐`
+            : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
         {/* После оплаты юзер уходит в CryptoBot / Stars-диалог.  Без подсказки
             что делать дальше — теряются: «я заплатил, а где конфиг?». */}
