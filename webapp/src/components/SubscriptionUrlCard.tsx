@@ -41,11 +41,8 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
                   stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
           </svg>
         </div>
-        <div className="font-semibold text-[15px] text-[var(--tg-theme-text-color,#000)] flex items-center gap-2">
+        <div className="font-semibold text-[15px] text-[var(--tg-theme-text-color,#000)]">
           {t('vpn_sub_url_title' as TKey)}
-          <span className="text-[9px] font-bold uppercase tracking-wider bg-purple/15 text-purple px-1.5 py-0.5 rounded">
-            multi-loc
-          </span>
         </div>
       </div>
       <p className="text-[12px] text-[var(--tg-theme-hint-color,#707579)] mb-3 leading-[1.4]">

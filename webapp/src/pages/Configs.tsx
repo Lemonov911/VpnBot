@@ -557,17 +557,6 @@ export default function Configs() {
         </div>
       )}
 
-      {/* TEMP DIAG: если карточки нет — покажем ПОЧЕМУ */}
-      {!loading && !showSubCard && (
-        <div className="mb-3 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-[11px] font-mono text-yellow-600 dark:text-yellow-400 space-y-1">
-          <div>⚠ DIAG: subscription card hidden</div>
-          <div>sub: {sub === null ? 'null' : sub === undefined ? 'undefined' : 'object'}</div>
-          <div>sub.sub_url: {sub?.sub_url ?? '(missing)'}</div>
-          <div>sub.plan: {sub?.plan ?? '(no sub)'}</div>
-          <div>slots: {slots.length} total, vless-active: {slots.filter(s => s.protocol === 'vless' && s.status === 'active').length}</div>
-        </div>
-      )}
-
       {/* AWG / WG слоты ниже — per-device .conf файлы. */}
       {Object.entries(bySubscription).map(([subId, subSlots]) => (
         <SubscriptionGroup
