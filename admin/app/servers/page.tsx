@@ -57,7 +57,31 @@ export default function ServersPage() {
   }
 
   async function disableServer(id: number) {
+    if (!confirm('Drain server — новые пиры на него не идут. Существующие работают. Продолжить?')) return
     await fetch(`/admin/api/servers?id=${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  async function enableServer(id: number) {
+    await fetch(`/admin/api/servers?id=${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: 1 }),
+    })
+    load()
+  }
+
+  async function setCapacity(id: number, current: number) {
+    const raw = prompt('Новый capacity (1..10000):', String(current))
+    if (raw === null) return
+    const n = parseInt(raw, 10)
+    if (!Number.isFinite(n) || n < 1 || n > 10000) { alert('1..10000'); return }
+    const r = await fetch(`/admin/api/servers?id=${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capacity: n }),
+    })
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'error') }
     load()
   }
 
@@ -150,9 +174,13 @@ export default function ServersPage() {
                     <div className="text-xs text-neutral-600 font-mono mt-0.5 truncate max-w-xs">{s.wg_pubkey}</div>
                   )}
                 </div>
-                {/* Load bar */}
+                {/* Load bar — click capacity to edit */}
                 <div className="w-24 shrink-0">
-                  <div className="text-xs text-neutral-400 mb-1 text-right">{s.active_peers}/{s.capacity}</div>
+                  <button onClick={() => setCapacity(s.id, s.capacity)}
+                    className="text-xs text-neutral-400 mb-1 text-right w-full hover:text-white"
+                    title="Изменить capacity">
+                    {s.active_peers}/{s.capacity}
+                  </button>
                   <div className="h-1.5 bg-neutral-800 rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${loadPct(s) > 80 ? 'bg-yellow-500' : 'bg-[#2481cc]'}`}
@@ -160,10 +188,15 @@ export default function ServersPage() {
                     />
                   </div>
                 </div>
-                {s.is_active && (
+                {s.is_active ? (
                   <button onClick={() => disableServer(s.id)}
                     className="text-xs text-neutral-600 hover:text-red-400 transition-colors shrink-0">
-                    Отключить
+                    Drain
+                  </button>
+                ) : (
+                  <button onClick={() => enableServer(s.id)}
+                    className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors shrink-0">
+                    Включить
                   </button>
                 )}
               </div>

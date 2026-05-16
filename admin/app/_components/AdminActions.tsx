@@ -70,9 +70,13 @@ export function ConfirmButton({
 
 // ── Convenience wrappers used on /clients/[id] ───────────────────────────────
 
+// basePath '/admin' (next.config.ts) НЕ автодобавляется к client-side fetch URL,
+// поэтому все API-вызовы должны включать /admin/api/... вручную.
+const API = '/admin/api'
+
 export function ExtendSubButton({ subId, days }: { subId: number; days: number }) {
   const onConfirm = async () => {
-    const r = await fetch(`/api/sub/${subId}/extend`, {
+    const r = await fetch(`${API}/sub/${subId}/extend`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ days, reason: `manual gift ${days}d` }),
@@ -87,7 +91,7 @@ export function ExtendSubButton({ subId, days }: { subId: number; days: number }
 
 export function RefundSubButton({ subId, isStars }: { subId: number; isStars: boolean }) {
   const onConfirm = async () => {
-    const r = await fetch(`/api/sub/${subId}/refund`, {
+    const r = await fetch(`${API}/sub/${subId}/refund`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: 'admin manual refund', stars_refund: isStars }),
@@ -109,7 +113,7 @@ export function RefundSubButton({ subId, isStars }: { subId: number; isStars: bo
 export function BanUserButton({ userId, banned }: { userId: number; banned: boolean }) {
   const onConfirm = async () => {
     const path = banned ? 'unban' : 'ban'
-    const r = await fetch(`/api/user/${userId}/${path}`, {
+    const r = await fetch(`${API}/user/${userId}/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: banned ? '{}' : JSON.stringify({ reason: 'admin manual ban' }),

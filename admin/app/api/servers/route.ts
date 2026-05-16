@@ -84,7 +84,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ id: result.lastInsertRowid, wg_pubkey })
 }
 
-// DELETE /api/servers/[id]
+// DELETE /api/servers?id=N — soft-disable (drain), keeps row in DB.
+// Existing peers continue serving traffic via agent until natural expiry;
+// new provisioning skips this server (get_best_server filters is_active=1).
 export async function DELETE(req: NextRequest) {
   const session = await requireSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -95,5 +97,44 @@ export async function DELETE(req: NextRequest) {
   const db = writeDb()
   db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(id)
   db.close()
+  return NextResponse.json({ ok: true })
+}
+
+// PATCH /api/servers?id=N
+// Body: { "is_active": 1 } — re-enable previously drained server.
+//       { "capacity": 200 } — change soft cap (load-balancer uses
+//         active_peers/capacity ratio; raising capacity makes this server
+//         preferred until peers catch up).
+export async function PATCH(req: NextRequest) {
+  const session = await requireSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'No id' }, { status: 400 })
+
+  let body: { is_active?: number; capacity?: number } = {}
+  try { body = await req.json() } catch {}
+
+  const sets: string[] = []
+  const args: unknown[] = []
+  if (body.is_active === 0 || body.is_active === 1) {
+    sets.push('is_active=?')
+    args.push(body.is_active)
+  }
+  if (typeof body.capacity === 'number' && body.capacity >= 1 && body.capacity <= 10000) {
+    sets.push('capacity=?')
+    args.push(Math.round(body.capacity))
+  }
+  if (sets.length === 0) {
+    return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
+  }
+
+  args.push(id)
+  const db = writeDb()
+  const result = db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id=?`).run(...args)
+  db.close()
+  if (result.changes === 0) {
+    return NextResponse.json({ error: 'server not found' }, { status: 404 })
+  }
   return NextResponse.json({ ok: true })
 }
