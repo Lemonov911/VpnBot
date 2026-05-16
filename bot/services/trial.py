@@ -180,7 +180,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
             await mark_subscription_expired(sub_id)
             logger.warning("trial rollback: marked sub #%d expired (user %d)", sub_id, user_id)
         except Exception as rb_err:
-            logger.error("trial rollback failed for sub #%d: %s", sub_id, rb_err)
+            logger.error("trial rollback failed for sub #%d: %s", sub_id, rb_err, exc_info=True)
         raise
 
     # ── 2) AWG peer (опционален — best-effort, не валит триал) ──────────
@@ -206,7 +206,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
         else:
             logger.warning("trial AWG skipped: no awg server available for user %d", user_id)
     except VpnctlError as e:
-        logger.warning("trial AWG provisioning failed for user %d: %s — VLESS-only fallback", user_id, e)
+        logger.warning("trial AWG provisioning failed for user %d: %s — VLESS-only fallback", user_id, e, exc_info=True)
         # Cleanup: если record создан, но peer не сохранён — удалить orphan slot
         # (иначе trial sub имеет призрачный AWG-slot, который никогда не активируется).
         if awg_cfg_id is not None:
@@ -214,17 +214,17 @@ async def _provision_trial_locked(user_id: int) -> dict:
                 from services.database import delete_config_record
                 await delete_config_record(awg_cfg_id)
             except Exception as rb_err:
-                logger.warning("trial AWG cleanup failed for cfg #%s: %s", awg_cfg_id, rb_err)
+                logger.warning("trial AWG cleanup failed for cfg #%s: %s", awg_cfg_id, rb_err, exc_info=True)
         awg_cfg_id = None
         awg_config = None
     except Exception as e:
-        logger.warning("trial AWG unexpected error for user %d: %s", user_id, e)
+        logger.warning("trial AWG unexpected error for user %d: %s", user_id, e, exc_info=True)
         if awg_cfg_id is not None:
             try:
                 from services.database import delete_config_record
                 await delete_config_record(awg_cfg_id)
             except Exception as rb_err:
-                logger.warning("trial AWG cleanup failed for cfg #%s: %s", awg_cfg_id, rb_err)
+                logger.warning("trial AWG cleanup failed for cfg #%s: %s", awg_cfg_id, rb_err, exc_info=True)
         awg_cfg_id = None
         awg_config = None
 

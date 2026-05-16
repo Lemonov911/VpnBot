@@ -59,7 +59,7 @@ async def _pre_migrate_snapshot():
                 pass
         logger.info("pre-migrate snapshot: %s", snap_path)
     except Exception as e:
-        logger.warning("pre-migrate snapshot failed: %s", e)
+        logger.warning("pre-migrate snapshot failed: %s", e, exc_info=True)
 
 
 async def init_db():
@@ -714,7 +714,7 @@ async def audit_log_record(admin_id: int, action: str,
             )
             await db.commit()
     except Exception as e:
-        logger.warning("audit_log write failed action=%s: %s", action, e)
+        logger.warning("audit_log write failed action=%s: %s", action, e, exc_info=True)
 
 
 async def cleanup_stuck_activating_slots() -> int:

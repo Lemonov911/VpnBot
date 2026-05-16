@@ -137,16 +137,16 @@ async def _send_throttled(bot: Bot, user_id: int, text: str, **kwargs) -> bool:
         await asyncio.sleep(_TG_SEND_DELAY)
         return True
     except TelegramRetryAfter as e:
-        logger.warning("TG flood control: sleep %ds then retry user=%d", e.retry_after, user_id)
+        logger.warning("TG flood control: sleep %ds then retry user=%d", e.retry_after, user_id, exc_info=True)
         await asyncio.sleep(e.retry_after + 1)
         try:
             await bot.send_message(user_id, text, **kwargs)
             return True
         except Exception as retry_err:
-            logger.warning("TG retry failed user=%d: %s", user_id, retry_err)
+            logger.warning("TG retry failed user=%d: %s", user_id, retry_err, exc_info=True)
             return False
     except Exception as e:
-        logger.warning("send_message failed user=%d: %s", user_id, e)
+        logger.warning("send_message failed user=%d: %s", user_id, e, exc_info=True)
         return False
 
 
@@ -200,7 +200,7 @@ async def _process_expired_subscriptions(bot: Bot):
                 await _send_throttled(bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
                                        reply_markup=_renew_kb())
             except Exception as e:
-                logger.warning("late-expire sub #%d: %s", sub_id, e)
+                logger.warning("late-expire sub #%d: %s", sub_id, e, exc_info=True)
             continue
 
         configs = await get_configs_for_subscription(sub_id)
@@ -256,7 +256,7 @@ async def _process_expired_subscriptions(bot: Bot):
                             except VpnctlError as e:
                                 logger.warning(
                                     "VLESS grace move failed cfg #%d (added=%s): %s",
-                                    cfg_id, grace_added, e,
+                                    cfg_id, grace_added, e, exc_info=True,
                                 )
                                 # Compensating remove: если grace_added=True но
                                 # remove_peer на старом inbound упал, чистим
@@ -271,11 +271,11 @@ async def _process_expired_subscriptions(bot: Bot):
                                     except Exception as cleanup_err:
                                         logger.error(
                                             "VLESS cfg #%d: compensating remove FAILED — пир в двух inbound, нужен ручной фикс: %s",
-                                            cfg_id, cleanup_err,
+                                            cfg_id, cleanup_err, exc_info=True,
                                         )
 
             except Exception as e:
-                logger.warning("grace throttle error cfg #%d: %s", cfg_id, e)
+                logger.warning("grace throttle error cfg #%d: %s", cfg_id, e, exc_info=True)
 
         # Применяем pending downgrade (если был запланирован) на момент истечения.
         # Семантика: юзер на vpn_max нажал «downgrade до vpn_base» → expires_at
@@ -294,7 +294,7 @@ async def _process_expired_subscriptions(bot: Bot):
             except Exception as e:
                 logger.warning(
                     "Подписка #%d: pending downgrade failed (%s → %s): %s",
-                    sub_id, plan_key, pending, e,
+                    sub_id, plan_key, pending, e, exc_info=True,
                 )
 
         await mark_subscription_grace(sub_id, grace_until)
@@ -353,7 +353,7 @@ async def _process_grace_expired_subscriptions(bot: Bot):
                                 await update_server_peer_count(server_id, -1)
 
                     except Exception as e:
-                        logger.warning("revoke grace cfg #%d: %s", cfg_id, e)
+                        logger.warning("revoke grace cfg #%d: %s", cfg_id, e, exc_info=True)
 
             await reset_config_slot(cfg_id)
             logger.info("Конфиг #%d отозван (grace истёк, sub=%d)", cfg_id, sub_id)
@@ -392,7 +392,7 @@ async def _process_expired_orders(bot: Bot):
         try:
             await bot.send_message(user_id, EXPIRY_NOTICE, parse_mode="HTML")
         except Exception as e:
-            logger.warning("Не удалось уведомить user %d: %s", user_id, e)
+            logger.warning("Не удалось уведомить user %d: %s", user_id, e, exc_info=True)
 
 
 async def _sync_vless_stats():
@@ -406,10 +406,10 @@ async def _sync_vless_stats():
             client = client_for_server(server)
             peers = await client.list_peers("vless")
         except VpnctlError as e:
-            logger.warning("vless stats sync skipped server=%s: %s", server.get("name"), e)
+            logger.warning("vless stats sync skipped server=%s: %s", server.get("name"), e, exc_info=True)
             continue
         except Exception as e:
-            logger.warning("vless stats sync error server=%s: %s", server.get("name"), e)
+            logger.warning("vless stats sync error server=%s: %s", server.get("name"), e, exc_info=True)
             continue
 
         for peer in peers or []:
@@ -480,7 +480,7 @@ async def _apply_quota_throttle(bot: Bot):
                         parse_mode="HTML",
                     )
                 except Exception as e:
-                    logger.warning("notify throttle user %d: %s", cfg["user_id"], e)
+                    logger.warning("notify throttle user %d: %s", cfg["user_id"], e, exc_info=True)
             elif is_throttled and not should_throttle:
                 # Restore: re-add to normal, remove from slow
                 normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
@@ -488,9 +488,9 @@ async def _apply_quota_throttle(bot: Bot):
                 await update_config_data(cfg["config_id"], normal_peer.config)
                 logger.info("throttle restored on config #%d", cfg["config_id"])
         except VpnctlError as e:
-            logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e)
+            logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e, exc_info=True)
         except Exception as e:
-            logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e)
+            logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e, exc_info=True)
 
 
 async def _sync_vless_active_uuids():
@@ -512,9 +512,9 @@ async def _sync_vless_active_uuids():
                 len(result.get("removed", []) or []),
             )
         except VpnctlError as e:
-            logger.warning("vless uuid sync skipped server=%s: %s", server.get("name"), e)
+            logger.warning("vless uuid sync skipped server=%s: %s", server.get("name"), e, exc_info=True)
         except Exception as e:
-            logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e)
+            logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e, exc_info=True)
 
 
 async def _daily_backup(bot: Bot):
@@ -575,7 +575,7 @@ async def _daily_backup(bot: Bot):
                         parse_mode="HTML",
                     )
                 except Exception as e:
-                    logger.warning("backup health alert failed: %s", e)
+                    logger.warning("backup health alert failed: %s", e, exc_info=True)
         except ValueError:
             pass  # malformed state file — игнорируем
 
@@ -636,7 +636,7 @@ async def _daily_backup(bot: Bot):
             f.write(today)
         logger.info("daily backup отправлен (%d KB)", len(data) // 1024)
     except Exception as e:
-        logger.warning("daily backup не отправлен: %s", e)
+        logger.warning("daily backup не отправлен: %s", e, exc_info=True)
     finally:
         # cleanup
         for p in (snap, snap + ".gz"):
@@ -705,7 +705,7 @@ async def _sync_esim_usage():
         try:
             resp = await esim_api.usage_query(batch)
         except Exception as e:
-            logger.warning("eSIM usage_query batch failed: %s", e)
+            logger.warning("eSIM usage_query batch failed: %s", e, exc_info=True)
             continue
         for u in (resp.get("obj") or {}).get("esimUsageList") or []:
             tn = u.get("esimTranNo")
@@ -758,7 +758,7 @@ async def _run_health_loop(bot: Bot | None = None):
         try:
             await probe_all_servers(bot)
         except Exception as e:
-            logger.warning("health probe error: %s", e)
+            logger.warning("health probe error: %s", e, exc_info=True)
         cleanup_counter += HEALTH_PROBE_INTERVAL_SEC
         if cleanup_counter >= HEALTH_CLEANUP_INTERVAL_SEC:
             cleanup_counter = 0
@@ -766,7 +766,7 @@ async def _run_health_loop(bot: Bot | None = None):
                 await cleanup_old_logs(keep_days=31)
                 logger.info("health: log cleanup done")
             except Exception as e:
-                logger.warning("health cleanup error: %s", e)
+                logger.warning("health cleanup error: %s", e, exc_info=True)
         await asyncio.sleep(HEALTH_PROBE_INTERVAL_SEC)
 
 

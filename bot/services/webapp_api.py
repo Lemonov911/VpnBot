@@ -518,11 +518,11 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     try:
         result = await provision_peer(server, peer_name, service_name)
     except VpnctlError as e:
-        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e, exc_info=True)
         await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
     except Exception as e:
-        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e)
+        logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e, exc_info=True)
         await reset_config_slot(config_id)  # rollback activating → empty
         return web.json_response({"error": "Сервер недоступен"}, status=503)
 
@@ -569,7 +569,7 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
                 peer_id = config.get("vless_uuid") or config.get("wg_pubkey")
                 await revoke_peer(srv, peer_id, config["protocol"])
         except Exception as e:
-            logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e)
+            logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e, exc_info=True)
 
     # Сбрасываем слот в empty — он остаётся доступным для повторной активации
     await reset_config_slot(config_id)
@@ -629,7 +629,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
             bot_username=bot_info.username,
         )
     except Exception as e:
-        logger.error("CryptoBot invoice error: %s", e)
+        logger.error("CryptoBot invoice error: %s", e, exc_info=True)
         return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
 
     pay_url = invoice.get("mini_app_invoice_url") or invoice.get("bot_invoice_url", "")
@@ -761,7 +761,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.error("CryptoBot: provision crashed for user=%d sub=%d: %s",
-                     user_id, sub_id, e)
+                     user_id, sub_id, e, exc_info=True)
         delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
 
     # Catastrophic provision failure: 0/N. CryptoBot не имеет refund API,
@@ -792,7 +792,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                     parse_mode="HTML",
                 )
         except Exception as e:
-            logger.error("Admin alert failed: %s", e)
+            logger.error("Admin alert failed: %s", e, exc_info=True)
         try:
             await bot.send_message(
                 user_id,
@@ -824,7 +824,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.warning("CryptoBot: failed to notify user %d: %s", user_id, e)
+        logger.warning("CryptoBot: failed to notify user %d: %s", user_id, e, exc_info=True)
 
     return web.Response(status=200)
 
@@ -933,7 +933,7 @@ async def handle_esim_webhook(request: web.Request) -> web.Response:
         try:
             resp = await esim.query_by_order_no(order_no)
         except Exception as e:
-            logger.error("eSIM webhook: query failed for %s: %s", order_no, e)
+            logger.error("eSIM webhook: query failed for %s: %s", order_no, e, exc_info=True)
             return web.json_response({"ok": True})
         esim_list = (resp.get("obj") or {}).get("esimList") or []
         if not esim_list:
@@ -1092,7 +1092,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
             status=503,
         )
     except VpnctlError as e:
-        logger.warning("trial provision failed: %s", e)
+        logger.warning("trial provision failed: %s", e, exc_info=True)
         return web.json_response(
             {"error": "provision_failed",
              "message": "Не удалось создать конфиг. Попробуй позже."},
@@ -1130,7 +1130,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
             )
         await bot.send_message(user["id"], msg, parse_mode="HTML")
     except Exception as e:
-        logger.warning("trial notify failed for user=%d: %s", user["id"], e)
+        logger.warning("trial notify failed for user=%d: %s", user["id"], e, exc_info=True)
 
     return web.json_response({
         "sub_id":         result["sub_id"],
@@ -1213,7 +1213,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
                 bot_username=bot_info.username,
             )
         except Exception as e:
-            logger.error("CryptoBot upgrade invoice error: %s", e)
+            logger.error("CryptoBot upgrade invoice error: %s", e, exc_info=True)
             return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
 
         pay_url = invoice.get("mini_app_invoice_url") or invoice.get("bot_invoice_url", "")
@@ -1331,7 +1331,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 except Exception:
                     pass
     except Exception as e:
-        logger.warning("subscription header build failed: %s", e)
+        logger.warning("subscription header build failed: %s", e, exc_info=True)
 
     # download = upload + общий используемый объём (Happ показывает download)
     sub_userinfo_parts = [f"download={used_bytes}", "upload=0"]
@@ -1451,7 +1451,7 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
         sent = await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
         await update_ticket_admin_msg(ticket_id, sent.message_id)
     except Exception as e:
-        logger.warning("Не удалось отправить тикет #%d админу: %s", ticket_id, e)
+        logger.warning("Не удалось отправить тикет #%d админу: %s", ticket_id, e, exc_info=True)
 
     return web.json_response({"ok": True, "ticket_id": ticket_id})
 
@@ -1544,7 +1544,7 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
     try:
         await bot.send_message(ticket["user_id"], msg_text, parse_mode="HTML")
     except Exception as e:
-        logger.warning("admin reply to user %d failed: %s", ticket["user_id"], e)
+        logger.warning("admin reply to user %d failed: %s", ticket["user_id"], e, exc_info=True)
         return web.json_response({"error": f"send failed: {e}"}, status=502)
 
     if close:

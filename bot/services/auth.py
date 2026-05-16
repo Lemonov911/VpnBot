@@ -104,5 +104,5 @@ def verify_init_data(init_data: str, bot_token: str) -> dict | None:
         return user
 
     except Exception as exc:
-        logger.warning("verify_init_data: ошибка разбора: %s", exc)
+        logger.warning("verify_init_data: ошибка разбора: %s", exc, exc_info=True)
         return None

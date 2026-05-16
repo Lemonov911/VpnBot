@@ -79,7 +79,7 @@ async def create_vpn_user(username: str) -> bytes | None:
             logger.info("VPN user создан: %s (%d байт)", username, len(config))
             return config.encode()
     except Exception as e:
-        logger.error("SSH add_user ошибка для %s: %s", username, e)
+        logger.error("SSH add_user ошибка для %s: %s", username, e, exc_info=True)
         raise RuntimeError(str(e)) from e
 
 
@@ -100,7 +100,7 @@ async def remove_vpn_user(username: str) -> bool:
             logger.info("VPN user удалён: %s", username)
             return True
     except Exception as e:
-        logger.error("SSH remove_user ошибка для %s: %s", username, e)
+        logger.error("SSH remove_user ошибка для %s: %s", username, e, exc_info=True)
         return False
 
 
@@ -145,7 +145,7 @@ async def create_config(
             logger.info("Конфиг создан: %s на %s (%d байт)", peer_name, server_ip, len(config))
             return config.encode()
     except Exception as e:
-        logger.error("SSH create_config ошибка: peer=%s server=%s: %s", peer_name, server_ip, e)
+        logger.error("SSH create_config ошибка: peer=%s server=%s: %s", peer_name, server_ip, e, exc_info=True)
         return None
 
 
@@ -177,5 +177,5 @@ async def remove_config(
             logger.info("Пир удалён: %s с %s", peer_name, server_ip)
             return True
     except Exception as e:
-        logger.error("SSH remove_config ошибка: peer=%s server=%s: %s", peer_name, server_ip, e)
+        logger.error("SSH remove_config ошибка: peer=%s server=%s: %s", peer_name, server_ip, e, exc_info=True)
         return False

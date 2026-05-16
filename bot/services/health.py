@@ -159,7 +159,7 @@ async def _maybe_deactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
                     parse_mode="HTML",
                 )
         except Exception as e:
-            logger.warning("health: failed to notify admin about deactivation: %s", e)
+            logger.warning("health: failed to notify admin about deactivation: %s", e, exc_info=True)
     return True
 
 
@@ -192,7 +192,7 @@ async def _maybe_reactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
                     parse_mode="HTML",
                 )
         except Exception as e:
-            logger.warning("health: failed to notify admin about reactivation: %s", e)
+            logger.warning("health: failed to notify admin about reactivation: %s", e, exc_info=True)
     return True
 
 
@@ -220,7 +220,7 @@ async def probe_all_servers(bot=None):
                 await _record_probe(db, server["id"], status, latency, error)
             except Exception as e:
                 logger.warning("health: failed to record probe for server %d: %s",
-                               server["id"], e)
+                               server["id"], e, exc_info=True)
 
         # Авто-деактивация/реактивация после записи проб.
         for server, (status, _, _) in zip(servers, results):
@@ -231,7 +231,7 @@ async def probe_all_servers(bot=None):
                     await _maybe_reactivate(db, server, bot)
             except Exception as e:
                 logger.warning("health: auto-(de)activate error for server %d: %s",
-                               server["id"], e)
+                               server["id"], e, exc_info=True)
         await db.commit()
 
 

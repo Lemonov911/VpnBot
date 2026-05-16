@@ -287,7 +287,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
         for trial_sub in active_trials:
             await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
     except Exception as e:
-        logger.warning("close-trial-on-paid failed user %d: %s (продолжаем)", user_id, e)
+        logger.warning("close-trial-on-paid failed user %d: %s (продолжаем)", user_id, e, exc_info=True)
 
     # Для обратной совместимости — дублируем в orders
     order_id = await create_order(
@@ -340,7 +340,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                     parse_mode="HTML",
                 )
             except VpnctlError as e:
-                logger.warning("vpnctl WG peer error: %s", e)
+                logger.warning("vpnctl WG peer error: %s", e, exc_info=True)
 
     vless_service = vless_service_for_plan(plan_key)
     for i in range(vless_slots):
@@ -357,7 +357,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                 await update_server_peer_count(server["id"], +1)
                 created_vless += 1
             except VpnctlError as e:
-                logger.warning("vpnctl VLess peer error: %s", e)
+                logger.warning("vpnctl VLess peer error: %s", e, exc_info=True)
 
     # Plain WireGuard слоты (без AmneziaWG-обфускации) — для роутеров и клиентов
     # которым DPI не страшен / не нужна обфускация. Серверная часть — отдельный
@@ -379,7 +379,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             await update_server_peer_count(server["id"], +1)
             created_plain_wg += 1
         except VpnctlError as e:
-            logger.warning("vpnctl plain-WG peer error: %s", e)
+            logger.warning("vpnctl plain-WG peer error: %s", e, exc_info=True)
 
     parts_desc = []
     if awg_slots:
@@ -419,7 +419,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                 await mark_payment_refunded(payment_id)
                 refund_ok = True
             except Exception as e:
-                logger.error("Refund failed user=%d charge=%s: %s — admin alert", user_id, payment_id, e)
+                logger.error("Refund failed user=%d charge=%s: %s — admin alert", user_id, payment_id, e, exc_info=True)
                 # Алерт админу — refund провалился, юзер думает что вернули
                 try:
                     from config import ADMIN_ID
@@ -444,7 +444,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             else:
                 await mark_subscription_expired(sub_id)
         except Exception as e:
-            logger.error("Mark sub failed sub=%d: %s", sub_id, e)
+            logger.error("Mark sub failed sub=%d: %s", sub_id, e, exc_info=True)
         msg = (
             "❌ <b>Не удалось создать VPN-конфиги</b>\n\n"
             "Сервера временно недоступны. Звёзды возвращены — попробуй "
@@ -472,7 +472,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             tok = await rotate_sub_token(user_id)
             sub_url = f"https://maxvpnesim.com/sub/{tok}"
         except Exception as e:
-            logger.warning("sub_token gen failed for user %d: %s", user_id, e)
+            logger.warning("sub_token gen failed for user %d: %s", user_id, e, exc_info=True)
 
     sub_block = (
         f"\n\n🔗 <b>Subscription URL</b> (импортируй в Happ один раз — обновляется автоматом):\n"
@@ -507,7 +507,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
             except Exception:
                 pass
     except Exception as e:
-        logger.warning("Ошибка реферального бонуса: %s", e)
+        logger.warning("Ошибка реферального бонуса: %s", e, exc_info=True)
 
 
 # Per-user lock — защита от race между _close_trial_on_paid_purchase и
@@ -579,7 +579,7 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
                                 await client.remove_peer(inbound, peer_id)
                             await update_server_peer_count(server_id, -1)
                     except Exception as e:
-                        logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e)
+                        logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
             await reset_config_slot(cfg["id"])
         await mark_subscription_expired(trial_sub_id)
         logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
@@ -604,7 +604,7 @@ async def _apply_plan_upgrade(message: Message, payment):
         wg_delta    = int(wg_delta_str)
     except ValueError:
         logger.error("upgrade payload parse failed: %r (payment=%s)",
-                     payment.invoice_payload, payment.telegram_payment_charge_id)
+                     payment.invoice_payload, payment.telegram_payment_charge_id, exc_info=True)
         await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
         return
     user_id     = message.from_user.id
@@ -670,9 +670,9 @@ async def _apply_plan_upgrade(message: Message, payment):
                             if new_peer.config:
                                 await update_config_data(cfg["id"], new_peer.config)
                     except Exception as e:
-                        logger.warning("upgrade-from-grace unthrottle cfg #%d: %s", cfg["id"], e)
+                        logger.warning("upgrade-from-grace unthrottle cfg #%d: %s", cfg["id"], e, exc_info=True)
             except Exception as e:
-                logger.error("upgrade-from-grace unthrottle outer: %s", e)
+                logger.error("upgrade-from-grace unthrottle outer: %s", e, exc_info=True)
 
     parts_desc = []
     if plan["awg_slots"]:
@@ -746,7 +746,7 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
     try:
         result = await esim_api.place_order(pkg_code, wholesale_price, tx_id)
     except Exception as e:
-        logger.error("eSIM place_order failed: %s", e)
+        logger.error("eSIM place_order failed: %s", e, exc_info=True)
         await mark_esim_failed(profile_id)
         await _esim_refund_and_notify(bot, user_id, charge_id, order_id)
         return
@@ -857,7 +857,7 @@ async def deliver_esim_to_user(bot: Bot, profile_id: int):
         else:
             await bot.send_message(user_id, caption, parse_mode="HTML")
     except Exception as e:
-        logger.error("eSIM delivery failed for user=%d profile=%d: %s", user_id, profile_id, e)
+        logger.error("eSIM delivery failed for user=%d profile=%d: %s", user_id, profile_id, e, exc_info=True)
         try:
             text = caption + (f"\n\nQR: {qr_url}" if qr_url else "")
             await bot.send_message(user_id, text, parse_mode="HTML")
@@ -877,7 +877,7 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
                 await mark_esim_refunded_by_order(order_id)
                 await mark_order_expired(order_id)
             except Exception as e:
-                logger.warning("eSIM refund mark failed order=%s: %s", order_id, e)
+                logger.warning("eSIM refund mark failed order=%s: %s", order_id, e, exc_info=True)
         await bot.send_message(
             user_id,
             f"❌ <b>Не удалось оформить eSIM</b>"
@@ -886,7 +886,7 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error("Refund failed: %s", e)
+        logger.error("Refund failed: %s", e, exc_info=True)
 
 
 async def provision_vpn_slots_async(
@@ -925,7 +925,7 @@ async def provision_vpn_slots_async(
             await update_server_peer_count(server["id"], +1)
             delivered += 1
         except VpnctlError as e:
-            logger.warning("crypto-flow: WG peer error: %s", e)
+            logger.warning("crypto-flow: WG peer error: %s", e, exc_info=True)
 
     vless_service = vless_service_for_plan(plan_key)
     for i in range(vless_slots):
@@ -942,7 +942,7 @@ async def provision_vpn_slots_async(
             await update_server_peer_count(server["id"], +1)
             delivered += 1
         except VpnctlError as e:
-            logger.warning("crypto-flow: VLess peer error: %s", e)
+            logger.warning("crypto-flow: VLess peer error: %s", e, exc_info=True)
 
     for i in range(wg_slots):
         config_id = await create_config_record(sub_id, user_id, protocol="wg")
@@ -959,6 +959,6 @@ async def provision_vpn_slots_async(
             await update_server_peer_count(server["id"], +1)
             delivered += 1
         except VpnctlError as e:
-            logger.warning("crypto-flow: plain-WG peer error: %s", e)
+            logger.warning("crypto-flow: plain-WG peer error: %s", e, exc_info=True)
 
     return delivered, total

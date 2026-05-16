@@ -106,7 +106,7 @@ async def warm_cache():
     try:
         await _all_packages()
     except Exception as e:
-        logger.warning("eSIM cache warm-up failed: %r", e)
+        logger.warning("eSIM cache warm-up failed: %r", e, exc_info=True)
 
 
 # ── Pricing helpers ───────────────────────────────────────────────────────────
@@ -299,7 +299,7 @@ async def poll_order_until_ready(order_no: str, max_wait_sec: int = 60) -> dict 
         try:
             resp = await query_by_order_no(order_no)
         except Exception as e:
-            logger.warning("eSIM poll error for %s: %r", order_no, e)
+            logger.warning("eSIM poll error for %s: %r", order_no, e, exc_info=True)
             continue
         # 200010 = SM-DP+ ещё аллоцирует
         if resp.get("errorCode") == "200010":

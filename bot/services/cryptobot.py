@@ -74,7 +74,7 @@ async def set_webhook(token: str, url: str) -> bool:
             logger.warning("CryptoBot setWebhook failed: %s", data)
         return ok
     except Exception as e:
-        logger.warning("CryptoBot setWebhook error (non-critical): %s", e)
+        logger.warning("CryptoBot setWebhook error (non-critical): %s", e, exc_info=True)
         return False
 
 
