@@ -503,8 +503,11 @@ export default function Configs() {
     return acc
   }, {})
 
-  const hasAnyVless = slots.some(s => s.protocol === 'vless' && s.status === 'active')
-  const showSubCard = !!sub?.sub_url && hasAnyVless
+  // Бэк отдаёт sub_url только если у юзера есть active VLESS-конфиги
+  // (см. _sub_url_for в webapp_api.py), так что отдельно проверять
+  // slots.some(...) не нужно — иначе бывали race-condition'ы когда
+  // /api/vpn/configs запаздывал, hasAnyVless=false и карточка скрывалась.
+  const showSubCard = !!sub?.sub_url
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
