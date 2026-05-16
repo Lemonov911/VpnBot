@@ -329,7 +329,7 @@ const T = {
     instr_suburl_what:   'Что такое ссылка для Happ (Subscription URL)?',
     instr_suburl_desc:   'Это твоя постоянная ссылка на конфиги. Импортируешь в Happ один раз — дальше Happ сам подтягивает обновления, переключает между серверами и показывает использованный трафик.',
     instr_suburl_where:  'Где взять',
-    instr_suburl_where_desc: 'Бот присылает её сразу после оплаты. Также: «Мои конфиги» → кнопка «📋 Копировать» рядом с карточкой подписки.',
+    instr_suburl_where_desc: 'Бот присылает её сразу после оплаты. Также: «Мои конфиги» → кнопка «Копировать» в карточке «Ссылка для Happ».',
     instr_platforms:     'Установка по платформам',
 
     // Instruction steps — Happ + Subscription URL flow
@@ -367,7 +367,7 @@ const T = {
     pay_method_crypto:   'CryptoBot (₽ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Оплатить',
-    pay_trust_1:         'Не получилось подключиться — поможем в поддержке или вернём звёзды',
+    pay_trust_1:         'Не получилось подключиться — поможем в поддержке или вернём оплату',
     pay_trust_2:         'Поддержка отвечает в чате бота, обычно за пару часов',
     pay_after_hint:      'После оплаты вернись в бот — ссылка для Happ придёт в чат',
     pay_trust_3:         'Без рекламы, без логов сёрфинга, не передаём данные третьим лицам',
@@ -461,7 +461,9 @@ const T = {
     nav_ref:     'Friends',
 
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
-    home_card_pitch_no_sub: 'Secure internet from $3 per month',
+    /* Цена синхронизирована с vpn_base.usd (PaymentSheet.tsx) — $2.20.
+       Раньше «from $3» дрейфовал и противоречил `home_sub_from`. */
+    home_card_pitch_no_sub: 'Secure internet from $2.20 per month',
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
       ? 'Free internet on phone and laptop\nNo payment, no card'
       : 'Free internet access\nwithout censorship',
@@ -766,7 +768,7 @@ const T = {
     instr_suburl_what:   'What is a Subscription URL?',
     instr_suburl_desc:   'Your permanent link to the configs. Import it into Happ once — Happ then auto-fetches updates, switches between servers and shows your traffic usage.',
     instr_suburl_where:  'Where to get it',
-    instr_suburl_where_desc: 'The bot sends it right after payment. Also: «My configs» → «📋 Subscription URL» button.',
+    instr_suburl_where_desc: 'The bot sends it right after payment. Also: «My configs» → «Copy» button in the «Happ subscription» card.',
     instr_platforms:     'Per-platform setup',
 
     // Instruction steps — Happ + Subscription URL flow
@@ -804,7 +806,7 @@ const T = {
     pay_method_crypto:   'CryptoBot ($ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Pay',
-    pay_trust_1:         'If something does not work — we will help in support or refund your Stars',
+    pay_trust_1:         'If something does not work — we will help in support or refund your payment',
     pay_trust_2:         'Support replies in bot chat, usually within hours',
     pay_after_hint:      'After payment, return to the bot — your Happ link will arrive in chat',
     pay_trust_3:         'No ads, no browsing logs, we do not share data with third parties',

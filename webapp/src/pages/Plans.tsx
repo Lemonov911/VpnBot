@@ -279,7 +279,7 @@ export default function Plans() {
             <button
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
               className="flex-1 py-2 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)] text-[12px] text-[var(--tg-theme-text-color)] flex items-center justify-center gap-1.5">
-              <span className="text-[14px]"></span> App Store
+              <span className="text-[14px]">🍎</span> App Store
             </button>
             <button
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
