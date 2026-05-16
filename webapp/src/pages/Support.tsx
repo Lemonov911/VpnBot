@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, type SupportCategory } from '../api'
@@ -13,6 +13,70 @@ const FAQ_META = [
   { color: '#8e44ad', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2"/><path d="M2 10h20" stroke="#fff" strokeWidth="2"/><path d="M6 15h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
 ]
 
+/** Простой markdown-парсер для FAQ-текста: **жирный** + \n → newlines.
+ *  Раньше строки с `\n` выводились в одну линию, а `**текст**` показывался
+ *  с буквальными звёздочками — плохо читалось. */
+function FaqText({ text }: { text: string }) {
+  return (
+    <span className="whitespace-pre-line">
+      {text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) => {
+        if (chunk.startsWith('**') && chunk.endsWith('**')) {
+          return <strong key={i} className="text-[var(--tg-theme-text-color)]">{chunk.slice(2, -2)}</strong>
+        }
+        return <span key={i}>{chunk}</span>
+      })}
+    </span>
+  )
+}
+
+function DownloadChip({ href, label }: { href: string; label: string }) {
+  return (
+    <button
+      onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(href) }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11.5px] font-medium bg-[var(--tg-theme-button-color,#2481cc)]/12 text-[var(--tg-theme-button-color,#2481cc)] border-none cursor-pointer"
+    >
+      ↗ {label}
+    </button>
+  )
+}
+
+function AppChoiceAnswer() {
+  return (
+    <div className="space-y-3">
+      <p>Зависит от того, что бот тебе прислал:</p>
+      <div className="pl-2 border-l-2 border-purple/40">
+        <p className="mb-1">
+          <span className="font-mono text-[11px] text-[var(--tg-theme-text-color)]">https://maxvpnesim.com/sub/…</span>
+          <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Импорт: «+» → «Из подписки» → вставь ссылку.
+        </p>
+        <div className="flex flex-wrap gap-1.5 mt-1.5">
+          <DownloadChip href="https://apps.apple.com/app/happ-proxy-utility/id6504287215" label="iOS" />
+          <DownloadChip href="https://play.google.com/store/apps/details?id=com.happproxy" label="Android" />
+          <DownloadChip href="https://happ.su" label="Win / macOS" />
+        </div>
+      </div>
+      <div className="pl-2 border-l-2 border-cyan-500/40">
+        <p className="mb-1">
+          Файл <span className="font-mono text-[11px] text-[var(--tg-theme-text-color)]">.conf</span> или QR-код AmneziaWG
+          <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Amnezia VPN</strong> (полный клиент) или <strong className="text-[var(--tg-theme-text-color)]">AmneziaWG</strong> (легче, только для этого протокола).
+          Импорт: «+» → «Сканировать QR» или «Из файла».
+        </p>
+        <div className="text-[11px] font-semibold text-[var(--tg-theme-hint-color)] mt-2 mb-1">Amnezia VPN</div>
+        <div className="flex flex-wrap gap-1.5">
+          <DownloadChip href="https://apps.apple.com/app/amneziavpn/id1600529900" label="iOS" />
+          <DownloadChip href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" label="Android" />
+          <DownloadChip href="https://amnezia.org/downloads" label="Win / macOS / Linux" />
+        </div>
+        <div className="text-[11px] font-semibold text-[var(--tg-theme-hint-color)] mt-2 mb-1">AmneziaWG</div>
+        <div className="flex flex-wrap gap-1.5">
+          <DownloadChip href="https://apps.apple.com/app/amneziawg/id6478942365" label="iOS" />
+          <DownloadChip href="https://play.google.com/store/apps/details?id=org.amnezia.awg" label="Android" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
   const [open, setOpen] = useState<number | null>(null)
   const tp = WebApp.themeParams
@@ -20,13 +84,13 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
   // иначе юзер видит подробную инструкцию на отсутствующий в UI продукт.
   const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
   // Порядок:
-  //   q1 «какое приложение нужно» — самый важный для new юзера
+  //   q1 «какое приложение нужно» — JSX-rich answer с кнопками-ссылками
   //   q2 «не подключается» — самый частый troubleshoot
   //   q3 «Happ vs Amnezia VPN» — закрывает confusion о выборе клиента
   //   q4/q5 — eSIM (только если SHOW_ESIM)
   //   q6 — payment failed
-  const faqItems = [
-    { q: t('faq_q1'), a: t('faq_a1') },
+  const faqItems: { q: string; a: React.ReactNode }[] = [
+    { q: t('faq_q1'), a: <AppChoiceAnswer /> },
     { q: t('faq_q2'), a: t('faq_a2') },
     { q: t('faq_q3'), a: t('faq_a3') },
     ...(SHOW_ESIM ? [
@@ -53,7 +117,8 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
           </button>
           {open === i && (
             <div className={`py-3 px-4 pl-[60px] text-[13px] text-[var(--tg-theme-hint-color)] leading-[1.6] ${i < faqItems.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>
-              {a}
+              {/* String → парсим **bold** + \n; JSX (q1) — рендерим как есть */}
+              {typeof a === 'string' ? <FaqText text={a} /> : a}
             </div>
           )}
         </div>

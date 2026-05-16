@@ -165,7 +165,11 @@ const T = {
     support_direct_sub: 'Отправь команду /help в чат с ботом',
 
     faq_q1: 'Какое приложение мне нужно?',
-    faq_a1: 'Зависит от того что бот тебе прислал:\n• Ссылка `https://maxvpnesim.com/sub/…` — ставь **Happ** (iOS, Android, macOS, Windows). Импорт: «+» → «Из подписки» → вставь ссылку.\n• Файл `.conf` или QR-код AmneziaWG — ставь **Amnezia VPN** (iOS, Android, Windows, macOS, Linux). Импорт: «+» → «Сканировать QR» или «Из файла».',
+    // faq_a1 рендерится из JSX-компонента <AppChoiceAnswer> в Support.tsx —
+    // оставляем как fallback и для случаев когда компонент перестанет
+    // использовать ключ. EN/RU параллельно держим, чтобы скрипты-валидаторы
+    // не ругались на missing key.
+    faq_a1: 'См. подробности при раскрытии вопроса.',
     faq_q2: 'VPN не подключается',
     faq_a2: 'Проверь по порядку:\n1. Импортировал ссылку для Happ? «Мои конфиги» в боте → кнопка «Копировать»\n2. В Happ выбрана локация (Amsterdam, Frankfurt…) и нажат тумблер ON?\n3. Не сменился ли IP — попробуй другую локацию из списка\n4. Если ничего — напиши в поддержку, разберёмся',
     faq_q3: 'Чем Happ отличается от Amnezia VPN?',
@@ -607,7 +611,7 @@ const T = {
     support_direct_sub: 'Send /help in the bot chat',
 
     faq_q1: 'Which app do I need?',
-    faq_a1: 'Depends on what the bot sent you:\n• Link `https://maxvpnesim.com/sub/…` — install **Happ** (iOS, Android, macOS, Windows). Import: «+» → «From subscription» → paste the link.\n• `.conf` file or AmneziaWG QR code — install **Amnezia VPN** (iOS, Android, Windows, macOS, Linux). Import: «+» → «Scan QR» or «From file».',
+    faq_a1: 'See details when expanding the question.',
     faq_q2: 'VPN won\'t connect',
     faq_a2: 'Check in order:\n1. Did you import the Happ link? «My configs» in the bot → «Copy» button\n2. In Happ, is a location selected (Amsterdam, Frankfurt…) and the toggle ON?\n3. Did your IP change — try a different location from the list\n4. If nothing works — write to support, we\'ll help.',
     faq_q3: 'What\'s the difference between Happ and Amnezia VPN?',
