@@ -1,11 +1,17 @@
 name: Deploy Admin
 
+# Только ручной запуск — настройка SSH-ключа + sudoers + deploy-admin.sh
+# на сервере не доделана, push-триггер падает на каждом коммите в admin/**.
+# Когда серверная часть готова — раскомментируй блок `push:` ниже.
+#
+# Пока деплой админки вручную:
+#   ssh root@<host> 'cd /opt/vpnbot && ./deploy-admin.sh'
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'admin/**'
-      - '.github/workflows/deploy-admin.yml'
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'admin/**'
+  #     - '.github/workflows/deploy-admin.yml'
   workflow_dispatch:
 
 # Только один деплой админки одновременно — npm build не любит race.
