@@ -3,12 +3,13 @@ import WebApp from '@twa-dev/sdk'
 import { useT, type TKey } from '../i18n'
 
 /**
- * Карточка с Subscription URL: deep-link в Happ через `happ://add/<base64>`,
- * fallback — копирование URL.  Подписка — главный артефакт VLESS-юзера:
- * один URL, все локации, авто-обновление каждые 12 ч.
+ * Subscription URL row — one slim line styled like a slot card.
+ * Primary action: «Открыть в Happ» (deep-link `happ://add/<base64>`).
+ * Secondary: copy icon button (для случаев когда Happ не установлен или
+ * desktop, где deep-link не работает).
  *
- * Используется на VPN-странице (под основной sub-карточкой) и на
- * странице «Мои конфиги» (вместо per-slot VLESS UI).
+ * Используется на VPN-странице и Configs-странице для всех VLESS-юзеров
+ * (включая trial).  Одна ссылка = все локации в Happ-дропдауне.
  */
 export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
   const t = useT()
@@ -24,46 +25,58 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
     try {
       await navigator.clipboard.writeText(subUrl)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setTimeout(() => setCopied(false), 1500)
     } catch {
       prompt('Subscription URL:', subUrl)
     }
   }
 
   return (
-    <div className="fade-in-1 fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] rounded-2xl py-4 px-[18px] border border-[var(--card-border)]">
-      <div className="flex items-center gap-2 mb-1.5">
-        <div className="w-8 h-8 rounded-[10px] bg-purple flex items-center justify-center shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+    <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+      <div className="py-[13px] px-4 flex items-center gap-[14px]">
+        <div className="w-10 h-10 rounded-xl shrink-0 flex items-center justify-center relative bg-purple">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             <path d="M10 14a3.5 3.5 0 0 0 4.95 0L19 10a3.5 3.5 0 0 0-4.95-4.95L13 6"
                   stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
             <path d="M14 10a3.5 3.5 0 0 0-4.95 0L5 14a3.5 3.5 0 0 0 4.95 4.95L11 18"
                   stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
           </svg>
+          <span className="absolute -bottom-[3px] -right-[3px] w-3 h-3 rounded-full bg-success border-2 border-[var(--tg-theme-bg-color,#fff)]" />
         </div>
-        <div className="font-semibold text-[15px] text-[var(--tg-theme-text-color,#000)]">
-          {t('vpn_sub_url_title' as TKey)}
+
+        <div className="flex-1 min-w-0">
+          <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] truncate">
+            {t('vpn_sub_url_title' as TKey)}
+          </div>
+          <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
+            {t('vpn_sub_url_hint' as TKey)}
+          </div>
         </div>
-      </div>
-      <p className="text-[12px] text-[var(--tg-theme-hint-color,#707579)] mb-3 leading-[1.4]">
-        {t('vpn_sub_url_desc' as TKey)}
-      </p>
-      <div className="text-[10px] font-mono bg-[var(--tg-theme-bg-color,#fff)] border border-[var(--card-border)] rounded-lg px-3 py-2 mb-3 truncate text-[var(--tg-theme-hint-color,#707579)]">
-        {subUrl}
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={handleHapp}
-          className="flex-1 py-2.5 rounded-[10px] border-none bg-purple text-white text-sm font-semibold cursor-pointer"
-        >
-          {t('vpn_sub_url_open_happ' as TKey)}
-        </button>
-        <button
-          onClick={handleCopy}
-          className="py-2.5 px-4 rounded-[10px] border border-[var(--card-border)] bg-transparent text-[var(--tg-theme-text-color,#000)] text-sm font-semibold cursor-pointer"
-        >
-          {copied ? t('vpn_sub_url_copied' as TKey) : t('vpn_sub_url_copy' as TKey)}
-        </button>
+
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={handleHapp}
+            className="bg-purple text-white text-[13px] font-semibold cursor-pointer rounded-[10px] py-[7px] px-[14px] border-none"
+          >
+            {t('vpn_sub_url_open_happ' as TKey)}
+          </button>
+          <button
+            onClick={handleCopy}
+            aria-label="copy"
+            className="w-11 h-11 rounded-[10px] border border-[var(--card-border)] bg-transparent text-[var(--tg-theme-text-color)] flex items-center justify-center cursor-pointer shrink-0"
+          >
+            {copied ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M4 12l5 5 11-13" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )

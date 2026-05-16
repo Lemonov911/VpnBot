@@ -18,6 +18,7 @@ from services.database import (
     DB_PATH,
     create_config_record,
     create_subscription,
+    get_all_active_servers,
     get_best_server,
     get_or_create_sub_token,
     has_active_subscription,
@@ -157,20 +158,57 @@ async def _provision_trial_locked(user_id: int) -> dict:
     # взять новый триал (cooldown 30 дней по `can_claim_trial`), ни купить
     # платный (`has_active_subscription` блокирует invoice). Лечим компенсацией.
     try:
-        # ── 1) VLESS peer (обязателен — главный канал) ──────────────────────
-        vless_cfg_id = await create_config_record(sub_id, user_id, protocol="vless")
-        vless_server = await get_best_server("vless")
-        if not vless_server:
+        # ── 1) VLESS peers (обязательны — главный канал) ──────────────────────
+        # Multi-location: один UUID на все активные VLESS-сервера.  Юзер
+        # импортирует subscription-URL в Happ и видит дропдаун локаций.
+        import uuid as _uuid
+        from urllib.parse import quote as _q
+        vless_servers = await get_all_active_servers("vless")
+        if not vless_servers:
             raise TrialNoServer()
 
-        vless_peer = await provision_peer(
-            vless_server, f"trial_{user_id}_{vless_cfg_id}", "vless-base"
-        )
-        await save_peer_to_config(
-            vless_cfg_id, vless_server["id"], vless_peer.id, "",
-            vless_peer.config, f"trial_{user_id}",
-        )
-        await update_server_peer_count(vless_server["id"], +1)
+        slot_uuid = str(_uuid.uuid4())
+        vless_provisioned = 0
+        for server in vless_servers:
+            cfg_id = await create_config_record(sub_id, user_id, protocol="vless",
+                                                  server_id=server["id"])
+            try:
+                flag = (server.get("flag") or "").replace(" ", "")
+                label = f"trial_{user_id}_{flag or server['id']}"
+                peer = await provision_peer(server, label, "vless-base", peer_id=slot_uuid)
+                loc = " ".join(filter(None, [
+                    (server.get("flag") or "").strip(),
+                    (server.get("city") or server.get("name") or "").strip(),
+                ])).strip() or f"Server {server['id']}"
+                cfg_data = peer.config or ""
+                if cfg_data.startswith("vless://"):
+                    base = cfg_data.split("#", 1)[0]
+                    cfg_data = f"{base}#{_q(loc, safe='')}"
+                await save_peer_to_config(
+                    cfg_id, server["id"], peer.id, "",
+                    cfg_data, label,
+                    vless_uuid=slot_uuid,
+                )
+                await update_server_peer_count(server["id"], +1)
+                vless_provisioned += 1
+            except VpnctlError as e:
+                logger.warning("trial vless server=%s slot=%d: %s",
+                                server.get("id"), cfg_id, e, exc_info=True)
+        if vless_provisioned == 0:
+            # Ни одна локация не запровижилась → триал не выдан
+            raise TrialNoServer()
+        # Сохраним id первого активированного config'а как «vless_config_id»
+        # для совместимости с downstream-кодом
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """SELECT id FROM configs
+                   WHERE subscription_id=? AND protocol='vless' AND status='active'
+                   ORDER BY id LIMIT 1""",
+                (sub_id,),
+            ) as cur:
+                row = await cur.fetchone()
+                vless_cfg_id = row["id"] if row else 0
     except (TrialNoServer, VpnctlError, Exception):
         # Rollback: пометим sub'у expired чтобы не блокировала юзера 30 дней.
         # Используем mark_subscription_expired а не delete — payment_id уникален,
