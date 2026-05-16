@@ -391,7 +391,10 @@ export default function Home() {
           <div className="fade-in grid grid-cols-3 gap-2">
             {[
               { value: `${stats!.stars_spent} ⭐`, label: t('home_stars_spent_label'), show: stats!.stars_spent > 0 },
-              { value: `+${stats!.bonus_days}${t('day')}`,     label: t('home_bonus_label'),        show: stats!.bonus_days > 0  },
+              // Используем plural — даёт правильное «+12 дней» / «+1 день» / «+2 дня».
+              // Без пробела между числом и единицей выглядело как «+12дн.»
+              { value: `+${p(stats!.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}`,
+                label: t('home_bonus_label'),  show: stats!.bonus_days > 0 },
               { value: String(stats!.invited),       label: t('home_invited_label'),      show: stats!.invited > 0     },
             ].filter(x => x.show).map(({ value, label }) => (
               <div key={label} className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] px-2 py-3 text-center">
