@@ -216,12 +216,14 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id)"
         )
         await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)"
-        )
-        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_configs_subscription_id ON configs(subscription_id)"
         )
         await _migrate(db)
+        # idx_users_referred_by must come after _migrate — referred_by column
+        # is added by the migration and doesn't exist in the base CREATE TABLE.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)"
+        )
         await db.commit()
 
     # Автозаполнение дефолтного сервера из env если таблица пустая
@@ -313,6 +315,8 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE subscriptions ADD COLUMN refunded_at TIMESTAMP")
     if "amount_rub" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN amount_rub INTEGER NOT NULL DEFAULT 0")
+    if "grace_until" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN grace_until TEXT")
 
     # support_tickets — admin_msg_id for reply relay
     async with db.execute("PRAGMA table_info(support_tickets)") as cur:
@@ -506,7 +510,7 @@ async def get_expired_subscriptions() -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT id, user_id, plan FROM subscriptions
+            SELECT id, user_id, plan, expires_at, pending_plan FROM subscriptions
             WHERE status='active' AND expires_at IS NOT NULL AND expires_at <= ?
         """, (datetime.utcnow().isoformat(),)) as cur:
             return [dict(r) for r in await cur.fetchall()]
