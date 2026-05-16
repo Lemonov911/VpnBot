@@ -820,9 +820,12 @@ def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
 
 
 async def _refresh_xray_rules():
-    """Качает sing-box.zip от runetfreedom, распаковывает 2 .srs файла.
-    Skipped-call (файлы свежее 24ч) — no-op. Используется sub-URL'ом для
-    routing'а Сбер/Кинопоиск/Госуслуги через `direct` outbound."""
+    """Качает sing-box.zip от runetfreedom (для VLESS smart routing) +
+    обновляет AWG bypass AllowedIPs (RU CIDR от ipdeny.com).
+
+    Сначала VLESS (Happ) — он шире покрывает (geosite по доменам + geoip),
+    потом AWG (только IP). Если одно упадёт — второе всё равно попытается.
+    """
     from services.xray_rules import fetch_rules
     stats = await fetch_rules(force=False)
     if stats.get("error"):
@@ -833,6 +836,19 @@ async def _refresh_xray_rules():
         logger.info(
             "xray-rules: downloaded=%dKB, extracted=%s, took=%dms",
             stats["downloaded_bytes"] // 1024, stats["extracted"], stats["took_ms"],
+        )
+
+    from services.awg_bypass import refresh_bypass
+    awg_stats = await refresh_bypass(force=False)
+    if awg_stats.get("error"):
+        logger.warning("awg-bypass refresh: %s", awg_stats["error"])
+    elif awg_stats.get("skipped"):
+        logger.debug("awg-bypass: свежий, skip")
+    else:
+        logger.info(
+            "awg-bypass: ru_cidrs=%d → bypass_cidrs=%d (%dKB), took=%dms",
+            awg_stats["ru_cidrs"], awg_stats["bypass_cidrs"],
+            awg_stats["bypass_size_kb"], awg_stats["took_ms"],
         )
 
 

@@ -200,7 +200,13 @@ def _fmt_bytes(b: int) -> str:
 
 
 async def handle_vpn_config_download(request: web.Request) -> web.Response:
-    """Отдаёт .conf файл для скачивания."""
+    """Отдаёт .conf файл для скачивания.
+
+    Для AWG/WG default: подменяет `AllowedIPs = 0.0.0.0/0` на bypass-список
+    (всё кроме RU CIDR) — Сбер/Кинопоиск/Госуслуги работают через локальный
+    RU-IP, остальное через VPN. Эквивалент sing-box smart routing для Happ.
+    `?mode=full` — full tunnel (старое поведение).
+    """
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
@@ -216,16 +222,33 @@ async def handle_vpn_config_download(request: web.Request) -> web.Response:
     if not config.get("config_data"):
         return web.json_response({"error": "Config not ready yet"}, status=404)
 
+    body = config["config_data"]
+    protocol = (config.get("protocol") or "").lower()
+    mode = (request.query.get("mode") or "smart").lower()
+
+    # AWG/WG: подменяем AllowedIPs на bypass-список если smart и список загружен.
+    # VLESS не трогаем — его smart routing живёт в sing-box sub-URL.
+    if protocol in ("awg", "wg") and mode == "smart":
+        from services.awg_bypass import get_bypass_allowedips, rewrite_allowedips
+        bypass = get_bypass_allowedips()
+        if bypass:
+            body = rewrite_allowedips(body, bypass)
+
     filename = f"{config['peer_name'] or f'vpn_config_{config_id}'}.conf"
     return web.Response(
-        body=config["config_data"].encode(),
+        body=body.encode(),
         content_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
 async def handle_vpn_config_qr(request: web.Request) -> web.Response:
-    """Возвращает QR-код конфига как PNG."""
+    """Возвращает QR-код конфига как PNG.
+
+    Note: AWG bypass-AllowedIPs (~350 KB) НЕ помещается в QR (max ~3 KB).
+    Поэтому QR всегда отдаёт full-tunnel .conf. Для bypass-режима юзер
+    скачивает .conf файл через `/download` (smart по дефолту).
+    """
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
