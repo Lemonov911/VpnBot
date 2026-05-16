@@ -133,6 +133,10 @@ export interface Subscription {
   status?:          'active' | 'grace' | 'expired'
   grace_until?:     string | null
   grace_days_left?: number
+  // Subscription URL для Happ/V2Box/Streisand. Persistent токен на юзера —
+  // содержит все VLESS-локации, обновляется в клиенте раз в 12ч.
+  // null если у юзера ещё нет ни одного VLESS-конфига.
+  sub_url?:         string | null
 }
 
 export function getActiveSubscription(): Promise<Subscription | null> {

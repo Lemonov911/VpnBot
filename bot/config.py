@@ -11,6 +11,9 @@ ADMIN_ID         = int(os.getenv("ADMIN_ID") or 0)
 _extra_ids       = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS: set[int] = {ADMIN_ID} | {int(x) for x in _extra_ids.split(",") if x.strip().isdigit()}
 WEBAPP_URL       = os.getenv("WEBAPP_URL", "")
+# Base URL для VLESS subscription endpoint (/sub/{token}). По умолчанию
+# совпадает с прод-доменом; в dev можно переопределить через env.
+SUB_URL_BASE     = os.getenv("SUB_URL_BASE", "https://maxvpnesim.com")
 API_PORT         = int(os.getenv("API_PORT") or 8080)
 DEBUG            = os.getenv("DEBUG", "").lower() == "true"
 

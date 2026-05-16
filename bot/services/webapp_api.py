@@ -27,7 +27,7 @@ from aiohttp import web
 from aiogram import Bot
 from aiogram.types import LabeledPrice
 
-from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM
+from config import DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL, ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM, SUB_URL_BASE
 from services.auth import verify_init_data
 import services.esim_api as esim
 from services.database import (
@@ -1001,6 +1001,21 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         return _unauthorized()
 
     from datetime import datetime
+    from services.database import get_or_create_sub_token, get_active_vless_configs_for_user
+
+    # sub_url выдаём ВСЕМ юзерам у которых хотя бы один VLESS-конфиг есть.
+    # Это persistent URL — Happ обновляет его раз в 12 ч и подхватывает
+    # новые серверы / migrations grace inbound автоматически.
+    async def _sub_url_for(uid: int) -> str | None:
+        vcfgs = await get_active_vless_configs_for_user(uid)
+        if not vcfgs:
+            return None
+        tok = await get_or_create_sub_token(uid)
+        # WEBAPP_URL может быть GitHub Pages URL мини-аппа — это не наш домен
+        # для sub-endpoint.  Sub-host явный, без env-флага не определить.
+        sub_host = SUB_URL_BASE or "https://maxvpnesim.com"
+        return f"{sub_host.rstrip('/')}/sub/{tok}"
+
     sub = await get_active_subscription(user["id"])
     if sub is None:
         expired = await get_last_expired_subscription(user["id"])
@@ -1014,6 +1029,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "pending_plan":   None,
             "days_remaining": 0,
             "status":         "expired",
+            "sub_url":        await _sub_url_for(user["id"]),
         })
 
     expires = datetime.fromisoformat(sub["expires_at"])
@@ -1038,6 +1054,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         "status":          "grace" if is_grace else "active",
         "grace_until":     sub.get("grace_until"),
         "grace_days_left": grace_days_left,
+        "sub_url":         await _sub_url_for(user["id"]),
     })
 
 
