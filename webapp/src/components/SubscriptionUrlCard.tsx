@@ -3,10 +3,9 @@ import WebApp from '@twa-dev/sdk'
 import { useT, type TKey } from '../i18n'
 
 /**
- * Subscription URL row — one slim line styled like a slot card.
- * Single action: copy to clipboard (юзер вставляет в Happ / V2Box / Streisand
- * сам).  Deep-link в Happ убрали — он работает только если Happ установлен,
- * а на десктопе и без приложения только сбивает с толку.
+ * Главная карточка VLESS: «Ссылка для подключения» — после copy показывает
+ * inline-инструкцию что делать дальше (открыть Happ → + → Из подписки → вставить),
+ * иначе copy-альтоун — загадка для не-tech юзера.
  */
 export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
   const t = useT()
@@ -17,7 +16,8 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
     try {
       await navigator.clipboard.writeText(subUrl)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      // 4 сек вместо 1.5 — юзеру нужно успеть прочитать инструкцию
+      setTimeout(() => setCopied(false), 4000)
     } catch {
       prompt('Subscription URL:', subUrl)
     }
@@ -41,7 +41,9 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
             {t('vpn_sub_url_title' as TKey)}
           </div>
           <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
-            {t('vpn_sub_url_hint' as TKey)}
+            {copied
+              ? t('vpn_sub_url_paste_hint' as TKey)
+              : t('vpn_sub_url_hint' as TKey)}
           </div>
         </div>
 

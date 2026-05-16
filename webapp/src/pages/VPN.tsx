@@ -192,7 +192,10 @@ export default function VPN() {
               </div>
               <span className="bg-danger/12 text-danger text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0">{t('vpn_expired_badge')}</span>
             </div>
-            <p className="text-sm text-[var(--tg-theme-hint-color,#707579)] mt-3 mb-3.5">{t('vpn_expired_sub')}</p>
+            <p className="text-sm text-[var(--tg-theme-hint-color,#707579)] mt-3 mb-2">{t('vpn_expired_sub')}</p>
+            <p className="text-[12px] text-[var(--tg-theme-hint-color,#707579)] mb-3.5 leading-[1.4]">
+              {t('vpn_expired_sub_hint')}
+            </p>
             <button onClick={() => nav('/vpn/plans')} className="w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer">
               {t('vpn_expired_renew')}
             </button>
