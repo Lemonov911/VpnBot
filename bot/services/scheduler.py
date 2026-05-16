@@ -819,6 +819,23 @@ def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     return task
 
 
+async def _refresh_xray_rules():
+    """Качает sing-box.zip от runetfreedom, распаковывает 2 .srs файла.
+    Skipped-call (файлы свежее 24ч) — no-op. Используется sub-URL'ом для
+    routing'а Сбер/Кинопоиск/Госуслуги через `direct` outbound."""
+    from services.xray_rules import fetch_rules
+    stats = await fetch_rules(force=False)
+    if stats.get("error"):
+        logger.warning("xray-rules refresh: %s", stats["error"])
+    elif stats.get("skipped"):
+        logger.debug("xray-rules: свежие, skip")
+    else:
+        logger.info(
+            "xray-rules: downloaded=%dKB, extracted=%s, took=%dms",
+            stats["downloaded_bytes"] // 1024, stats["extracted"], stats["took_ms"],
+        )
+
+
 async def _run_health_loop(bot: Bot | None = None):
     """Independent loop: probe servers every 60s, write to server_health_log.
     Передаём bot чтобы health.py мог слать alert админу при auto-(de)activate.
@@ -895,6 +912,11 @@ async def run_scheduler(bot: Bot):
         await _safe("daily_backup",     _daily_backup(bot),              timeout=240)
         if _TICK % _ESIM_SYNC_EVERY_N_TICKS == 0:
             await _safe("esim_usage",   _sync_esim_usage(),              timeout=180)
+        # RU split-tunneling rule-set (runetfreedom): pull раз в 6 часов.
+        # Первый тик после рестарта тоже тянет, чтобы свежие .srs появились
+        # как можно раньше (если их нет — sub-URL уходит без routing-блока).
+        if _TICK == 1 or _TICK % 6 == 0:
+            await _safe("xray_rules",   _refresh_xray_rules(),           timeout=90)
         # VACUUM раз в неделю (168 тиков). Без него БД растёт после
         # delete/update — SQLite не освобождает страницы автоматически.
         # incremental_vacuum дешевле full VACUUM (не блокирует БД целиком).

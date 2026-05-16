@@ -10,6 +10,8 @@ venv/
 bot/.env
 bot/*.db
 bot/bot.db
+# Runtime-fetched rule-sets (cron pulls from GitHub Releases каждые 6ч)
+bot/data/
 
 # Webapp secrets & build
 webapp/.env

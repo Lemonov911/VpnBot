@@ -1989,6 +1989,14 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
 
     configs = await get_active_vless_configs_for_user(user["id"])
     urls = [c["config_data"] for c in configs if c.get("config_data")]
+
+    # Default: sing-box JSON со встроенным RU split-tunneling (Сбер/Кинопоиск
+    # бегут direct через RU-локальный интернет юзера, остальное — в VPN).
+    # `?mode=full` → plain base64 vless список, как раньше (escape hatch для
+    # клиентов которые sing-box не понимают, и для параноиков «всё через VPN»).
+    mode = (request.query.get("mode") or "smart").lower()
+    smart = (mode == "smart") and urls
+
     body_text = "\n".join(urls)
     encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
 
@@ -2079,6 +2087,20 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
         "Profile-Web-Page-Url": "https://t.me/maxvpnesim_bot",
         "Support-Url": "https://t.me/maxvpnesim_bot",
     }
+
+    if smart:
+        # Sing-box JSON со встроенным RU split-tunneling. Happ парсит
+        # `application/json` напрямую; rule_set URL'ы указывают на наш
+        # /static/xray-rules — sing-box их закеширует и обновляет раз в 24ч.
+        from services.singbox_sub import build_singbox_config, serialize_config
+        rules_base = (SUB_URL_BASE or "https://maxvpnesim.com").rstrip("/") + "/static/xray-rules"
+        cfg = build_singbox_config(
+            urls, rules_base_url=rules_base, profile_title=plan_name,
+        )
+        json_body = serialize_config(cfg)
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        return web.Response(text=json_body, headers=headers)
+
     return web.Response(text=encoded, headers=headers)
 
 
@@ -2576,6 +2598,35 @@ async def handle_admin_user_unban(request: web.Request) -> web.Response:
 
 # ── Фабрика приложения ─────────────────────────────────────────────────────────
 
+async def handle_xray_rule_file(request: web.Request) -> web.Response:
+    """GET /static/xray-rules/{name} — раздаёт `.srs` файлы (geoip-ru,
+    geosite-ru-available-only-inside) которые sing-box внутри Happ-клиента
+    подтягивает по rule_set remote URLs. Cron `_refresh_xray_rules` качает их
+    каждые 6ч с runetfreedom GitHub Releases.
+
+    No auth — публичные «географические» данные, в каждом v2ray-клиенте уже
+    лежит похожий geoip.dat (просто наш — заточен под RU bypass).
+    """
+    from services.xray_rules import rule_file_path, rule_file_sha256
+    name = request.match_info.get("name", "")
+    p = rule_file_path(name)
+    if p is None:
+        return web.Response(text="not found", status=404)
+    etag = rule_file_sha256(name)
+    inm = request.headers.get("If-None-Match", "")
+    if etag and inm and inm == f'"{etag}"':
+        return web.Response(status=304)
+    headers = {
+        "Content-Type": "application/octet-stream",
+        # 1 час кеш + revalidate; sing-box внутри Happ всё равно делает свой
+        # update_interval из rule_set definition (мы там ставим 24h).
+        "Cache-Control": "public, max-age=3600",
+    }
+    if etag:
+        headers["ETag"] = f'"{etag}"'
+    return web.FileResponse(p, headers=headers)
+
+
 async def handle_health(request: web.Request) -> web.Response:
     """Public health-check + версия. Используется monitoring'ом и manual debug
     «какая версия катится сейчас». No auth — для внешних probes."""
@@ -2630,6 +2681,9 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/vpn/trial/claim",            handle_vpn_trial_claim)
     # Subscription URL для VPN-клиентов (Happ/Streisand): один URL — все его vless-конфиги
     app.router.add_get ("/sub/{token}",                    handle_user_subscription)
+    # RU split-tunneling: sing-box rule-set файлы (geoip-ru.srs +
+    # geosite-ru-available-only-inside.srs), обновляются cron-таском раз в 6ч.
+    app.router.add_get ("/static/xray-rules/{name}",       handle_xray_rule_file)
 
     # CryptoBot webhook
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)
