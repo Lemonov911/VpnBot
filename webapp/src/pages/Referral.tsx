@@ -16,9 +16,13 @@ export default function Referral() {
     { num: '3', color: '#e67e22', title: t('ref_how3_title'), sub: t('ref_how3_sub') },
   ]
 
-  const [stats,   setStats]   = useState<ReferralStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [copied,  setCopied]  = useState(false)
+  const [stats,    setStats]   = useState<ReferralStats | null>(null)
+  const [loading,  setLoading] = useState(true)
+  const [copied,   setCopied]  = useState(false)
+  // Cooldown на share — без него юзер при двойном тапе открывает TG share-sheet
+  // дважды (вторая инстанция перебивает первую), и TG-чат флудит дубликатами
+  // приглашений если юзер быстро тапает 5 раз.
+  const [shareLock, setShareLock] = useState(false)
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -41,7 +45,9 @@ export default function Referral() {
   }
 
   const handleShare = () => {
-    if (!stats) return
+    if (!stats || shareLock) return
+    setShareLock(true)
+    setTimeout(() => setShareLock(false), 3000)
     WebApp.HapticFeedback.impactOccurred('light')
     // Раньше тут был список конкретных заблокированных сервисов («Instagram,
     // YouTube, ChatGPT»). 149-ФЗ (запрет рекламы VPN в РФ с сент 2025)
@@ -103,7 +109,8 @@ export default function Referral() {
 
           <button
             onClick={handleShare}
-            className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-center justify-center gap-2.5"
+            disabled={shareLock}
+            className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-center justify-center gap-2.5 transition-opacity disabled:opacity-55 disabled:cursor-not-allowed"
             style={{ background: 'var(--tg-theme-button-color, #2481cc)', color: 'var(--tg-theme-button-text-color, #fff)' }}
           >
             {/* Telegram silhouette paper-plane (filled).  Узнаваемая иконка

@@ -320,7 +320,10 @@ export default function Support() {
           rows={5}
           maxLength={2000}
           aria-label={t('support_placeholder')}
-          className="w-full py-2 px-4 pb-1 border-none bg-transparent text-[var(--tg-theme-text-color)] text-sm leading-[1.6] resize-none outline-none font-sans box-border"
+          /* font-size:16px глобально (index.css) — иначе iOS зумит viewport при focus.
+             text-sm убран, чтобы не переопределить.  leading-[1.4] — компактнее
+             при 16px чтобы текстарея не разрослась. */
+          className="w-full py-2 px-4 pb-1 border-none bg-transparent leading-[1.4] resize-none outline-none font-sans box-border"
         />
         <div className="px-4 pb-2 text-[10px] text-[var(--tg-theme-hint-color)] text-right">
           {message.length} / 2000

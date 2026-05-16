@@ -151,6 +151,28 @@ body::before {
 .tg-btn    { background: var(--tg-theme-button-color, #2481cc); }
 .tg-btn-text { color: var(--tg-theme-button-text-color, #fff); }
 .tg-section { background: var(--tg-theme-section-bg-color, #f1f1f1); }
+
+/* ── iOS WebView fix: видимость текста в input/textarea ─────────────
+   На iPhone (Safari/Telegram WebView) свойство color иногда перебивается
+   `-webkit-text-fill-color: -apple-system-text` → текст становится того
+   же цвета что и фон (невидимый ввод).  Явные `-webkit-text-fill-color`
+   и `caret-color` чинят это для всех инпутов в Mini App.
+
+   Также `font-size: 16px` — минимум на котором iOS не зумит вьюпорт
+   при фокусе (наша default text-sm = 14px → zoom-in на iPhone). */
+input, textarea, select {
+  color: var(--tg-theme-text-color, #000);
+  -webkit-text-fill-color: var(--tg-theme-text-color, #000);
+  caret-color: var(--tg-theme-text-color, #000);
+  font-size: 16px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input::placeholder, textarea::placeholder {
+  color: var(--tg-theme-hint-color, #707579);
+  -webkit-text-fill-color: var(--tg-theme-hint-color, #707579);
+  opacity: 1;
+}
 /* ── Legal prose: для статических markdown-страниц /legal/* ──────── */
 .legal-prose h1 { font-size: 1.4rem; font-weight: 800; margin: 0.5em 0 0.4em; letter-spacing: -0.2px; }
 .legal-prose h2 { font-size: 1.1rem; font-weight: 700; margin: 1.2em 0 0.4em; }
