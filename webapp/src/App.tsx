@@ -75,6 +75,13 @@ function GlobalHeader() {
   )
 }
 
+// iOS Safari quirk: без явного touch-listener'а на window CSS `:active`
+// не срабатывает на тапах в Telegram WebView (transform/scale не отображается).
+// Пустой passive-listener активирует event-режим — :active начинает работать.
+if (typeof window !== 'undefined') {
+  window.addEventListener('touchstart', () => {}, { passive: true })
+}
+
 export default function App() {
   useEffect(() => {
     WebApp.ready()
