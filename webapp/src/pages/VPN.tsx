@@ -173,7 +173,9 @@ export default function VPN() {
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else {
-        const { pay_url } = await createVpnInvoiceCrypto(plan.key, 'RUB')
+        // CryptoBot (method='crypto') — multi-period one-time invoice
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceCrypto(planKey, 'RUB')
         setBuyLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)

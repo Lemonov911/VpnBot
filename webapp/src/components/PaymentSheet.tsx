@@ -74,9 +74,10 @@ export default function PaymentSheet({
   // Stars 1m auto-renew (subscription_period=2592000). Только для stars+1m.
   const [recurring, setRecurring]         = useState(true)
 
-  // Какие методы поддерживают multi-period (3/6/12). CryptoBot — только 1м.
-  // Lava подключён (один offer_id × 4 periodicity), Stars/Cryptomus тоже.
-  const methodSupportsMultiPeriod = method === 'stars' || method === 'cryptomus' || method === 'lavatop'
+  // Все методы поддерживают multi-period (3/6/12). Stars через subscription_period
+  // + multi-period plans, CryptoBot/Cryptomus через one-time на нужную сумму,
+  // Lava через один offer_id × 4 periodicity.
+  const methodSupportsMultiPeriod = true
 
   // Цена и discount по текущему методу/периоду
   const starsPrice = STARS_PRICES[plan.key]?.[period] ?? plan.stars
@@ -90,7 +91,9 @@ export default function PaymentSheet({
     : Math.round((1 - rubPrice / (rubBaseMonthly * periodMonths)) * 100)
   const discountPct = method === 'stars' ? starsDiscountPct : rubDiscountPct
 
-  // При смене метода на Lava/CryptoBot форсим 1m (они multi-period не умеют)
+  // Все методы теперь поддерживают multi-period — defensive useEffect больше
+  // не нужен. Оставляю заглушку чтобы не сломать lint/build при будущих
+  // методах (типа Apple Pay) у которых может быть multi-period restriction.
   useEffect(() => {
     if (!methodSupportsMultiPeriod && period !== '1m') setPeriod('1m')
   }, [method, methodSupportsMultiPeriod, period])
@@ -149,7 +152,7 @@ export default function PaymentSheet({
               ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${rubPrice} ₽`]]
               : []),
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
-            ['crypto',   '💎', t('pay_method_crypto'),    `${plan.rub} ₽`],
+            ['crypto',   '💎', t('pay_method_crypto'),    `${rubPrice} ₽`],
             ...(showCryptomus
               ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${rubPrice} ₽`]]
               : []),
@@ -170,9 +173,9 @@ export default function PaymentSheet({
                   {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
               </div>
-              {/* Period chips под Stars, Cryptomus и Lava (методы с multi-period
-                  поддержкой). CryptoBot — только 1м, чипов нет. */}
-              {(val === 'stars' || val === 'cryptomus' || val === 'lavatop') && method === val && methodSupportsMultiPeriod && (
+              {/* Period chips под всеми методами оплаты (Stars / Cryptomus /
+                  Lava / CryptoBot — у каждого свой way принимать multi-period). */}
+              {method === val && (
                 <div className={`px-3 pt-1 pb-3 ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''}`}>
                   <div className="flex gap-1.5 flex-wrap">
                     {(['1m','3m','6m','12m'] as PayPeriod[]).map(p => {
@@ -256,9 +259,7 @@ export default function PaymentSheet({
         >
           {method === 'stars'
             ? `${t('pay_pay_btn')} ${starsPrice} ⭐`
-            : (method === 'cryptomus' || method === 'lavatop')
-              ? `${t('pay_pay_btn')} ${rubPrice} ₽`
-              : `${t('pay_pay_btn')} ${plan.rub} ₽`}
+            : `${t('pay_pay_btn')} ${rubPrice} ₽`}
         </button>
         {discountPct > 0 && (
           <div className="mt-1.5 text-center text-[11px] text-success font-semibold">

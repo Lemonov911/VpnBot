@@ -623,10 +623,9 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
-    if plan.get("multi_period"):
-        # Multi-period планы (3/6/12 мес) доступны только через Stars и Cryptomus.
-        # CryptoBot не настроен под мульти-период (нет invoice'ов разной длины).
-        return web.json_response({"error": "Этот тариф недоступен через CryptoBot"}, status=400)
+    # CryptoBot multi_period — ОК. Создаём отдельный invoice на нужную сумму
+    # (plan.rub/usd), периодичность зашита в plan_key который вернётся в webhook.
+    # Каждый период = отдельная one-time транзакция (CryptoBot не умеет recurring).
 
     currency = body.get("currency", "RUB").upper()
     if currency not in ("RUB", "USD"):
