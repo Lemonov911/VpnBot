@@ -9,6 +9,7 @@ import {
 import { useT, usePlural } from '../i18n'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
 import PostPayOnboarding from '../components/PostPayOnboarding'
+import CancelRenewalModal from '../components/CancelRenewalModal'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
@@ -99,18 +100,17 @@ export default function VPN() {
   const [sheetPlan,  setSheetPlan]  = useState<Plan | null>(null)
   const [buyLoading, setBuyLoading] = useState<string | null>(null)
   const [paid,       setPaid]       = useState(false)
-  const [cancelLoading, setCancelLoading] = useState(false)
-  const [postPayOpen, setPostPayOpen]     = useState(false)
+  const [cancelLoading, setCancelLoading]   = useState(false)
+  const [postPayOpen, setPostPayOpen]       = useState(false)
+  const [cancelModalOpen, setCancelModalOpen] = useState(false)
 
-  const handleCancelRenewal = async () => {
+  const doCancelRenewal = async () => {
     if (cancelLoading || !sub) return
-    // Подтверждение через нативный confirm — экономнее чем модалка, юзеру понятно
-    const ok = window.confirm(t('vpn_cancel_renewal_confirm' as never))
-    if (!ok) return
     setCancelLoading(true)
     try {
       await cancelLavatopRenewal()
       WebApp.HapticFeedback.notificationOccurred('success')
+      setCancelModalOpen(false)
       // Подтянуть свежее состояние sub — auto_renew теперь false
       const fresh = await getActiveSubscription().catch(() => null)
       setSub(fresh)
@@ -546,16 +546,29 @@ export default function VPN() {
                 </div>
                 {sub.payment_provider === 'lavatop' ? (
                   <button
-                    onClick={() => handleCancelRenewal()}
+                    onClick={() => setCancelModalOpen(true)}
                     disabled={cancelLoading}
-                    className="mt-1.5 text-[11px] underline text-[var(--tg-theme-link-color,#2481cc)] disabled:opacity-60"
+                    className="mt-2.5 py-1.5 px-3 rounded-[10px] border border-[var(--tg-theme-destructive-text-color,#ff3b30)]/40 bg-transparent text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-[12px] font-semibold cursor-pointer disabled:opacity-60 active:bg-[var(--tg-theme-destructive-text-color,#ff3b30)]/10"
                   >
-                    {cancelLoading ? '...' : t('vpn_cancel_renewal' as never)}
+                    {cancelLoading ? '…' : t('vpn_cancel_renewal' as never)}
                   </button>
                 ) : (
-                  <div className="mt-1.5 text-[11px] text-[var(--tg-theme-hint-color)]">
-                    {t('vpn_cancel_renewal_stars_hint' as never)}
-                  </div>
+                  <>
+                    <div className="mt-1.5 text-[11px] text-[var(--tg-theme-hint-color)]">
+                      {t('vpn_cancel_renewal_stars_hint' as never)}
+                    </div>
+                    <button
+                      onClick={() => {
+                        WebApp.HapticFeedback.impactOccurred('light')
+                        // Telegram deep link в настройки Stars/Subscriptions — поддерживается
+                        // в Telegram-клиенте с v11+. openTelegramLink open'ит внутри клиента.
+                        try { WebApp.openTelegramLink('https://t.me/premium') } catch { /* fallback no-op */ }
+                      }}
+                      className="mt-2.5 py-1.5 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-link-color,#2481cc)] text-[12px] font-semibold cursor-pointer active:bg-[var(--tg-theme-section-bg-color)]"
+                    >
+                      ⚙️ {t('vpn_cancel_renewal_stars_btn' as never)}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -602,6 +615,15 @@ export default function VPN() {
           </button>
         ))}
       </div>
+
+      {cancelModalOpen && (
+        <CancelRenewalModal
+          expiresAt={sub.expires_at}
+          loading={cancelLoading}
+          onConfirm={doCancelRenewal}
+          onClose={() => setCancelModalOpen(false)}
+        />
+      )}
 
     </div>
   )
