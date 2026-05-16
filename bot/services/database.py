@@ -1052,7 +1052,13 @@ async def close_ticket(ticket_id: int):
 # ── expiry reminders ───────────────────────────────────────────────────────────
 
 async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
-    """Возвращает активные подписки, истекающие через `days` дней (±12 ч)."""
+    """Возвращает активные подписки, истекающие через `days` дней (±12 ч).
+
+    `datetime(expires_at)` нормализует формат: aiosqlite сохраняет datetime
+    как ISO с 'T'-разделителем (`2026-05-19T00:42:00.x`), а `datetime('now', …)`
+    возвращает с пробелом (`2026-05-19 00:42:00`).  Без normalization строковое
+    сравнение ломалось на дне-граничном времени (T=0x54 > space=0x20).
+    """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         col = "reminded_3d" if days >= 2 else "reminded_1d"
@@ -1060,8 +1066,8 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
             f"""SELECT * FROM subscriptions
                 WHERE status='active'
                 AND {col}=0
-                AND expires_at > datetime('now', '+{days-1} days')
-                AND expires_at < datetime('now', '+{days} days')""",
+                AND datetime(expires_at) > datetime('now', '+{days-1} days')
+                AND datetime(expires_at) < datetime('now', '+{days} days')""",
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 

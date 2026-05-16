@@ -1322,7 +1322,13 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
             )).fetchone()
             if sub:
                 plan = VPN_PLANS.get(sub["plan"], {})
-                plan_name = plan.get("name", "VPN")
+                # vpn_trial отсутствует в VPN_PLANS (нечего покупать), но как
+                # активная подписка в Happ-Profile-Title должен выглядеть
+                # узнаваемо, а не как «VPN» (default).
+                if sub["plan"] == "vpn_trial":
+                    plan_name = "Триал 🎁"
+                else:
+                    plan_name = plan.get("name", "VPN")
                 cap_gb = plan.get("soft_cap_gb")
                 if cap_gb:
                     total_bytes = int(cap_gb) * 1024 ** 3
