@@ -933,12 +933,26 @@ async def provision_vpn_slots_async(
 ) -> tuple[int, int]:
     """Создаёт реальные пиры VPN на агенте для уже-созданной подписки.
 
-    Используется CryptoBot webhook'ом (там нет message-объекта).
-    Не шлёт .conf-файлы документами — юзер увидит конфиги в Mini App «Мои конфиги».
+    Используется CryptoBot / Cryptomus / Lava webhook'ами (там нет
+    message-объекта). Не шлёт .conf-файлы документами — юзер увидит
+    конфиги в Mini App «Мои конфиги».
 
     Возвращает (delivered, total). Если delivered == 0 — caller должен
     помечать sub expired и слать notification юзеру.
     """
+    # Закрываем активный триал если есть. Без этого юзер с триалом+платным
+    # получает две active sub'ы (Happ балансирует между пирами grace/normal).
+    # _deliver_vpn делает то же для Stars-flow.
+    try:
+        from services.database import get_user_subscriptions_by_plan
+        active_trials = await get_user_subscriptions_by_plan(user_id, "vpn_trial", status="active")
+        for trial_sub in active_trials:
+            if trial_sub["id"] != sub_id:  # не закрываем сами себя на всякий случай
+                await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
+    except Exception as e:
+        logger.warning("provision: close-trial failed user %d: %s (продолжаем)",
+                       user_id, e, exc_info=True)
+
     awg_slots   = plan.get("awg_slots", 0)
     vless_slots = plan.get("vless_slots", 0)
     wg_slots    = plan.get("wg_slots", 0)
