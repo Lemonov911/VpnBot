@@ -5,8 +5,6 @@ import { getFeatures } from '../api'
 
 export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'lavatop'
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
   vless: number; badge?: string
@@ -33,7 +31,7 @@ export default function PaymentSheet({
 }: {
   plan: Plan
   onClose: () => void
-  onPay: (method: PayMethod, email?: string) => void
+  onPay: (method: PayMethod) => void
   defaultMethod?: PayMethod
   hasActiveTrial?: boolean
 }) {
@@ -44,10 +42,6 @@ export default function PaymentSheet({
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
   const [showCryptomus, setShowCryptomus] = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
-  // Lava требует email — спрашиваем как 2-й шаг если method='lavatop'
-  const [step, setStep]   = useState<'pick' | 'email'>('pick')
-  const [email, setEmail] = useState('')
-  const [emailErr, setEmailErr] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -58,23 +52,6 @@ export default function PaymentSheet({
     })
     return () => { cancelled = true }
   }, [])
-
-  const handlePrimaryClick = () => {
-    if (method === 'lavatop' && step === 'pick') {
-      setStep('email')
-      return
-    }
-    if (method === 'lavatop') {
-      const trimmed = email.trim().toLowerCase()
-      if (!EMAIL_RE.test(trimmed)) {
-        setEmailErr(true)
-        return
-      }
-      onPay('lavatop', trimmed)
-      return
-    }
-    onPay(method)
-  }
 
   return (
     <>
@@ -114,7 +91,6 @@ export default function PaymentSheet({
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">
           {t('pay_method')}
         </div>
-        {step === 'pick' && (
         <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-5">
           {(([
             ...(showLavatop
@@ -144,47 +120,13 @@ export default function PaymentSheet({
             </div>
           ))}
         </div>
-        )}
-        {step === 'email' && (
-          <div className="mb-5">
-            <div className="text-[13px] text-[var(--tg-theme-text-color)] mb-2">
-              {t('pay_email_label' as never)}
-            </div>
-            <input
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              value={email}
-              onChange={e => { setEmail(e.target.value); setEmailErr(false) }}
-              placeholder="you@example.com"
-              className={`w-full py-3 px-4 rounded-[12px] border bg-[var(--tg-theme-bg-color,#fff)] text-[15px] text-[var(--tg-theme-text-color,#000)] outline-none ${
-                emailErr
-                  ? 'border-[var(--tg-theme-destructive-text-color,#ff3b30)]'
-                  : 'border-[var(--card-border)]'
-              }`}
-            />
-            <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-1.5">
-              {emailErr
-                ? t('pay_email_invalid' as never)
-                : t('pay_email_hint' as never)}
-            </div>
-            <button
-              onClick={() => setStep('pick')}
-              className="mt-3 text-[12px] text-[var(--tg-theme-link-color,#2481cc)] underline"
-            >
-              ← {t('pay_email_back' as never)}
-            </button>
-          </div>
-        )}
         <button
           className="btn !w-full !text-base !py-3.5"
-          onClick={handlePrimaryClick}
+          onClick={() => onPay(method)}
         >
           {method === 'stars'
             ? `${t('pay_pay_btn')} ${plan.stars} ⭐`
-            : (method === 'lavatop' && step === 'pick')
-              ? `${t('pay_pay_btn')} ${plan.rub} ₽ →`
-              : `${t('pay_pay_btn')} ${plan.rub} ₽`}
+            : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
         {/* После оплаты юзер уходит в CryptoBot / Stars-диалог.  Без подсказки
             что делать дальше — теряются: «я заплатил, а где конфиг?». */}

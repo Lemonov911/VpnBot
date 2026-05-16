@@ -170,9 +170,10 @@ export interface Subscription {
 
 export function createVpnInvoiceLavatop(
   planKey: string,
-  email: string,
 ): Promise<{ pay_url: string; contract_id?: string }> {
-  return post('/api/vpn/invoice/lavatop', { plan_key: planKey, email })
+  // Email не запрашиваем — бэкенд сам генерит синтетический tg-{id}@maxvpnesim.local
+  // для Lava (Lava требует поле, но не валидирует домен; user_id парсится в webhook)
+  return post('/api/vpn/invoice/lavatop', { plan_key: planKey })
 }
 
 export function cancelLavatopRenewal(): Promise<{ ok: boolean; lava_cancel_ok?: boolean; already_cancelled?: boolean }> {

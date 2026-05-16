@@ -135,7 +135,7 @@ export default function VPN() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
-  const handleBuy = async (plan: Plan, method: PayMethod, email?: string) => {
+  const handleBuy = async (plan: Plan, method: PayMethod) => {
     setSheetPlan(null)
     if (buyLoading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -161,8 +161,7 @@ export default function VPN() {
         setBuyLoading(null)
         WebApp.openLink(pay_url)
       } else if (method === 'lavatop') {
-        if (!email) { setBuyLoading(null); return }
-        const { pay_url } = await createVpnInvoiceLavatop(plan.key, email)
+        const { pay_url } = await createVpnInvoiceLavatop(plan.key)
         setBuyLoading(null)
         WebApp.openLink(pay_url)
       } else {
@@ -286,13 +285,25 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method, email) => handleBuy(sheetPlan, method, email)}
+            onPay={(method) => handleBuy(sheetPlan, method)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
             hasActiveTrial={false}
             defaultMethod="crypto"
           />
+        )}
+
+        {/* Loading overlay — пока ждём ответа от платёжного API. */}
+        {buyLoading && !sheetPlan && (
+          <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className="bg-[var(--tg-theme-bg-color,#fff)] rounded-2xl py-7 px-8 flex flex-col items-center gap-3 max-w-[280px]">
+              <div className="w-9 h-9 rounded-full border-[3px] border-[var(--tg-theme-button-color,#2481cc)] border-t-transparent animate-spin" />
+              <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color,#000)] text-center">
+                {t('pay_loading' as never)}
+              </div>
+            </div>
+          </div>
         )}
       </>
     )
@@ -380,13 +391,25 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={(method, email) => handleBuy(sheetPlan, method, email)}
+            onPay={(method) => handleBuy(sheetPlan, method)}
             /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
             hasActiveTrial={false}
             defaultMethod="crypto"
           />
+        )}
+
+        {/* Loading overlay — пока ждём ответа от платёжного API. */}
+        {buyLoading && !sheetPlan && (
+          <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className="bg-[var(--tg-theme-bg-color,#fff)] rounded-2xl py-7 px-8 flex flex-col items-center gap-3 max-w-[280px]">
+              <div className="w-9 h-9 rounded-full border-[3px] border-[var(--tg-theme-button-color,#2481cc)] border-t-transparent animate-spin" />
+              <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color,#000)] text-center">
+                {t('pay_loading' as never)}
+              </div>
+            </div>
+          </div>
         )}
       </>
     )

@@ -208,7 +208,7 @@ export default function Plans() {
     }
   }, [nav, location.state])
 
-  const handleBuy = async (plan: Plan, method: PayMethod, email?: string) => {
+  const handleBuy = async (plan: Plan, method: PayMethod) => {
     setSheetPlan(null)
     if (loading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -235,8 +235,7 @@ export default function Plans() {
         setLoading(null)
         WebApp.openLink(pay_url)
       } else if (method === 'lavatop') {
-        if (!email) { setLoading(null); return }
-        const { pay_url } = await createVpnInvoiceLavatop(plan.key, email)
+        const { pay_url } = await createVpnInvoiceLavatop(plan.key)
         setLoading(null)
         WebApp.openLink(pay_url)
       } else {
@@ -398,11 +397,26 @@ export default function Plans() {
         <Legend />
       </div>
 
+      {/* Full-screen overlay пока ждём ответа от Lava/CryptoBot/Cryptomus.
+          Тонкая spinner-кнопка на тарифной карточке слишком слабая обратная
+          связь — юзер думает «ничего не произошло». Big modal убирает
+          сомнения и резко закрывается когда openLink триггерит браузер. */}
+      {loading && (
+        <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center px-6">
+          <div className="bg-[var(--tg-theme-bg-color,#fff)] rounded-2xl py-7 px-8 flex flex-col items-center gap-3 max-w-[280px]">
+            <div className="w-9 h-9 rounded-full border-[3px] border-[var(--tg-theme-button-color,#2481cc)] border-t-transparent animate-spin" />
+            <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color,#000)] text-center">
+              {t('pay_loading' as never)}
+            </div>
+          </div>
+        </div>
+      )}
+
       {sheetPlan && (
         <PaymentSheet
           plan={sheetPlan}
           onClose={() => setSheetPlan(null)}
-          onPay={(method, email) => handleBuy(sheetPlan, method, email)}
+          onPay={(method) => handleBuy(sheetPlan, method)}
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
           defaultMethod="crypto"

@@ -1139,9 +1139,15 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
             {"error": f"Lava offer_id для плана {plan_key} не настроен"}, status=503,
         )
 
-    email = (body.get("email") or "").strip().lower()
-    if not _EMAIL_RE.match(email):
-        return web.json_response({"error": "Введи корректный email"}, status=400)
+    # Email опционален в нашем UI — Lava его требует API'но, но не валидирует
+    # домен. Если юзер ничего не передал, генерим синтетический по user_id:
+    # tg-{id}@maxvpnesim.local. По нему в webhook парсим user_id обратно
+    # (см. _parse_user_id_from_email). Юзер не вводит — нет UI-friction.
+    raw_email = (body.get("email") or "").strip().lower()
+    if raw_email and _EMAIL_RE.match(raw_email):
+        email = raw_email  # юзер сам ввёл — используем (для receipt'а Lava)
+    else:
+        email = f"tg-{user['id']}@maxvpnesim.local"
 
     existing_sub = await get_active_subscription(user["id"])
     # Триал — не платная подписка, юзер должен иметь возможность купить
