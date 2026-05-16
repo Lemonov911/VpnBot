@@ -51,6 +51,28 @@ CRYPTOMUS_PAYMENT_KEY   = os.getenv("CRYPTOMUS_PAYMENT_KEY", "")
 CRYPTOMUS_ENABLED = bool(CRYPTOMUS_MERCHANT_UUID and CRYPTOMUS_PAYMENT_KEY) and \
                    os.getenv("CRYPTOMUS_ENABLED", "false").lower() == "true"
 
+# Lava.top — RU-friendly платёжный провайдер с картами + СБП + recurring подпиской.
+# У Lava нет meta/payload поля — purchases идентифицируются по email юзера, поэтому
+# мы спрашиваем email в Mini App и используем его для tracking. parent_contract_id
+# из webhook'а — primary key для будущих recurring-списаний.
+LAVATOP_API_KEY        = os.getenv("LAVATOP_API_KEY", "")
+# offer_id создаётся в кабинете Lava per план (товар «VPN MAX базовый — 30 дней» и
+# «VPN MAX оптимальный — 30 дней»). Один UUID на план.
+LAVATOP_OFFER_VPN_BASE = os.getenv("LAVATOP_OFFER_VPN_BASE", "")
+LAVATOP_OFFER_VPN_MAX  = os.getenv("LAVATOP_OFFER_VPN_MAX", "")
+# Webhook принимает X-Api-Key для аутентификации. По умолчанию используем тот же
+# api-key что и для исходящих запросов, но позволяем переопределить — на стороне
+# Lava можно задать любой shared secret.
+LAVATOP_WEBHOOK_KEY    = os.getenv("LAVATOP_WEBHOOK_KEY", "") or LAVATOP_API_KEY
+LAVATOP_ENABLED = bool(LAVATOP_API_KEY and LAVATOP_OFFER_VPN_BASE and LAVATOP_OFFER_VPN_MAX) and \
+                  os.getenv("LAVATOP_ENABLED", "false").lower() == "true"
+
+# Map plan_key → Lava offer_id. Когда добавляем новый план — расширяем словарь.
+LAVATOP_OFFERS: dict[str, str] = {
+    "vpn_base": LAVATOP_OFFER_VPN_BASE,
+    "vpn_max":  LAVATOP_OFFER_VPN_MAX,
+}
+
 # Shared secret для admin API (Next.js админка → bot REST).
 # Админка проксирует write-операции через бота (reply на тикет, etc) чтобы не
 # открывать write-доступ к SQLite + чтоб бот мог отправлять сообщения юзерам.

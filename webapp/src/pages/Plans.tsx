@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, getActiveSubscription, changeSubscriptionPlan,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
@@ -208,7 +208,7 @@ export default function Plans() {
     }
   }, [nav, location.state])
 
-  const handleBuy = async (plan: Plan, method: PayMethod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, email?: string) => {
     setSheetPlan(null)
     if (loading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -232,6 +232,11 @@ export default function Plans() {
         })
       } else if (method === 'cryptomus') {
         const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        setLoading(null)
+        WebApp.openLink(pay_url)
+      } else if (method === 'lavatop') {
+        if (!email) { setLoading(null); return }
+        const { pay_url } = await createVpnInvoiceLavatop(plan.key, email)
         setLoading(null)
         WebApp.openLink(pay_url)
       } else {
@@ -387,7 +392,7 @@ export default function Plans() {
         <PaymentSheet
           plan={sheetPlan}
           onClose={() => setSheetPlan(null)}
-          onPay={(method) => handleBuy(sheetPlan, method)}
+          onPay={(method, email) => handleBuy(sheetPlan, method, email)}
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
           defaultMethod="crypto"

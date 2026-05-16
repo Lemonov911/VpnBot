@@ -63,13 +63,14 @@ export interface Features {
   esim: boolean
   cryptobot: boolean
   cryptomus: boolean
+  lavatop: boolean
 }
 export function getFeatures(): Promise<Features> {
   if (_featuresCache) return _featuresCache
   _featuresCache = fetch(API_BASE + '/api/health')
     .then(r => r.json())
-    .then(d => (d.features as Features) ?? { esim: false, cryptobot: false, cryptomus: false })
-    .catch(() => ({ esim: false, cryptobot: false, cryptomus: false }))
+    .then(d => (d.features as Features) ?? { esim: false, cryptobot: false, cryptomus: false, lavatop: false })
+    .catch(() => ({ esim: false, cryptobot: false, cryptomus: false, lavatop: false }))
   return _featuresCache
 }
 
@@ -160,6 +161,22 @@ export interface Subscription {
   // содержит все VLESS-локации, обновляется в клиенте раз в 12ч.
   // null если у юзера ещё нет ни одного VLESS-конфига.
   sub_url?:         string | null
+  // Lava.top recurring: auto_renew=true когда подписка купалась через Lava
+  // с recurring-флагом. parent_contract_id используется для отмены.
+  auto_renew?:           boolean
+  payment_provider?:     string | null
+  parent_contract_id?:   string | null
+}
+
+export function createVpnInvoiceLavatop(
+  planKey: string,
+  email: string,
+): Promise<{ pay_url: string; contract_id?: string }> {
+  return post('/api/vpn/invoice/lavatop', { plan_key: planKey, email })
+}
+
+export function cancelLavatopRenewal(): Promise<{ ok: boolean; lava_cancel_ok?: boolean; already_cancelled?: boolean }> {
+  return post('/api/vpn/subscription/cancel-renewal', {})
 }
 
 export function getActiveSubscription(): Promise<Subscription | null> {

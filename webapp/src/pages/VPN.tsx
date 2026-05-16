@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceLavatop, cancelLavatopRenewal,
   getActiveSubscription, getUserConfigs, getVpnStatus,
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
@@ -98,6 +98,30 @@ export default function VPN() {
   const [sheetPlan,  setSheetPlan]  = useState<Plan | null>(null)
   const [buyLoading, setBuyLoading] = useState<string | null>(null)
   const [paid,       setPaid]       = useState(false)
+  const [cancelLoading, setCancelLoading] = useState(false)
+
+  const handleCancelRenewal = async () => {
+    if (cancelLoading || !sub) return
+    // Подтверждение через нативный confirm — экономнее чем модалка, юзеру понятно
+    const ok = window.confirm(t('vpn_cancel_renewal_confirm' as never))
+    if (!ok) return
+    setCancelLoading(true)
+    try {
+      await cancelLavatopRenewal()
+      WebApp.HapticFeedback.notificationOccurred('success')
+      // Подтянуть свежее состояние sub — auto_renew теперь false
+      const fresh = await getActiveSubscription().catch(() => null)
+      setSub(fresh)
+      const msg = (t('vpn_cancel_renewal_done' as never))
+        .replace('{date}', fresh ? formatDate(fresh.expires_at) : '')
+      WebApp.showAlert(msg)
+    } catch {
+      WebApp.HapticFeedback.notificationOccurred('error')
+      WebApp.showAlert(t('vpn_cancel_renewal_err' as never))
+    } finally {
+      setCancelLoading(false)
+    }
+  }
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -111,7 +135,7 @@ export default function VPN() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
-  const handleBuy = async (plan: Plan, method: PayMethod) => {
+  const handleBuy = async (plan: Plan, method: PayMethod, email?: string) => {
     setSheetPlan(null)
     if (buyLoading) return
     WebApp.HapticFeedback.impactOccurred('light')
@@ -134,6 +158,11 @@ export default function VPN() {
         })
       } else if (method === 'cryptomus') {
         const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        setBuyLoading(null)
+        WebApp.openLink(pay_url)
+      } else if (method === 'lavatop') {
+        if (!email) { setBuyLoading(null); return }
+        const { pay_url } = await createVpnInvoiceLavatop(plan.key, email)
         setBuyLoading(null)
         WebApp.openLink(pay_url)
       } else {
@@ -257,7 +286,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={method => handleBuy(sheetPlan, method)}
+            onPay={(method, email) => handleBuy(sheetPlan, method, email)}
             defaultMethod="crypto"
           />
         )}
@@ -347,7 +376,7 @@ export default function VPN() {
           <PaymentSheet
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
-            onPay={method => handleBuy(sheetPlan, method)}
+            onPay={(method, email) => handleBuy(sheetPlan, method, email)}
             defaultMethod="crypto"
           />
         )}
@@ -438,6 +467,41 @@ export default function VPN() {
             <span className="text-xs text-warning">
               {t('vpn_pending_change')} <b>«{pendingName}»</b> {t('vpn_pending_next')}
             </span>
+          </div>
+        )}
+
+        {/* Auto-renewal status (Lava recurring). Если sub куплен через Lava
+            и юзер не отменял — показываем баннер + кнопка cancel. После cancel
+            флаг auto_renew=false → юзер увидит "отключено" + срок дослужит. */}
+        {sub.payment_provider === 'lavatop' && sub.parent_contract_id && (
+          <div className="mt-3">
+            {sub.auto_renew ? (
+              <div className="p-[10px_12px] rounded-lg bg-success/10 border border-success/20 flex items-start gap-2.5">
+                <span className="text-base shrink-0">🔁</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-semibold text-success">
+                    {t('vpn_autorenew_on' as never)}
+                  </div>
+                  <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                    {(t('vpn_autorenew_next' as never)).replace('{date}', formatDate(sub.expires_at))}
+                  </div>
+                  <button
+                    onClick={() => handleCancelRenewal()}
+                    disabled={cancelLoading}
+                    className="mt-1.5 text-[11px] underline text-[var(--tg-theme-link-color,#2481cc)] disabled:opacity-60"
+                  >
+                    {cancelLoading ? '...' : t('vpn_cancel_renewal' as never)}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-[8px_10px] rounded-lg bg-[var(--tg-theme-section-bg-color)]/60 flex items-center gap-2">
+                <span className="text-sm">❎</span>
+                <span className="text-[11px] text-[var(--tg-theme-hint-color)]">
+                  {t('vpn_autorenew_off' as never)}
+                </span>
+              </div>
+            )}
           </div>
         )}
 

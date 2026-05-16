@@ -342,6 +342,30 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE users ADD COLUMN banned_at TIMESTAMP")
     if "banned_reason" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN banned_reason TEXT")
+    # users.email — для Lava.top (там нет custom payload, идентификация по email).
+    # NULL пока юзер не платил через Lava. Используем для recurring сверки.
+    if "email" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+
+    # subscriptions — recurring tracking для Lava.top
+    async with db.execute("PRAGMA table_info(subscriptions)") as cur:
+        sub_cols = {row[1] for row in await cur.fetchall()}
+    # parent_contract_id — UUID контракта Lava, по нему recurring webhook'и
+    # коррелируем с нашей sub-row. NULL = подписка не recurring (one-time / Stars / CryptoBot).
+    if "parent_contract_id" not in sub_cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN parent_contract_id TEXT")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subs_parent_contract "
+            "ON subscriptions(parent_contract_id)"
+        )
+    # auto_renew — флаг что подписка будет продлеваться автоматически (Lava recurring).
+    # При отмене из Lava-кабинета или нашего UI — ставится в 0, существующий период дослужит.
+    if "auto_renew" not in sub_cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 0")
+    # payment_provider — 'stars' | 'cryptobot' | 'cryptomus' | 'lavatop' | 'trial' | 'gift'.
+    # Для аналитики + чтобы знать какой refund-API использовать.
+    if "payment_provider" not in sub_cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN payment_provider TEXT")
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -483,20 +507,31 @@ async def get_server_by_id(server_id: int) -> dict | None:
 
 # ── subscriptions ──────────────────────────────────────────────────────────────
 
-async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at, amount_rub: int = 0) -> int | None:
+async def create_subscription(
+    user_id, plan, payment_id, stars_paid, expires_at, amount_rub: int = 0,
+    *,
+    parent_contract_id: str | None = None,
+    auto_renew: bool = False,
+    payment_provider: str | None = None,
+) -> int | None:
     """Создаёт подписку. Возвращает sub_id или None если payment_id уже использован
     (UNIQUE-constraint сработал → дубль платежа от Telegram, идемпотентный no-op).
 
-    Раньше при дубле бросала IntegrityError → краш handler'а. Теперь caller
-    проверяет `if sub_id is None: return  # дубль` и обрабатывает graceful'но.
+    Lava recurring: передаём parent_contract_id (UUID контракта Lava) и
+    auto_renew=True. По parent_contract_id потом коррелируем recurring webhook'и.
+
+    payment_provider — 'stars'/'cryptobot'/'cryptomus'/'lavatop'/'trial'/'gift'.
     """
     import sqlite3
     try:
         async with _connect() as db:
             cur = await db.execute(
-                """INSERT INTO subscriptions (user_id, plan, payment_id, stars_paid, amount_rub, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (user_id, plan, payment_id, stars_paid, amount_rub, expires_at.isoformat()),
+                """INSERT INTO subscriptions
+                   (user_id, plan, payment_id, stars_paid, amount_rub, expires_at,
+                    parent_contract_id, auto_renew, payment_provider)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, plan, payment_id, stars_paid, amount_rub, expires_at.isoformat(),
+                 parent_contract_id, 1 if auto_renew else 0, payment_provider),
             )
             await db.commit()
             return cur.lastrowid
@@ -749,6 +784,63 @@ async def apply_pending_plan_change(sub_id: int, new_plan: str):
             "WHERE id=? AND pending_plan=?",
             (new_plan, sub_id, new_plan),
         )
+        await db.commit()
+
+
+# ── Lava.top recurring helpers ────────────────────────────────────────────────
+
+async def set_user_email(user_id: int, email: str):
+    """Сохраняет email юзера (для Lava-инвойсов + recurring tracking)."""
+    async with _connect() as db:
+        await db.execute("UPDATE users SET email=? WHERE id=?", (email, user_id))
+        await db.commit()
+
+
+async def get_user_email(user_id: int) -> str | None:
+    async with _connect() as db:
+        async with db.execute("SELECT email FROM users WHERE id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return row[0] if row and row[0] else None
+
+
+async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
+    """Lava recurring: для webhook'а с parentContractId находим нашу sub-row."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM subscriptions WHERE parent_contract_id=? "
+            "ORDER BY id DESC LIMIT 1",
+            (contract_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def extend_subscription_expires_at(sub_id: int, new_expires_at: str, *, reset_status: bool = True):
+    """Продлевает подписку (Lava recurring success). Сбрасывает status='active'
+    если он был 'grace' — recurring деньги пришли вовремя или с задержкой,
+    значит юзер хочет оставаться на VPN.
+    """
+    async with _connect() as db:
+        if reset_status:
+            await db.execute(
+                "UPDATE subscriptions SET expires_at=?, status='active', "
+                "grace_until=NULL, reminded_3d=0, reminded_1d=0 WHERE id=?",
+                (new_expires_at, sub_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE subscriptions SET expires_at=? WHERE id=?",
+                (new_expires_at, sub_id),
+            )
+        await db.commit()
+
+
+async def disable_auto_renew(sub_id: int):
+    """Юзер отменил автопродление (из нашего UI или Lava-кабинета).
+    Сама подписка дослужит до expires_at."""
+    async with _connect() as db:
+        await db.execute("UPDATE subscriptions SET auto_renew=0 WHERE id=?", (sub_id,))
         await db.commit()
 
 

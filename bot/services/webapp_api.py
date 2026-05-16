@@ -19,8 +19,10 @@ eSIM:
 """
 
 import base64
+import json
 import logging
 import os
+import re
 import time as _time
 
 from aiohttp import web
@@ -31,6 +33,7 @@ from config import (
     DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL,
     ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM, SUB_URL_BASE,
     CRYPTOMUS_MERCHANT_UUID, CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_ENABLED,
+    LAVATOP_API_KEY, LAVATOP_WEBHOOK_KEY, LAVATOP_ENABLED, LAVATOP_OFFERS,
 )
 from services.auth import verify_init_data
 import services.esim_api as esim
@@ -255,6 +258,7 @@ _sub_rate:     dict[str, float] = {}  # rate-limit для /sub/{token}
 _invoice_rate:  dict[str, float] = {}  # /api/vpn/invoice, /api/esim/invoice
 _crypto_rate:   dict[str, float] = {}  # /api/vpn/invoice/crypto
 _cryptomus_rate: dict[str, float] = {}  # /api/vpn/invoice/cryptomus
+_lavatop_rate:   dict[str, float] = {}  # /api/vpn/invoice/lavatop
 _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
 _trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
@@ -1078,6 +1082,342 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
     return web.Response(status=200)
 
 
+# ── Lava.top хендлеры (карты + СБП + recurring подписка) ──────────────────────
+# Auth: X-Api-Key. Email используется как primary identifier (нет custom payload).
+# Recurring: первая оплата создаёт sub с parent_contract_id; продления приходят
+# webhook'ами subscription.recurring.payment.success — продлеваем existing sub.
+
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+def _parse_user_id_from_email(email: str) -> int | None:
+    """email формата tg-{user_id}@vpnbot.local — fallback identifier когда мы
+    создавали invoice без реального email. Возвращает None если email не наш."""
+    if not email.startswith("tg-"):
+        return None
+    rest = email.split("@", 1)[0][3:]
+    try:
+        return int(rest)
+    except ValueError:
+        return None
+
+
+async def handle_lavatop_invoice(request: web.Request) -> web.Response:
+    """
+    POST /api/vpn/invoice/lavatop  { plan_key, email }
+    Создаёт Lava-инвойс. Email обязателен — Lava им идентифицирует юзера.
+    Возвращает { pay_url }.
+    """
+    ip = request.remote or ""
+    if not _rate_limit_check_evict(_lavatop_rate, ip, _time.monotonic(), window=6.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
+    if not LAVATOP_ENABLED:
+        return web.json_response({"error": "Lava.top не подключён"}, status=503)
+
+    body = await request.json()
+    user = _resolve_user(request, body)
+    if user is None:
+        return _unauthorized()
+
+    plan_key = body.get("plan_key", "")
+    plan = VPN_PLANS.get(plan_key)
+    if not plan:
+        return web.json_response({"error": "Unknown plan"}, status=400)
+
+    offer_id = LAVATOP_OFFERS.get(plan_key)
+    if not offer_id:
+        return web.json_response(
+            {"error": f"Lava offer_id для плана {plan_key} не настроен"}, status=503,
+        )
+
+    email = (body.get("email") or "").strip().lower()
+    if not _EMAIL_RE.match(email):
+        return web.json_response({"error": "Введи корректный email"}, status=400)
+
+    existing_sub = await get_active_subscription(user["id"])
+    if existing_sub:
+        return web.json_response(
+            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
+            status=400,
+        )
+
+    # Сохраняем email юзера — пригодится для recurring webhook'ов
+    # (если parent_contract_id не нашли — fallback по email).
+    try:
+        from services.database import set_user_email
+        await set_user_email(user["id"], email)
+    except Exception as e:
+        logger.warning("Lava: set_user_email failed user=%d: %s", user["id"], e, exc_info=True)
+
+    from services.lavatop import create_invoice as _lava_create
+    try:
+        resp = await _lava_create(
+            api_key=LAVATOP_API_KEY,
+            email=email,
+            offer_id=offer_id,
+            currency="RUB",
+            buyer_language="RU",
+        )
+    except Exception as e:
+        logger.error("Lava invoice error: %s", e, exc_info=True)
+        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+
+    pay_url = resp.get("paymentUrl") or ""
+    if not pay_url:
+        logger.error("Lava: empty paymentUrl in response %r", resp)
+        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+
+    logger.info(
+        "Lava invoice: user=%s plan=%s email=%s contract=%s",
+        user.get("id"), plan_key, email, resp.get("id"),
+    )
+    return web.json_response({"pay_url": pay_url, "contract_id": resp.get("id")})
+
+
+async def handle_lavatop_webhook(request: web.Request) -> web.Response:
+    """
+    POST /api/lavatop/webhook
+    Lava.top уведомляет: payment.success / payment.failed /
+    subscription.recurring.payment.success / subscription.recurring.payment.failed /
+    subscription.cancelled.
+
+    Auth: X-Api-Key header (тот же что для исходящих запросов, либо отдельный
+    LAVATOP_WEBHOOK_KEY).
+    Идемпотентность: contractId + UNIQUE(payment_id) для первой оплаты;
+    recurring продления коррелируем по parent_contract_id.
+    """
+    if not LAVATOP_ENABLED:
+        return web.Response(status=200)
+
+    incoming_key = request.headers.get("X-Api-Key", "")
+    from services.lavatop import verify_webhook_key
+    if not verify_webhook_key(incoming_key, LAVATOP_WEBHOOK_KEY):
+        logger.warning("Lava webhook: BAD X-Api-Key from %s", request.remote)
+        return web.Response(status=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.warning("Lava webhook: invalid JSON body")
+        return web.Response(status=400)
+    if not isinstance(payload, dict):
+        return web.Response(status=400)
+
+    event = (payload.get("eventType") or "").lower()
+    contract_id = payload.get("contractId") or ""
+    parent_id   = payload.get("parentContractId") or ""
+    email       = ((payload.get("buyer") or {}).get("email") or "").strip().lower()
+    amount      = float(payload.get("amount") or 0)
+    currency    = (payload.get("currency") or "").upper()
+    status      = (payload.get("status") or "").lower()
+
+    logger.info(
+        "Lava webhook: event=%s status=%s contract=%s parent=%s email=%s amount=%.2f%s",
+        event, status, contract_id, parent_id, email, amount, currency,
+    )
+
+    bot: Bot = request.app["bot"]
+
+    # ── 1. Cancel: подписка остановлена (из Lava-кабинета или нашего API) ───
+    if event == "subscription.cancelled":
+        # parent_id = id первого контракта серии; ищем по нему sub-row
+        from services.database import get_subscription_by_parent_contract, disable_auto_renew
+        sub = await get_subscription_by_parent_contract(parent_id or contract_id)
+        if not sub:
+            logger.warning("Lava cancel: sub not found for contract=%s parent=%s",
+                           contract_id, parent_id)
+            return web.Response(status=200)
+        await disable_auto_renew(sub["id"])
+        will_expire = payload.get("willExpireAt") or sub.get("expires_at") or ""
+        try:
+            await bot.send_message(
+                sub["user_id"],
+                "❎ <b>Автопродление отключено</b>\n\n"
+                f"VPN продолжит работать до <b>{will_expire[:10]}</b>.\n"
+                "Чтобы вернуть автопродление — оформи новую подписку.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("Lava cancel notify failed user=%d: %s", sub["user_id"], e, exc_info=True)
+        return web.Response(status=200)
+
+    # ── 2. Recurring продление (success) ────────────────────────────────────
+    if event == "subscription.recurring.payment.success":
+        from services.database import get_subscription_by_parent_contract, extend_subscription_expires_at
+        sub = await get_subscription_by_parent_contract(parent_id or contract_id)
+        if not sub:
+            logger.error("Lava recurring success: sub not found parent=%s contract=%s",
+                         parent_id, contract_id)
+            return web.Response(status=200)
+        plan = VPN_PLANS.get(sub["plan"])
+        if not plan:
+            logger.error("Lava recurring: unknown plan %s sub=%d", sub["plan"], sub["id"])
+            return web.Response(status=200)
+        # Продлеваем от max(now, current_expires_at) + duration — если был
+        # grace и юзер просрочил, expires_at в прошлом → продлеваем от now,
+        # иначе от старого expires_at (не теряем неиспользованные дни).
+        try:
+            cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
+        except Exception:
+            cur_expires = datetime.utcnow()
+        base = max(cur_expires, datetime.utcnow())
+        new_expires = base + timedelta(days=plan["duration_days"])
+        await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+        try:
+            await bot.send_message(
+                sub["user_id"],
+                f"🔁 <b>Подписка продлена автоматически</b>\n\n"
+                f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("Lava recurring notify failed user=%d: %s", sub["user_id"], e, exc_info=True)
+        return web.Response(status=200)
+
+    # ── 3. Recurring неудача (нет денег и т.д.) ─────────────────────────────
+    if event == "subscription.recurring.payment.failed":
+        from services.database import get_subscription_by_parent_contract
+        sub = await get_subscription_by_parent_contract(parent_id or contract_id)
+        if sub:
+            try:
+                await bot.send_message(
+                    sub["user_id"],
+                    "⚠️ <b>Не удалось продлить подписку</b>\n\n"
+                    "Lava не смогла списать оплату с твоей карты. "
+                    "Lava попробует ещё раз через сутки. Если не получится — VPN перейдёт "
+                    "в режим медленной скорости (256 кбит/с) на 14 дней.\n\n"
+                    "Проверь баланс карты или оплати вручную через меню.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.warning("Lava recurring fail notify err user=%d: %s", sub["user_id"], e, exc_info=True)
+        return web.Response(status=200)
+
+    # ── 4. Первая оплата (payment.success) ─────────────────────────────────
+    if event != "payment.success":
+        # payment.failed, unknown events — лог + 200, чтобы Lava не ретраила
+        logger.info("Lava webhook: ignoring event=%s", event)
+        return web.Response(status=200)
+
+    # Идентифицируем юзера: сначала по email (синтетический tg-{id}@vpnbot.local
+    # или сохранённый реальный), потом fallback на поиск по users.email.
+    user_id = _parse_user_id_from_email(email)
+    if user_id is None and email:
+        # Реальный email — ищем юзера в БД
+        async with _connect() as db:
+            async with db.execute("SELECT id FROM users WHERE email=? LIMIT 1", (email,)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    user_id = row[0]
+    if user_id is None:
+        logger.error("Lava webhook: cannot resolve user from email=%s contract=%s",
+                     email, contract_id)
+        return web.Response(status=200)
+
+    # Определяем plan по сумме (Lava не передаёт offer_id в webhook;
+    # амаунт сверяем с плановой ценой → план найден).
+    plan_key = None
+    for pk, plan_def in VPN_PLANS.items():
+        if abs(float(plan_def.get("rub", 0)) - amount) < 0.5:
+            plan_key = pk
+            break
+    if plan_key is None:
+        logger.error("Lava webhook: cannot match plan by amount=%.2f%s contract=%s",
+                     amount, currency, contract_id)
+        return web.Response(status=200)
+    plan = VPN_PLANS[plan_key]
+
+    payment_id = f"lavatop_{contract_id}"
+
+    from services.database import (
+        get_subscription_by_payment_id, create_subscription, create_order, complete_order,
+    )
+    existing = await get_subscription_by_payment_id(payment_id)
+    if existing:
+        logger.warning("Lava: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+
+    expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
+    is_subscription = status == "subscription-active"
+    sub_id = await create_subscription(
+        user_id=user_id,
+        plan=plan_key,
+        payment_id=payment_id,
+        stars_paid=0,
+        amount_rub=int(round(amount)),
+        expires_at=expires_at,
+        parent_contract_id=contract_id if is_subscription else None,
+        auto_renew=is_subscription,
+        payment_provider="lavatop",
+    )
+    if sub_id is None:
+        logger.warning("Lava: payment %s TOCTOU-duplicate, ignored", payment_id)
+        return web.Response(status=200)
+
+    order_db_id = await create_order(
+        user_id=user_id, product_type="vpn", plan=plan_key,
+        stars_paid=0, expires_at=expires_at,
+    )
+    await complete_order(order_db_id, payment_id=payment_id)
+
+    try:
+        from handlers.vpn import provision_vpn_slots_async
+        delivered, total = await provision_vpn_slots_async(
+            bot, user_id, sub_id, plan, plan_key,
+        )
+    except Exception as e:
+        logger.error("Lava: provision crashed user=%d sub=%d: %s",
+                     user_id, sub_id, e, exc_info=True)
+        delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
+
+    if total > 0 and delivered == 0:
+        logger.error(
+            "Lava provision FAILED 0/%d user=%d sub=%d contract=%s — ADMIN ALERT",
+            total, user_id, sub_id, contract_id,
+        )
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>Lava provision FAIL</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Sub: #{sub_id}\n"
+                    f"Plan: {plan_key}\n"
+                    f"Contract: <code>{contract_id}</code>\n\n"
+                    f"Action: досоздай конфиги вручную или сделай refund в Lava-кабинете.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+        try:
+            await bot.send_message(
+                user_id,
+                "❌ <b>VPN-конфиги не создались</b>\n\n"
+                "Оплата прошла, но сервера временно недоступны. "
+                "Поддержка уже уведомлена — подключим вручную или вернём средства.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return web.Response(status=200)
+
+    renew_note = ("\n\n🔁 Автопродление включено — продляется автоматически "
+                  "каждый месяц. Отменить можно в разделе VPN.") if is_subscription else ""
+    try:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
+            f"📅 Действует до: <b>{expires_at.strftime('%d.%m.%Y')}</b>"
+            f"{renew_note}\n\n"
+            f"Конфиги доступны в Mini App.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("Lava: failed to notify user %d: %s", user_id, e, exc_info=True)
+
+    return web.Response(status=200)
+
+
 # ── eSIM хендлеры ──────────────────────────────────────────────────────────────
 
 async def handle_esim_countries(request: web.Request) -> web.Response:
@@ -1303,7 +1643,67 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         "grace_until":     sub.get("grace_until"),
         "grace_days_left": grace_days_left,
         "sub_url":         await _sub_url_for(user["id"]),
+        # Lava recurring: показываем юзеру статус автопродления и даём отменить
+        "auto_renew":      bool(sub.get("auto_renew")),
+        "payment_provider": sub.get("payment_provider"),
+        "parent_contract_id": sub.get("parent_contract_id"),
     })
+
+
+async def handle_cancel_renewal(request: web.Request) -> web.Response:
+    """POST /api/vpn/subscription/cancel-renewal — выключает автопродление
+    Lava recurring подписки. Существующий период дослужит до expires_at.
+    """
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
+
+    sub = await get_active_subscription(user["id"])
+    if sub is None or not sub.get("parent_contract_id"):
+        return web.json_response({"error": "Нет активной recurring-подписки"}, status=400)
+    if not sub.get("auto_renew"):
+        return web.json_response({"ok": True, "already_cancelled": True})
+
+    contract_id = sub["parent_contract_id"]
+    # Сначала пытаемся отменить на стороне Lava — без этого она продолжит
+    # списания. Если Lava вернёт ошибку — всё равно ставим у себя auto_renew=0
+    # (юзер увидит «отменено» в UI), но логируем.
+    from services.lavatop import cancel_subscription as _lava_cancel
+    from services.database import disable_auto_renew
+    ok = False
+    if LAVATOP_ENABLED:
+        try:
+            ok = await _lava_cancel(api_key=LAVATOP_API_KEY, contract_id=contract_id)
+        except Exception as e:
+            logger.error("Lava cancel exception sub=%d: %s", sub["id"], e, exc_info=True)
+    else:
+        logger.warning("cancel-renewal: LAVATOP_ENABLED=false sub=%d", sub["id"])
+    await disable_auto_renew(sub["id"])
+
+    if not ok and LAVATOP_ENABLED:
+        # Lava вернула ошибку — webhook subscription.cancelled может не прийти.
+        # Алертим админа: возможна ситуация когда Lava продолжит списания пока
+        # ручной отмены не произойдёт в их кабинете.
+        logger.error(
+            "Lava cancel API FAILED sub=%d contract=%s — manual cancel in Lava dashboard required",
+            sub["id"], contract_id,
+        )
+        try:
+            if ADMIN_ID:
+                bot: Bot = request.app["bot"]
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ <b>Lava cancel API failed</b>\n\n"
+                    f"User: <code>{user['id']}</code>\n"
+                    f"Sub: #{sub['id']}\n"
+                    f"Contract: <code>{contract_id}</code>\n\n"
+                    f"Отмени вручную в Lava-кабинете чтобы не списалось повторно.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+
+    return web.json_response({"ok": True, "lava_cancel_ok": ok})
 
 
 async def handle_vpn_trial_status(request: web.Request) -> web.Response:
@@ -2028,6 +2428,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "esim":      SHOW_ESIM,
             "cryptobot": bool(CRYPTOBOT_TOKEN),
             "cryptomus": CRYPTOMUS_ENABLED,
+            "lavatop":   LAVATOP_ENABLED,
         },
     })
 
@@ -2073,6 +2474,12 @@ def create_api_app(bot: Bot) -> web.Application:
     # logic), но они отдают 503 пока CRYPTOMUS_ENABLED=false.
     app.router.add_post("/api/vpn/invoice/cryptomus",      handle_cryptomus_invoice)
     app.router.add_post("/api/cryptomus/webhook",          handle_cryptomus_webhook)
+
+    # Lava.top — карты/СБП + recurring подписка. То же — endpoint'ы всегда
+    # зарегистрированы, без LAVATOP_ENABLED отдают 503.
+    app.router.add_post("/api/vpn/invoice/lavatop",        handle_lavatop_invoice)
+    app.router.add_post("/api/lavatop/webhook",            handle_lavatop_webhook)
+    app.router.add_post("/api/vpn/subscription/cancel-renewal", handle_cancel_renewal)
 
     # eSIM — гарды по SHOW_ESIM. Webhook оставляем зарегистрированным
     # потому что esimaccess может слать notifications для уже-проданных
