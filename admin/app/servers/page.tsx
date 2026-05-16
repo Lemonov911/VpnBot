@@ -85,6 +85,31 @@ export default function ServersPage() {
     load()
   }
 
+  const [backfilling, setBackfilling] = useState<number | null>(null)
+
+  async function backfillVless(id: number, name: string) {
+    if (!confirm(
+      `Прокинуть существующие VLESS-слоты на сервер «${name}»?\n\n` +
+      `Каждой active/grace подписке добавится локация на этом сервере ` +
+      `(тот же UUID — юзеру не надо переимпортировать подписку). ` +
+      `Может занять минуты при большом числе слотов.`,
+    )) return
+    setBackfilling(id)
+    try {
+      const r = await fetch(`/admin/api/servers/${id}/backfill-vless`, { method: 'POST' })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) { alert(`Ошибка: ${data.error || r.statusText}`); return }
+      const failTail = data.failed > 0 ? `\nОшибок: ${data.failed}` : ''
+      alert(
+        `Готово.\nСлотов проверено: ${data.scanned}\n` +
+        `Создано: ${data.created}${failTail}`,
+      )
+      load()
+    } finally {
+      setBackfilling(null)
+    }
+  }
+
   function loadPct(s: Server) {
     return s.capacity > 0 ? Math.round((s.active_peers / s.capacity) * 100) : 0
   }
@@ -188,6 +213,16 @@ export default function ServersPage() {
                     />
                   </div>
                 </div>
+                {s.is_active && s.protocol === 'vless' && (
+                  <button
+                    onClick={() => backfillVless(s.id, s.name)}
+                    disabled={backfilling !== null}
+                    className="text-xs text-[#2481cc] hover:text-[#5aa6e0] disabled:opacity-50 transition-colors shrink-0"
+                    title="Прокинуть multi-location пиры существующих подписок на этот сервер"
+                  >
+                    {backfilling === s.id ? '...' : 'Backfill'}
+                  </button>
+                )}
                 {s.is_active ? (
                   <button onClick={() => disableServer(s.id)}
                     className="text-xs text-neutral-600 hover:text-red-400 transition-colors shrink-0">

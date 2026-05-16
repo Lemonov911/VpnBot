@@ -2447,6 +2447,112 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
+    """POST /api/admin/servers/{id}/backfill-vless
+    Multi-location backfill: для нового VLESS-сервера провижит пиры всех
+    активных слотов (которые сейчас только на других серверах). Slot UUID
+    переиспользуется, юзер видит новую локацию в Happ-дропдауне без
+    переимпорта подписки. Идемпотентна — повторный запуск пропустит уже-
+    реплицированные слоты.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    server_id = _parse_path_int(request, "id")
+    if server_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    from services.database import (
+        get_server_by_id, get_vless_slots_missing_from_server,
+        create_config_record, save_peer_to_config, update_server_peer_count,
+        audit_log_record,
+    )
+    from services.vpnctl_client import provision_peer, VpnctlError
+    from services.plans import vless_service_for_plan
+    from urllib.parse import quote as _q
+
+    server = await get_server_by_id(server_id)
+    if not server:
+        return web.json_response({"error": "server not found"}, status=404)
+    if (server.get("protocol") or "") != "vless":
+        return web.json_response({"error": "not a vless server"}, status=400)
+    if not server.get("is_active"):
+        return web.json_response({"error": "server is drained (is_active=0)"}, status=400)
+    if not server.get("agent_url") or not server.get("agent_token"):
+        return web.json_response({"error": "server has no agent configured"}, status=400)
+
+    slots = await get_vless_slots_missing_from_server(server_id)
+    scanned = len(slots)
+    created = 0
+    failed = 0
+    failures: list[dict] = []
+
+    loc = " ".join(filter(None, [
+        (server.get("flag") or "").strip(),
+        (server.get("city") or server.get("name") or "").strip(),
+    ])).strip() or f"Server {server_id}"
+
+    for slot in slots:
+        sub_id = slot["subscription_id"]
+        user_id = slot["user_id"]
+        uuid_ = slot["vless_uuid"]
+        plan = slot["plan"] or "vpn_base"
+        sub_status = slot["sub_status"]
+
+        # Grace-подписки сидят в vless-grace inbound (256 kbps).  При backfill
+        # на новый сервер пир должен попасть туда же, иначе grace-юзер получит
+        # full-speed на одной локации.
+        service = "vless-grace" if sub_status == "grace" else vless_service_for_plan(plan)
+        flag_compact = (server.get("flag") or "").replace(" ", "")
+        label = f"u{user_id}_v_{flag_compact or server_id}"
+
+        try:
+            peer = await provision_peer(server, label, service, peer_id=uuid_)
+            cfg_data = peer.config or ""
+            if cfg_data.startswith("vless://"):
+                base = cfg_data.split("#", 1)[0]
+                cfg_data = f"{base}#{_q(loc, safe='')}"
+            config_id = await create_config_record(
+                sub_id, user_id, protocol="vless", server_id=server_id,
+            )
+            await save_peer_to_config(
+                config_id, server_id, peer.id,
+                "", cfg_data, label, vless_uuid=uuid_,
+            )
+            await update_server_peer_count(server_id, +1)
+            created += 1
+        except VpnctlError as e:
+            logger.warning(
+                "vless backfill failed server=%d sub=%d uuid=%s: %s",
+                server_id, sub_id, uuid_, e,
+            )
+            failed += 1
+            if len(failures) < 10:
+                failures.append({"sub_id": sub_id, "error": str(e)[:200]})
+        except Exception as e:
+            logger.error(
+                "vless backfill error server=%d sub=%d uuid=%s: %s",
+                server_id, sub_id, uuid_, e, exc_info=True,
+            )
+            failed += 1
+            if len(failures) < 10:
+                failures.append({"sub_id": sub_id, "error": str(e)[:200]})
+
+    await audit_log_record(
+        admin_id=0, action="vless_backfill",
+        target=f"server:{server_id}",
+        details=f"scanned={scanned} created={created} failed={failed}",
+    )
+
+    return web.json_response({
+        "ok": True,
+        "scanned": scanned,
+        "created": created,
+        "failed": failed,
+        "failures": failures,
+    })
+
+
 async def handle_admin_user_unban(request: web.Request) -> web.Response:
     """POST /api/admin/user/{id}/unban — снимает бан."""
     if not _check_admin_secret(request):
@@ -2513,6 +2619,7 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/admin/sub/{id}/refund",      handle_admin_sub_refund)
     app.router.add_post("/api/admin/user/{id}/ban",        handle_admin_user_ban)
     app.router.add_post("/api/admin/user/{id}/unban",      handle_admin_user_unban)
+    app.router.add_post("/api/admin/servers/{id}/backfill-vless", handle_admin_vless_backfill)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)

@@ -1477,6 +1477,35 @@ async def update_config_data(config_id: int, config_data: str):
         await db.commit()
 
 
+async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
+    """Multi-location backfill: возвращает активные VLESS-слоты которые ещё
+    не реплицированы на `server_id`. Для каждого выдаёт одну строку с
+    (subscription_id, user_id, vless_uuid, plan, sub_status) — этого хватает
+    провижить пир с тем же UUID на новом сервере.
+
+    Идемпотентна: если слот уже на сервере — не возвращается. Используется
+    кнопкой «Backfill VLESS» в админке при подключении нового VLESS-сервера.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT DISTINCT c.subscription_id, c.user_id, c.vless_uuid,
+                      s.plan, s.status AS sub_status
+               FROM configs c
+               JOIN subscriptions s ON c.subscription_id = s.id
+               WHERE c.protocol='vless' AND c.status='active'
+                 AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
+                 AND s.status IN ('active', 'grace')
+                 AND c.vless_uuid NOT IN (
+                     SELECT vless_uuid FROM configs
+                     WHERE server_id=? AND protocol='vless' AND status='active'
+                       AND vless_uuid IS NOT NULL AND vless_uuid != ''
+                 )""",
+            (server_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_or_create_sub_token(user_id: int) -> str:
     """Returns the user's stable subscription token (creates one on first call)."""
     import secrets
