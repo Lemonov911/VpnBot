@@ -23,7 +23,8 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
 
 const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
   vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'shadow-[0_4px_12px_rgba(175,82,222,0.55)]' },
+  /* glow-pulse — дышащая тень на Max-иконке.  См. index.css. */
+  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'glow-pulse' },
   // legacy
   vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
   vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
@@ -436,7 +437,7 @@ export default function VPN() {
           </div>
         )}
 
-        <button onClick={() => nav('/vpn/plans')} className="mt-3.5 w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer">
+        <button onClick={() => nav('/vpn/plans')} className="press-fb mt-3.5 w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer">
           {t('vpn_change')}
         </button>
       </div>

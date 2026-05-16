@@ -26,7 +26,9 @@ const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
 
 const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
   vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'shadow-[0_4px_12px_rgba(175,82,222,0.55)]' },
+  /* glow-pulse — дышащая тень на Max-плитке, рекомендованный план.
+     Не моргает, едва заметно (см. @keyframes glow-pulse в index.css). */
+  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'glow-pulse' },
   // legacy
   vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
   vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },

@@ -143,6 +143,29 @@ body::before {
 .fade-in-6 { animation-delay: 0.24s; }
 .fade-in-7 { animation-delay: 0.28s; }
 
+/* ── Tap feedback на кнопки (главное действие на странице).
+       На mobile нет hover, поэтому единственный visual-feedback что юзер
+       вообще тапнул = небольшой scale-вниз на active.  duration 110ms
+       чтобы не выглядело как «глюк», но и не было ленивым.
+       Можно отключить применением `no-press` класса (для grouped item-listов).  */
+.btn, .press-fb { transition: transform 110ms ease, opacity 110ms ease, box-shadow 110ms ease; }
+.btn:active:not(:disabled), .press-fb:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ── Subtle glow-pulse для «hit»-планов (Max).  Дышащая тень —
+       мягко привлекает внимание к рекомендованному тарифу, но не моргает
+       чтобы не раздражать.  2.4s полный цикл = ~25 BPM (медленнее пульса). */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 4px 12px rgba(175,82,222,0.45); }
+  50%      { box-shadow: 0 4px 18px rgba(175,82,222,0.75); }
+}
+.glow-pulse { animation: glow-pulse 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .glow-pulse { animation: none; box-shadow: 0 4px 12px rgba(175,82,222,0.55); }
+  .fade-in { animation: none; opacity: 1; transform: none; }
+}
+
 /* ── Utility: Telegram theme color tokens ──────────── */
 .tg-bg     { background: var(--tg-theme-bg-color, #ffffff); }
 .tg-text   { color: var(--tg-theme-text-color, #000000); }
