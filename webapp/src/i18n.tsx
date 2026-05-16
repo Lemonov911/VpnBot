@@ -15,9 +15,13 @@ const T = {
     // обещать eSIM если флаг выключен (юзер видит «VPN & eSIM» а в навигации
     // только VPN — рассинхрон).
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
+    // Legal-hedge: не упоминаем конкретные сервисы (Instagram/YouTube/ChatGPT)
+    // в hero — 149-ФЗ (запрет рекламы средств обхода блокировок), такой
+    // буквальный список = улика для подачи на блокировку Mini App.
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'Открывает Instagram, YouTube, ChatGPT\nБез карты, без подписки'
+      ? 'Свободный интернет на телефоне и ноутбуке\nБез оплаты, без карты'
       : 'Свободный доступ к интернету\nбез цензуры и ограничений',
+    home_card_pitch_no_sub: 'Безопасный интернет от 200 ₽ в месяц',
     home_sub_active: '● Подписка активна',
     home_sub_none:   'Нет активной подписки',
     home_sub_from:   'от 200 ₽ в месяц',
@@ -160,9 +164,9 @@ const T = {
     support_direct_sub: 'Отправь команду /help в чат с ботом',
 
     faq_q1: 'VPN не подключается',
-    faq_a1: 'Убедись, что импортировал Subscription URL в Happ. Если URL ещё не активирован — открой «Мои конфиги» в боте и скопируй заново.',
+    faq_a1: 'Убедись, что импортировал ссылку для Happ. Если ещё не импортировал — открой «Мои конфиги» в боте и скопируй её снова.',
     faq_q2: 'Где скачать приложение для VPN?',
-    faq_a2: 'Используй Happ (рекомендуем) или альтернативы — Streisand, V2Box, Shadowrocket. После установки получи Subscription URL в боте и импортируй его.',
+    faq_a2: 'Используй Happ (рекомендуем) или альтернативы — Streisand, V2Box, Shadowrocket. После установки скопируй ссылку для Happ в боте и импортируй её.',
     faq_q3: 'Как установить eSIM?',
     faq_a3: 'После оплаты QR-код придёт в чат. Открой Настройки → SIM-карта (или «Сотовые») → Добавить тарифный план → Другой. Отсканируй QR-код. Основная SIM остаётся, звонки работают как обычно.',
     faq_q4: 'eSIM не активируется',
@@ -205,7 +209,7 @@ const T = {
     vpn_how1:              'Выбери тариф',
     vpn_how1_sub:          'От 200 ₽/мес, можно отменить в любой момент',
     vpn_how2:              'Скачай конфиг',
-    vpn_how2_sub:          'Получи Subscription URL прямо в боте',
+    vpn_how2_sub:          'Скопируй ссылку для Happ прямо в боте',
     vpn_how3:              'Подключись в Happ',
     vpn_how3_sub:          'Импортируй файл и нажми «Подключиться»',
     vpn_expiry_label:      'Срок подписки',
@@ -317,34 +321,34 @@ const T = {
     instr_hero_title:    'Подключение за 3 шага',
     instr_step1:         'Установи Happ',
     instr_step1_sub:     'iOS · Android · macOS · Windows',
-    instr_step2:         'Импортируй Subscription URL',
+    instr_step2:         'Импортируй ссылку для Happ',
     instr_step2_sub:     'Постоянная ссылка из бота — один раз',
     instr_step3:         'Включи переключатель',
     instr_step3_sub:     'Готово, VPN работает',
-    instr_suburl_what:   'Что такое Subscription URL?',
+    instr_suburl_what:   'Что такое ссылка для Happ (Subscription URL)?',
     instr_suburl_desc:   'Это твоя постоянная ссылка на конфиги. Импортируешь в Happ один раз — дальше Happ сам подтягивает обновления, переключает между серверами и показывает использованный трафик.',
     instr_suburl_where:  'Где взять',
-    instr_suburl_where_desc: 'Бот присылает её сразу после оплаты. Также: «Мои конфиги» → кнопка «📋 Subscription URL».',
+    instr_suburl_where_desc: 'Бот присылает её сразу после оплаты. Также: «Мои конфиги» → кнопка «📋 Копировать» рядом с карточкой подписки.',
     instr_platforms:     'Установка по платформам',
 
     // Instruction steps — Happ + Subscription URL flow
     instr_ios_1: 'Установи Happ из App Store',
-    instr_ios_2: 'Открой Subscription URL прямо в браузере iPhone — iOS предложит «Открыть в Happ»',
+    instr_ios_2: 'Открой ссылку для Happ прямо в браузере iPhone — iOS предложит «Открыть в Happ»',
     instr_ios_3: 'Жми OK — подписка появится в Happ',
     instr_ios_4: 'Включи переключатель в Happ',
     instr_android_1: 'Установи Happ из Google Play',
-    instr_android_2: 'Скопируй Subscription URL (длинный тап → «Копировать»)',
+    instr_android_2: 'Скопируй ссылку для Happ (длинный тап → «Копировать»)',
     instr_android_3: 'В Happ: «+» → «Из подписки» → вставь URL',
     instr_android_4: 'Включи переключатель',
     instr_macos_1: 'Установи Happ из Mac App Store',
-    instr_macos_2: 'В Happ: «+» → «Subscription» → вставь URL',
+    instr_macos_2: 'В Happ: «+» → «Subscription» → вставь ссылку',
     instr_macos_3: 'Включи переключатель в строке меню',
     instr_windows_1: 'Скачай Happ с happ.su',
-    instr_windows_2: 'Открой Happ → «+» → «Импорт подписки» → вставь URL',
+    instr_windows_2: 'Открой Happ → «+» → «Импорт подписки» → вставь ссылку',
     instr_windows_3: 'Включи переключатель в трее',
 
     instr_alt_title:  'Не нравится Happ?',
-    instr_alt_desc:   'Streisand (iOS), V2Box (Mac/iOS), Hiddify (Android/Win) — поддерживают Subscription URL так же.',
+    instr_alt_desc:   'Streisand (iOS), V2Box (Mac/iOS), Hiddify (Android/Win) — поддерживают ту же ссылку.',
     instr_tv_title:   'Smart TV / Android TV',
     instr_tv_desc:    'Технически работает через sideload Happ APK. Напиши в поддержку — пришлём пошаговую инструкцию под твою модель.',
 
@@ -423,7 +427,7 @@ const T = {
     trial_banner_btn:     'Активировать триал',
     trial_claiming:       'Активируем…',
     trial_success_title:  '🎉 Триал активирован!',
-    trial_success_sub:    'Subscription URL отправлен в чат с ботом. Установи Happ и импортируй ссылку.',
+    trial_success_sub:    'Ссылка для Happ отправлена в чат с ботом. Установи Happ и импортируй её.',
     trial_install_ios:    'iPhone / iPad',
     trial_install_android:'Android',
     trial_open_configs:   'Открыть мои конфиги',
@@ -455,8 +459,9 @@ const T = {
     nav_ref:     'Friends',
 
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',
+    home_card_pitch_no_sub: 'Secure internet from $3 per month',
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'Unblocks Instagram, YouTube, ChatGPT\nNo card, no commitment'
+      ? 'Free internet on phone and laptop\nNo payment, no card'
       : 'Free internet access\nwithout censorship',
     home_sub_active: '● Subscription active',
     home_sub_none:   'No active subscription',

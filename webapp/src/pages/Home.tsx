@@ -270,10 +270,7 @@ export default function Home() {
                           <span className="text-[13px] font-semibold text-[var(--tg-theme-hint-color)]">{t('home_no_sub')}</span>
                         </div>
                         <div className="text-[16px] font-bold text-[var(--tg-theme-text-color)] mt-1 leading-tight">
-                          {t('home_hero_sub').split('\n')[0]}
-                        </div>
-                        <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-0.5">
-                          {t('home_sub_from')}
+                          {t('home_card_pitch_no_sub' as never)}
                         </div>
                       </>
                     )}
