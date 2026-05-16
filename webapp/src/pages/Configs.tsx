@@ -209,8 +209,12 @@ function SlotCard({
     setActivating(true)
     try {
       await onActivate(slot.id, serverId)
-      setShowPicker(false)
+    } catch {
+      // Parent (Configs) уже выставил errMsg в state.  Закроем picker
+      // в любом случае, иначе юзер залипает на «⏳ Создаём конфиг»-spinner
+      // не зная что произошёл fail (ошибка-таблетка прячется за модалкой).
     } finally {
+      setShowPicker(false)
       setActivating(false)
     }
   }
@@ -511,11 +515,10 @@ export default function Configs() {
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
-      <div className="px-1 pt-1.5 pb-0.5">
-        <div className="text-[13px] text-[var(--tg-theme-hint-color)] flex gap-3">
-          <span className="text-purple">{t('configs_legend_vpn')}</span>
-        </div>
-      </div>
+      {/* Legend-блок убран — после ухода VLESS в подписочный режим он стал
+          монохромным («● VPN — телефон / ноутбук»), занимал место и не нёс
+          информации.  Если в будущем вернётся eSIM или ещё протокол —
+          возвращаем legend здесь. */}
 
       {loading && (
         <div className="flex flex-col gap-[10px]">
@@ -554,6 +557,14 @@ export default function Configs() {
       {showSubCard && (
         <div className="mb-3">
           <SubscriptionUrlCard subUrl={sub!.sub_url!} />
+          {/* Если у юзера только подписка и НЕТ AWG/WG-слотов (например триал),
+              без подсказки страница выглядит куцой («где остальные конфиги?»).
+              Объясняем: все устройства активируются по одной ссылке. */}
+          {nonVlessSlots.length === 0 && (
+            <p className="text-[11px] text-[var(--tg-theme-hint-color)] mt-2 px-1 leading-[1.4]">
+              {t('configs_sub_only_hint' as never)}
+            </p>
+          )}
         </div>
       )}
 

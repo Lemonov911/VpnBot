@@ -98,6 +98,11 @@ export default function PaymentSheet({
         >
           {method === 'stars' ? `${t('pay_pay_btn')} ${plan.stars} ⭐` : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
+        {/* После оплаты юзер уходит в CryptoBot / Stars-диалог.  Без подсказки
+            что делать дальше — теряются: «я заплатил, а где конфиг?». */}
+        <div className="mt-2 text-[11px] text-[var(--tg-theme-hint-color)] text-center px-2">
+          {t('pay_after_hint' as never)}
+        </div>
         {/* Trust signals — без них юзер на скептиц-рынке (RU VPN) не платит.
             Конкретно: гарантия + 30 дней + что делать если не работает. Без юр.лица
             это «soft guarantee» (мы вернём деньги, потому что репутация важнее

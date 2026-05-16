@@ -154,6 +154,7 @@ const T = {
     support_sending:'Отправляем…',
     support_rate_limited: 'Подожди немного — слишком частые отправки. Попробуй через 10 секунд.',
     support_reply_hint:   '💬 Ответим прямо в чате с ботом — не выключай уведомления',
+    configs_sub_only_hint:'Подключай любое количество устройств одной ссылкой — AmneziaWG-файлы на этом тарифе не нужны.',
     support_done:  'Запрос отправлен!',
     support_done_sub: 'Ответим в течение нескольких часов.',
     support_write_more:'Написать ещё',
@@ -366,8 +367,9 @@ const T = {
     pay_method_crypto:   'CryptoBot (₽ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Оплатить',
-    pay_trust_1:         'Поможем настроить за 24 часа или вернём звёзды через поддержку',
+    pay_trust_1:         'Не получилось подключиться — поможем в поддержке или вернём звёзды',
     pay_trust_2:         'Поддержка отвечает в чате бота, обычно за пару часов',
+    pay_after_hint:      'После оплаты вернись в бот — ссылка для Happ придёт в чат',
     pay_trust_3:         'Без рекламы, без логов сёрфинга, не передаём данные третьим лицам',
 
     // Shared
@@ -590,6 +592,7 @@ const T = {
     support_sending:'Sending…',
     support_rate_limited: 'Too many submissions. Try again in 10 seconds.',
     support_reply_hint:   '💬 We will reply right here in the bot chat — keep notifications on',
+    configs_sub_only_hint:'One link covers all your devices — no per-device AmneziaWG files needed on this plan.',
     support_done:  'Request sent!',
     support_done_sub: 'We\'ll respond within a few hours.',
     support_write_more:'Write another',
@@ -801,8 +804,9 @@ const T = {
     pay_method_crypto:   'CryptoBot ($ / USDT)',
     pay_stars_approx:    '≈',
     pay_pay_btn:         'Pay',
-    pay_trust_1:         'We will help you set it up within 24h, or refund your Stars via support',
+    pay_trust_1:         'If something does not work — we will help in support or refund your Stars',
     pay_trust_2:         'Support replies in bot chat, usually within hours',
+    pay_after_hint:      'After payment, return to the bot — your Happ link will arrive in chat',
     pay_trust_3:         'No ads, no browsing logs, we do not share data with third parties',
 
     // Shared

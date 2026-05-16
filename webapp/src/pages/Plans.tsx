@@ -146,10 +146,12 @@ function PlanCard({
         </div>
       </div>
 
-      <div className="flex flex-col items-end gap-0.5 shrink-0">
+      <div className="flex flex-col items-end gap-0.5 shrink-0 max-w-[110px]">
         {btn}
+        {/* `whitespace-nowrap` убран — на 320px-устройствах подпись «за остаток
+            текущего тарифа» шире 100px и переполняла карточку.  Теперь wrap. */}
         {mode === 'upgrade' && upgradePrice > 0 && (
-          <div className="text-[9px] text-[var(--tg-theme-hint-color,#707579)] text-right whitespace-nowrap max-w-[100px]">
+          <div className="text-[9px] text-[var(--tg-theme-hint-color,#707579)] text-right leading-[1.2]">
             {t('plans_upgrade_hint')}
           </div>
         )}
@@ -268,6 +270,24 @@ export default function Plans() {
           <div className="w-[72px] h-[72px] rounded-[22px] mb-1 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)]">{t('plans_done')}</div>
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm">{t('plans_done_sub')}</p>
+
+          {/* Happ-чипы — раньше были только на success-экране VPN.tsx, юзер
+              покупавший из /vpn/plans их не видел, попадал в /configs без
+              подсказки куда поставить Happ.  Теперь параллельно для обоих
+              путей. */}
+          <div className="flex gap-2 w-full justify-center">
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
+              className="flex-1 py-2 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)] text-[12px] text-[var(--tg-theme-text-color)] flex items-center justify-center gap-1.5">
+              <span className="text-[14px]"></span> App Store
+            </button>
+            <button
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
+              className="flex-1 py-2 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)] text-[12px] text-[var(--tg-theme-text-color)] flex items-center justify-center gap-1.5">
+              <span className="text-[14px]">▶</span> Google Play
+            </button>
+          </div>
+
           <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('plans_my_configs')}</button>
           <button className="btn w-full !bg-[var(--tg-theme-section-bg-color,#f1f1f1)] !text-[var(--tg-theme-text-color,#000)]"
             onClick={() => {
