@@ -89,10 +89,14 @@ export default function Support() {
       setState('done')
     } catch (e) {
       const raw = e instanceof Error ? e.message : ''
-      // API возвращает {"error": "rate_limited"} как 429 — у нас он попадает
-      // в Error.message как сырая строка.  Маппим в человеческое сообщение.
-      const friendly = raw === 'rate_limited' ? t('support_rate_limited' as never)
-                      : raw || t('server_error' as never)
+      // Whitelist известных error-кодов от бэка → локализованные строки.
+      // Всё остальное (включая stack-traces, network-errors) показываем как
+      // generic `server_error`, чтобы не светить юзеру технические детали.
+      const friendly =
+        raw === 'rate_limited'    ? t('support_rate_limited' as never) :
+        raw === 'auth_failed'     ? t('server_auth_failed' as never) :
+        raw === 'validation_error'? t('server_validation_error' as never) :
+        t('server_error' as never)
       setErrMsg(friendly)
       setState('error')
     }

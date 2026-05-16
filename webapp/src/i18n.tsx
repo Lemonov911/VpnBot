@@ -368,7 +368,9 @@ const T = {
 
     // Shared
     payment_failed:   'Платёж не прошёл. Попробуй ещё раз.',
-    server_error:      'Ошибка сервера',
+    server_error:      'Что-то пошло не так. Попробуй ещё раз.',
+    server_auth_failed:'Сессия истекла — закрой и открой Mini App заново.',
+    server_validation_error: 'Проверь введённые данные.',
 
     // eSIM Country extras
     esim_country_works_in_ru:  '📡 Работает в России — интернет через зарубежного оператора',
@@ -800,7 +802,9 @@ const T = {
 
     // Shared
     payment_failed:   'Payment failed. Try again.',
-    server_error:      'Server error',
+    server_error:      'Something went wrong. Please try again.',
+    server_auth_failed:'Session expired — please close and reopen the Mini App.',
+    server_validation_error: 'Please check the data you entered.',
 
     // eSIM Country extras
     esim_country_works_in_ru:  '📡 Works in Russia — internet via foreign carrier',
