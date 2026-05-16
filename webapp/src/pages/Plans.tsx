@@ -406,6 +406,7 @@ export default function Plans() {
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
           defaultMethod="crypto"
+          hasActiveTrial={sub?.plan === 'vpn_trial'}
         />
       )}
     </>

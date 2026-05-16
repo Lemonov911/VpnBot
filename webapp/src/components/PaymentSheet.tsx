@@ -29,12 +29,13 @@ export const PLANS: Plan[] = [
 export const VISIBLE_PLANS: Plan[] = PLANS
 
 export default function PaymentSheet({
-  plan, onClose, onPay, defaultMethod = 'crypto',
+  plan, onClose, onPay, defaultMethod = 'crypto', hasActiveTrial = false,
 }: {
   plan: Plan
   onClose: () => void
   onPay: (method: PayMethod, email?: string) => void
   defaultMethod?: PayMethod
+  hasActiveTrial?: boolean
 }) {
   const t      = useT()
   // Preselect crypto (₽) — юзер на странице тарифов видит цену 200₽, ожидает
@@ -101,6 +102,14 @@ export default function PaymentSheet({
               .replace('{cap}', String(plan.softCapGb))
               .replace('{throttle}', String(plan.throttleMbps))}
           </div>
+          {/* Trial warning — у юзера активный триал, после покупки он
+              закроется без переноса остатка дней. Чтобы юзер не остался в
+              шоке «потерял 4 бесплатных дня». */}
+          {hasActiveTrial && (
+            <div className="mt-3 p-[8px_10px] rounded-lg bg-warning/15 border border-warning/30 text-[11px] text-warning leading-snug">
+              ⚠️ {t('pay_trial_warning' as never)}
+            </div>
+          )}
         </div>
         <div className="text-xs font-semibold text-[var(--tg-theme-hint-color,#707579)] uppercase tracking-[0.5px] mb-2">
           {t('pay_method')}

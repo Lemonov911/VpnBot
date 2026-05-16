@@ -287,6 +287,10 @@ export default function VPN() {
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
             onPay={(method, email) => handleBuy(sheetPlan, method, email)}
+            /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
+               sub.status==='expired' — триал-юзеру они недоступны
+               (триал имеет status='active'). Hardcode false. */
+            hasActiveTrial={false}
             defaultMethod="crypto"
           />
         )}
@@ -377,6 +381,10 @@ export default function VPN() {
             plan={sheetPlan}
             onClose={() => setSheetPlan(null)}
             onPay={(method, email) => handleBuy(sheetPlan, method, email)}
+            /* Эти PaymentSheet'ы рендерятся в ветках sub===null и
+               sub.status==='expired' — триал-юзеру они недоступны
+               (триал имеет status='active'). Hardcode false. */
+            hasActiveTrial={false}
             defaultMethod="crypto"
           />
         )}
