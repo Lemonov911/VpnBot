@@ -8,6 +8,7 @@ import {
 } from '../api'
 import { useT, usePlural } from '../i18n'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, type Plan, type PayMethod } from '../components/PaymentSheet'
+import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 
 const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
   // v2 — по скорости
@@ -430,7 +431,7 @@ export default function VPN() {
         </button>
       </div>
 
-      {sub.sub_url && <SubscriptionUrlCard subUrl={sub.sub_url} t={t} />}
+      {sub.sub_url && <SubscriptionUrlCard subUrl={sub.sub_url} />}
 
       <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-2xl overflow-hidden divide-y divide-gray-500/10">
         {[
@@ -462,63 +463,3 @@ export default function VPN() {
   )
 }
 
-// Карточка с Subscription URL: deep-link в Happ через `happ://add/<base64>`,
-// fallback — копирование URL и инструкция импортировать вручную.
-// Подписка — главный артефакт VLESS-юзера: один URL, все локации, авто-обновление.
-function SubscriptionUrlCard({ subUrl, t }: { subUrl: string; t: (k: never) => string }) {
-  const [copied, setCopied] = useState(false)
-  const happDeepLink = `happ://add/${btoa(subUrl)}`
-
-  const handleHapp = () => {
-    WebApp.HapticFeedback.impactOccurred('medium')
-    WebApp.openLink(happDeepLink, { try_instant_view: false })
-  }
-  const handleCopy = async () => {
-    WebApp.HapticFeedback.impactOccurred('light')
-    try {
-      await navigator.clipboard.writeText(subUrl)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      prompt('Subscription URL:', subUrl)
-    }
-  }
-
-  return (
-    <div className="fade-in-1 fade-in bg-[var(--tg-theme-section-bg-color,#f1f1f1)] rounded-2xl py-4 px-[18px] border border-[var(--card-border)]">
-      <div className="flex items-center gap-2 mb-1.5">
-        <div className="w-8 h-8 rounded-[10px] bg-purple flex items-center justify-center shrink-0">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M10 14a3.5 3.5 0 0 0 4.95 0L19 10a3.5 3.5 0 0 0-4.95-4.95L13 6"
-                  stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-            <path d="M14 10a3.5 3.5 0 0 0-4.95 0L5 14a3.5 3.5 0 0 0 4.95 4.95L11 18"
-                  stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-        </div>
-        <div className="font-semibold text-[15px] text-[var(--tg-theme-text-color,#000)]">
-          {t('vpn_sub_url_title' as never)}
-        </div>
-      </div>
-      <p className="text-[12px] text-[var(--tg-theme-hint-color,#707579)] mb-3 leading-[1.4]">
-        {t('vpn_sub_url_desc' as never)}
-      </p>
-      <div className="text-[10px] font-mono bg-[var(--tg-theme-bg-color,#fff)] border border-[var(--card-border)] rounded-lg px-3 py-2 mb-3 truncate text-[var(--tg-theme-hint-color,#707579)]">
-        {subUrl}
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={handleHapp}
-          className="flex-1 py-2.5 rounded-[10px] border-none bg-purple text-white text-sm font-semibold cursor-pointer"
-        >
-          {t('vpn_sub_url_open_happ' as never)}
-        </button>
-        <button
-          onClick={handleCopy}
-          className="py-2.5 px-4 rounded-[10px] border border-[var(--card-border)] bg-transparent text-[var(--tg-theme-text-color,#000)] text-sm font-semibold cursor-pointer"
-        >
-          {copied ? t('vpn_sub_url_copied' as never) : t('vpn_sub_url_copy' as never)}
-        </button>
-      </div>
-    </div>
-  )
-}

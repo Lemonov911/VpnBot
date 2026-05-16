@@ -4,10 +4,12 @@ import WebApp from '@twa-dev/sdk'
 import {
   getUserConfigs, getConfigDownloadUrl, getConfigQrUrl, getVpnServers,
   activateSlot, revokeConfig, getTrialStatus, claimTrial,
-  type VpnConfig, type VpnServer, type TrialStatus,
+  getActiveSubscription,
+  type VpnConfig, type VpnServer, type TrialStatus, type Subscription,
 } from '../api'
 import { useT, useLang, type TKey } from '../i18n'
 import { copyText } from '../utils/clipboard'
+import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 
 function formatDate(iso: string, lang: string): string {
   try {
@@ -417,6 +419,7 @@ export default function Configs() {
   const nav = useNavigate()
 
   const [slots,    setSlots]    = useState<RawSlot[]>([])
+  const [sub,      setSub]      = useState<Subscription | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [errMsg,  setErrMsg]   = useState('')
   // Lazy-fetch trial status — нужен только для empty state. Если у юзера
@@ -433,10 +436,15 @@ export default function Configs() {
 
   const load = () => {
     setLoading(true)
-    getUserConfigs()
-      .then(data => {
+    // Параллельно: конфиги (для AWG/WG slot-листа) + подписка (sub_url для VLESS).
+    Promise.all([
+      getUserConfigs().catch(() => [] as VpnConfig[]),
+      getActiveSubscription().catch(() => null),
+    ])
+      .then(([data, s]) => {
         setSlots(data as RawSlot[])
-        // Если конфигов нет — фетчим trial-статус для empty-state CTA
+        setSub(s)
+        // Если ни конфигов, ни подписки — фетчим trial-статус для empty-state CTA
         if ((data as RawSlot[]).length === 0) {
           getTrialStatus().then(setTrial).catch(() => {})
         }
@@ -483,12 +491,20 @@ export default function Configs() {
     }
   }
 
-  const bySubscription = slots.reduce<Record<number, RawSlot[]>>((acc, s) => {
+  // VLESS отдаётся как Subscription URL (multi-location в одном URL, импорт в Happ).
+  // Per-slot UI для VLESS больше не нужен — юзер не выбирает локацию руками,
+  // Happ сам показывает дропдаун со всеми серверами в подписке.
+  // На странице оставляем только AWG/WG — у них per-device .conf файлы.
+  const nonVlessSlots = slots.filter(s => s.protocol !== 'vless')
+  const bySubscription = nonVlessSlots.reduce<Record<number, RawSlot[]>>((acc, s) => {
     const key = s.subscription_id
     if (!acc[key]) acc[key] = []
     acc[key].push(s)
     return acc
   }, {})
+
+  const hasAnyVless = slots.some(s => s.protocol === 'vless' && s.status === 'active')
+  const showSubCard = !!sub?.sub_url && hasAnyVless
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
@@ -531,6 +547,14 @@ export default function Configs() {
         </div>
       )}
 
+      {/* VLESS-подписка сверху: один URL, все локации в Happ-дропдауне */}
+      {showSubCard && (
+        <div className="mb-3">
+          <SubscriptionUrlCard subUrl={sub!.sub_url!} />
+        </div>
+      )}
+
+      {/* AWG / WG слоты ниже — per-device .conf файлы. */}
       {Object.entries(bySubscription).map(([subId, subSlots]) => (
         <SubscriptionGroup
           key={subId}
