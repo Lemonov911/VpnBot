@@ -191,7 +191,7 @@ export default function Support() {
 
       {/* Хинт когда юзер ждать ответа (раньше — нечего: тикет уходил «в пустоту») */}
       <div className="text-[11px] text-[var(--tg-theme-hint-color)] px-1 text-center">
-        💬 Ответим прямо в чате с ботом — не выключай уведомления
+        {t('support_reply_hint' as never)}
       </div>
 
       {state === 'error' && (
