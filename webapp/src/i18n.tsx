@@ -332,6 +332,7 @@ const T = {
     instr_step2_sub:     '«Мои конфиги» → карточка «Ссылка для Happ» → «Копировать»',
     instr_step3:         'Вставь в Happ и включи',
     instr_step3_sub:     'Happ: «+» → «Из подписки» → переключатель ON',
+    instr_hero_amnezia_note: '💡 Если у тебя AmneziaWG-слот с QR / .conf-файлом — см. блок Amnezia VPN ниже.',
 
     // Pick-your-app explainer
     instr_pick_title:    'Какое приложение выбрать',
@@ -775,6 +776,7 @@ const T = {
     instr_step2_sub:     '«My configs» → «Happ subscription» card → «Copy»',
     instr_step3:         'Paste into Happ and toggle on',
     instr_step3_sub:     'Happ: «+» → «From subscription» → switch ON',
+    instr_hero_amnezia_note: '💡 Got an AmneziaWG slot with QR / .conf file? — see the Amnezia VPN block below.',
 
     instr_pick_title:    'Which app to choose',
     instr_pick_desc:     'In 9 cases out of 10 you only need **Happ** — it imports one subscription link and switches between our servers automatically.\n\n**Amnezia VPN** and **AmneziaWG** are only needed if you downloaded an AmneziaWG config (`.conf` or QR) — e.g. for a router or a backup channel.',

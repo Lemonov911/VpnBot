@@ -161,10 +161,15 @@ export default function Instructions() {
 
   return (
     <div className="page">
-      {/* Hero — общая логика подключения за 3 шага */}
+      {/* Hero — flow для Happ (основной кейс 9/10).  AmneziaWG в accordion ниже. */}
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl px-4 py-4">
-        <div className="text-[17px] font-bold text-[var(--tg-theme-text-color)] mb-3">
-          {t('instr_hero_title')}
+        <div className="flex items-baseline justify-between mb-3 gap-2 flex-wrap">
+          <div className="text-[17px] font-bold text-[var(--tg-theme-text-color)]">
+            {t('instr_hero_title')}
+          </div>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-purple bg-purple/10 px-2 py-0.5 rounded">
+            Happ
+          </span>
         </div>
         <ol className="space-y-3 list-none p-0 m-0">
           {([
@@ -181,6 +186,9 @@ export default function Instructions() {
             </li>
           ))}
         </ol>
+        <div className="mt-3 pt-2.5 border-t border-[var(--card-border)] text-[11.5px] text-[var(--tg-theme-hint-color)] leading-[1.4]">
+          {t('instr_hero_amnezia_note' as TKey)}
+        </div>
       </div>
 
       {/* Pick-your-app explainer */}
