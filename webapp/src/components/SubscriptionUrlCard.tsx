@@ -37,10 +37,13 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] truncate">
+          <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] leading-tight">
             {t('vpn_sub_url_title' as TKey)}
           </div>
-          <div className="text-xs text-[var(--tg-theme-hint-color)] mt-px truncate">
+          {/* line-clamp-2: разрешаем 2 строки чтобы не обрезалось «Теперь
+              вставь в Happ: "+" → "Из подписки"» (длинная подсказка).
+              truncate в одну строку было слишком узко на 360px-экранах. */}
+          <div className="text-xs text-[var(--tg-theme-hint-color)] mt-0.5 leading-[1.35] line-clamp-2">
             {copied
               ? t('vpn_sub_url_paste_hint' as TKey)
               : t('vpn_sub_url_hint' as TKey)}
