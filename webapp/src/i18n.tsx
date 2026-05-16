@@ -237,7 +237,7 @@ const T = {
     vpn_sub_url_desc:      'Одна ссылка — все локации (Amsterdam, Frankfurt, …). Импортируй в Happ один раз, дальше обновляется автоматически каждые 12 часов.',
     vpn_sub_url_open_happ: 'Открыть в Happ',
     vpn_sub_url_copy:      'Копировать',
-    vpn_sub_url_copied:    '✓ Скопировано',
+    vpn_sub_url_copied:    'Скопировано',
 
     // Plans extras
     plans_error_payment:    'Платёж не прошёл.',
@@ -678,7 +678,7 @@ const T = {
     vpn_sub_url_desc:      'One URL — all locations (Amsterdam, Frankfurt, …). Import in Happ once, it auto-refreshes every 12 hours.',
     vpn_sub_url_open_happ: 'Open in Happ',
     vpn_sub_url_copy:      'Copy',
-    vpn_sub_url_copied:    '✓ Copied',
+    vpn_sub_url_copied:    'Copied',
 
     // Plans extras
     plans_error_payment:    'Payment failed.',
