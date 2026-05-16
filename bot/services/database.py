@@ -334,6 +334,14 @@ async def _migrate(db: aiosqlite.Connection):
     if "sub_token" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN sub_token TEXT")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)")
+    # is_banned — admin-выставляемый флаг, блокирует новые покупки / триал.
+    # banned_at оставлен NULL пока юзер не забанен; ставится в CURRENT_TIMESTAMP.
+    if "is_banned" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0")
+    if "banned_at" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN banned_at TIMESTAMP")
+    if "banned_reason" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN banned_reason TEXT")
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -539,6 +547,71 @@ async def mark_subscription_refunded(subscription_id: int):
             (subscription_id,),
         )
         await db.commit()
+
+
+async def extend_subscription(subscription_id: int, days: int) -> dict | None:
+    """Добавляет `days` дней к expires_at.  Если sub была в grace — возвращает
+    status='active', очищает grace_until.  Возвращает обновлённую запись (id,
+    user_id, plan, status, expires_at) или None если sub не найдена.
+
+    Используется админкой для compensation gifts.  Atomic в одной транзакции,
+    чтобы scheduler не успел grace-expire-нуть подписку посередине.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id FROM subscriptions WHERE id=?", (subscription_id,)
+        ) as cur:
+            if not await cur.fetchone():
+                return None
+        await db.execute(
+            """UPDATE subscriptions
+               SET expires_at = CASE
+                       WHEN expires_at IS NULL OR expires_at < datetime('now')
+                       THEN datetime('now', ?)
+                       ELSE datetime(expires_at, ?)
+                   END,
+                   status = CASE WHEN status='grace' THEN 'active' ELSE status END,
+                   grace_until = CASE WHEN status='grace' THEN NULL ELSE grace_until END
+               WHERE id=?""",
+            (f"+{days} days", f"+{days} days", subscription_id),
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT id, user_id, plan, status, expires_at FROM subscriptions WHERE id=?",
+            (subscription_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def set_user_banned(user_id: int, banned: bool, reason: str | None = None) -> bool:
+    """Ставит/снимает is_banned флаг.  Возвращает True если строка обновлена.
+
+    Бан = silent block: бот при /start и попытках покупки покажет красивое
+    "доступ ограничен"; конфиги остаются работающими до естественного expiry
+    (нет принудительного revoke — это отдельное решение через refund/extend=0).
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            """UPDATE users
+               SET is_banned=?, banned_at=CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END,
+                   banned_reason=?
+               WHERE id=?""",
+            (1 if banned else 0, 1 if banned else 0, reason if banned else None, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def is_user_banned(user_id: int) -> bool:
+    """Быстрая проверка для гейтов в handlers (start/vpn/payments)."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT is_banned FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return bool(row and row[0])
 
 
 async def mark_subscription_grace(subscription_id: int, grace_until: str):

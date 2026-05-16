@@ -64,6 +64,16 @@ async def cmd_start(message: Message):
 
     await upsert_user(user_id=user_id, username=username, first_name=first_name)
 
+    # Ban-гейт: silent-ish reject.  Юзер не видит меню/триал/реф-ссылки,
+    # но получает один читаемый текст чтобы понимал что произошло.
+    from services.database import is_user_banned
+    if await is_user_banned(user_id):
+        await message.answer(
+            "🚫 Доступ ограничен.\n\n"
+            "Если считаешь это ошибкой — напиши на support@maxvpnesim.com",
+        )
+        return
+
     # Парсим start param: /start ref_123456789  или  /start plan_vpn_popular
     args = message.text.split(maxsplit=1)
     start_param = args[1].strip() if len(args) > 1 else ""

@@ -1570,6 +1570,175 @@ async def handle_admin_ticket_close(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+# ── Admin write-ops: extend / refund / ban ───────────────────────────────────
+
+def _parse_path_int(request: web.Request, key: str) -> int | None:
+    try:
+        return int(request.match_info.get(key, ""))
+    except (TypeError, ValueError):
+        return None
+
+
+async def handle_admin_sub_extend(request: web.Request) -> web.Response:
+    """POST /api/admin/sub/{id}/extend
+    Body: { "days": 7, "reason": "compensation" }
+    Добавляет N дней к expires_at. Из grace возвращает в active.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    sub_id = _parse_path_int(request, "id")
+    if sub_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+
+    days = body.get("days")
+    if not isinstance(days, int) or not (1 <= days <= 365):
+        return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
+    reason = (body.get("reason") or "").strip()[:200] or None
+
+    from services.database import extend_subscription, audit_log_record
+    updated = await extend_subscription(sub_id, days)
+    if updated is None:
+        return web.json_response({"error": "sub not found"}, status=404)
+
+    await audit_log_record(
+        admin_id=0, action="sub_extend",
+        target=f"sub:{sub_id}",
+        details=f"+{days}d reason={reason or '-'} new_expiry={updated['expires_at']}",
+    )
+    return web.json_response({"ok": True, "subscription": updated})
+
+
+async def handle_admin_sub_refund(request: web.Request) -> web.Response:
+    """POST /api/admin/sub/{id}/refund
+    Body: { "reason": "...", "stars_refund": true|false }
+    Помечает подписку refunded.  Если stars_refund=true и платёж был Stars —
+    дополнительно вызывает refund_star_payment у Telegram (необратимо).
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    sub_id = _parse_path_int(request, "id")
+    if sub_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = (body.get("reason") or "").strip()[:200] or None
+    do_stars_refund = bool(body.get("stars_refund", False))
+
+    from services.database import (
+        get_subscription_by_id, mark_subscription_refunded,
+        is_payment_refunded, mark_payment_refunded,
+        rollback_referral_bonus, audit_log_record,
+    )
+    sub = await get_subscription_by_id(sub_id)
+    if not sub:
+        return web.json_response({"error": "sub not found"}, status=404)
+
+    # Получаем payment_id отдельным запросом — get_subscription_by_id его не возвращает.
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT payment_id FROM subscriptions WHERE id=?", (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            payment_id = row[0] if row else None
+
+    is_stars = payment_id and not payment_id.startswith(("crypto_", "free_"))
+    stars_refund_done = False
+
+    if do_stars_refund and is_stars and payment_id:
+        if await is_payment_refunded(payment_id):
+            stars_refund_done = True  # уже было
+        else:
+            bot: Bot = request.app["bot"]
+            try:
+                await bot.refund_star_payment(sub["user_id"], payment_id)
+                await mark_payment_refunded(payment_id)
+                stars_refund_done = True
+            except Exception as e:
+                logger.error("admin Stars refund failed sub=%d charge=%s: %s",
+                              sub_id, payment_id, e, exc_info=True)
+                return web.json_response(
+                    {"error": f"Stars refund failed: {e}"}, status=502,
+                )
+
+    await mark_subscription_refunded(sub_id)
+    # Откат реф-бонуса если он был начислен на эту подписку
+    await rollback_referral_bonus(sub_id)
+
+    await audit_log_record(
+        admin_id=0, action="sub_refund",
+        target=f"sub:{sub_id}",
+        details=f"user={sub['user_id']} stars_refund={stars_refund_done} reason={reason or '-'}",
+    )
+    return web.json_response({
+        "ok": True,
+        "stars_refund_done": stars_refund_done,
+        "was_crypto": payment_id and payment_id.startswith("crypto_"),
+    })
+
+
+async def handle_admin_user_ban(request: web.Request) -> web.Response:
+    """POST /api/admin/user/{id}/ban
+    Body: { "reason": "..." }
+    Ставит is_banned=1.  Существующие конфиги работают до естественного expiry —
+    отдельной кнопкой можно сделать refund подписки если нужно отрезать сразу.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    user_id = _parse_path_int(request, "id")
+    if user_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = (body.get("reason") or "").strip()[:200] or None
+
+    from services.database import set_user_banned, audit_log_record
+    ok = await set_user_banned(user_id, banned=True, reason=reason)
+    if not ok:
+        return web.json_response({"error": "user not found"}, status=404)
+
+    await audit_log_record(
+        admin_id=0, action="user_ban",
+        target=f"user:{user_id}",
+        details=f"reason={reason or '-'}",
+    )
+    return web.json_response({"ok": True})
+
+
+async def handle_admin_user_unban(request: web.Request) -> web.Response:
+    """POST /api/admin/user/{id}/unban — снимает бан."""
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    user_id = _parse_path_int(request, "id")
+    if user_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    from services.database import set_user_banned, audit_log_record
+    ok = await set_user_banned(user_id, banned=False)
+    if not ok:
+        return web.json_response({"error": "user not found"}, status=404)
+
+    await audit_log_record(
+        admin_id=0, action="user_unban",
+        target=f"user:{user_id}",
+    )
+    return web.json_response({"ok": True})
+
+
 # ── Фабрика приложения ─────────────────────────────────────────────────────────
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -1605,6 +1774,10 @@ def create_api_app(bot: Bot) -> web.Application:
     # Admin (Next.js админка проксирует с X-Admin-Secret header)
     app.router.add_post("/api/admin/tickets/{id}/reply",   handle_admin_ticket_reply)
     app.router.add_post("/api/admin/tickets/{id}/close",   handle_admin_ticket_close)
+    app.router.add_post("/api/admin/sub/{id}/extend",      handle_admin_sub_extend)
+    app.router.add_post("/api/admin/sub/{id}/refund",      handle_admin_sub_refund)
+    app.router.add_post("/api/admin/user/{id}/ban",        handle_admin_user_ban)
+    app.router.add_post("/api/admin/user/{id}/unban",      handle_admin_user_unban)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)

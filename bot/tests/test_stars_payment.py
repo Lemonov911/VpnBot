@@ -96,7 +96,7 @@ def _peer_factory(protocol: str = "awg"):
 # ── pre_checkout: validation logic ────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_pre_checkout_valid_plan_accepts():
+async def test_pre_checkout_valid_plan_accepts(fresh_db):
     """Known plan + correct amount → ok=True."""
     from handlers.vpn import pre_checkout
     q = _make_query("vpn_base", total_amount=VPN_PLANS["vpn_base"]["stars"])
@@ -105,7 +105,7 @@ async def test_pre_checkout_valid_plan_accepts():
 
 
 @pytest.mark.asyncio
-async def test_pre_checkout_underpriced_rejects():
+async def test_pre_checkout_underpriced_rejects(fresh_db):
     """SECURITY: total_amount < plan.stars → ok=False (defence-in-depth)."""
     from handlers.vpn import pre_checkout
     q = _make_query("vpn_base", total_amount=1)  # huge underpay
@@ -116,7 +116,7 @@ async def test_pre_checkout_underpriced_rejects():
 
 
 @pytest.mark.asyncio
-async def test_pre_checkout_unknown_payload_rejects():
+async def test_pre_checkout_unknown_payload_rejects(fresh_db):
     """Unknown plan_key (deleted from VPN_PLANS between invoice and pay) → ok=False."""
     from handlers.vpn import pre_checkout
     q = _make_query("vpn_does_not_exist", total_amount=100)
@@ -125,7 +125,7 @@ async def test_pre_checkout_unknown_payload_rejects():
 
 
 @pytest.mark.asyncio
-async def test_pre_checkout_empty_payload_rejects():
+async def test_pre_checkout_empty_payload_rejects(fresh_db):
     from handlers.vpn import pre_checkout
     q = _make_query("", total_amount=100)
     await pre_checkout(q)
@@ -133,7 +133,7 @@ async def test_pre_checkout_empty_payload_rejects():
 
 
 @pytest.mark.asyncio
-async def test_pre_checkout_esim_payload_accepts():
+async def test_pre_checkout_esim_payload_accepts(fresh_db):
     """eSIM uses a different payload format — must pass through."""
     from handlers.vpn import pre_checkout
     q = _make_query("esim:PKG_CODE_123:500", total_amount=500)
@@ -142,12 +142,29 @@ async def test_pre_checkout_esim_payload_accepts():
 
 
 @pytest.mark.asyncio
-async def test_pre_checkout_plan_upgrade_payload_accepts():
+async def test_pre_checkout_plan_upgrade_payload_accepts(fresh_db):
     """plan_upgrade payload (upgrade flow) — must pass through."""
     from handlers.vpn import pre_checkout
     q = _make_query("plan_upgrade:42:vpn_max:120", total_amount=120)
     await pre_checkout(q)
     q.answer.assert_awaited_once_with(ok=True)
+
+
+@pytest.mark.asyncio
+async def test_pre_checkout_banned_user_rejected(fresh_db):
+    """SECURITY: banned user — даже с валидным payload и суммой — должен быть
+    отбит на pre_checkout, Telegram отменит charge до списания."""
+    from services.database import upsert_user, set_user_banned
+    from handlers.vpn import pre_checkout
+
+    user_id = 666
+    await upsert_user(user_id, username="bad", first_name="Bad")
+    await set_user_banned(user_id, banned=True, reason="abuse")
+
+    q = _make_query("vpn_base", total_amount=VPN_PLANS["vpn_base"]["stars"], user_id=user_id)
+    await pre_checkout(q)
+    call = q.answer.await_args
+    assert call.kwargs.get("ok") is False
 
 
 # ── successful_payment: happy path ────────────────────────────────────────────

@@ -142,6 +142,9 @@ export type UserRow = {
   created_at: string
   referred_by: number | null
   ref_bonus_days: number
+  is_banned: number   // 0/1; SQLite has no bool
+  banned_at: string | null
+  banned_reason: string | null
 }
 
 export type SubRow = {

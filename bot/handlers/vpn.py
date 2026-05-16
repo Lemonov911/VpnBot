@@ -190,6 +190,13 @@ async def pre_checkout(query: PreCheckoutQuery):
     """Подтверждаем pre_checkout если payload валидный.
     Если план был удалён между invoice creation и оплатой — отбиваем
     pre_checkout с ok=False, Telegram отменит платёж до charge'а."""
+    # Ban-гейт: blocked users не должны проходить оплату.  Если бан был
+    # выставлен между invoice creation и pre_checkout — отбиваем здесь.
+    from services.database import is_user_banned
+    if await is_user_banned(query.from_user.id):
+        await query.answer(ok=False, error_message="Доступ ограничен. Напиши в поддержку.")
+        return
+
     payload = query.invoice_payload or ""
     if not payload:
         await query.answer(ok=False, error_message="Некорректный payload — попробуй создать платёж заново.")

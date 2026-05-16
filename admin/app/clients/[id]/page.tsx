@@ -3,6 +3,7 @@ import { requireSession } from '@/lib/auth'
 import { userFull, type SubRow } from '@/lib/db'
 import { redirect, notFound } from 'next/navigation'
 import AdminNav from '../../_components/AdminNav'
+import { ExtendSubButton, RefundSubButton, BanUserButton } from '../../_components/AdminActions'
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -85,19 +86,33 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
       </div>
 
       {/* Header */}
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
+      <div className={`bg-neutral-900 border rounded-2xl p-5 ${user.is_banned ? 'border-rose-500/40' : 'border-neutral-800'}`}>
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <div>
-            <div className="text-xl font-extrabold">
-              {user.first_name || 'unknown'}
-              {user.username && <span className="text-neutral-500 font-normal"> @{user.username}</span>}
+            <div className="text-xl font-extrabold flex items-center gap-2">
+              <span>
+                {user.first_name || 'unknown'}
+                {user.username && <span className="text-neutral-500 font-normal"> @{user.username}</span>}
+              </span>
+              {user.is_banned ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40">BANNED</span>
+              ) : null}
             </div>
             <div className="text-[10px] text-neutral-600 font-mono mt-1">id {user.id}</div>
           </div>
-          <div className="text-xs text-neutral-500">
-            Зарегистрирован {fmtDateOnly(user.created_at)}
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-neutral-500">
+              Зарегистрирован {fmtDateOnly(user.created_at)}
+            </div>
+            <BanUserButton userId={user.id} banned={user.is_banned === 1} />
           </div>
         </div>
+        {user.is_banned === 1 && user.banned_reason && (
+          <div className="mt-2 text-xs text-rose-300">
+            Причина: {user.banned_reason}
+            {user.banned_at && <span className="text-neutral-500"> · {fmtDateOnly(user.banned_at)}</span>}
+          </div>
+        )}
         {(user.referred_by || user.ref_bonus_days > 0) && (
           <div className="mt-3 pt-3 border-t border-neutral-800 flex flex-wrap gap-4 text-xs">
             {user.referred_by && (
@@ -143,32 +158,52 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
                   <th className="text-right px-4 py-2 font-medium">Сумма</th>
                   <th className="text-left  px-4 py-2 font-medium">Куплена</th>
                   <th className="text-left  px-4 py-2 font-medium">Истекает</th>
-                  <th className="text-left  px-4 py-2 font-medium">Payment ID</th>
+                  <th className="text-left  px-4 py-2 font-medium">Действия</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800">
-                {subs.map((s: SubRow) => (
-                  <tr key={s.id} className="hover:bg-neutral-800/30">
-                    <td className="px-4 py-2">
-                      <div className="font-medium">{PLAN_NAMES[s.plan] || s.plan}</div>
-                      {s.pending_plan && (
-                        <div className="text-[10px] text-yellow-500">→ {PLAN_NAMES[s.pending_plan] || s.pending_plan}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2"><StatusPill status={s.status} refundedAt={s.refunded_at} /></td>
-                    <td className="px-4 py-2 text-right"><MoneyCell stars={s.stars_paid} rub={s.amount_rub} /></td>
-                    <td className="px-4 py-2 text-neutral-400 text-xs">{fmtDate(s.created_at)}</td>
-                    <td className="px-4 py-2 text-neutral-400 text-xs">
-                      {fmtDateOnly(s.expires_at)}
-                      {s.grace_until && (
-                        <div className="text-[10px] text-yellow-500">grace до {fmtDateOnly(s.grace_until)}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-[10px] text-neutral-600 font-mono truncate max-w-[160px]">
-                      {s.payment_id || '—'}
-                    </td>
-                  </tr>
-                ))}
+                {subs.map((s: SubRow) => {
+                  const isActive = s.status === 'active' || s.status === 'grace'
+                  const isStars  = !!(s.payment_id && !s.payment_id.startsWith('crypto_')
+                                      && !s.payment_id.startsWith('free_'))
+                  const alreadyRefunded = !!s.refunded_at
+                  return (
+                    <tr key={s.id} className="hover:bg-neutral-800/30">
+                      <td className="px-4 py-2">
+                        <div className="font-medium">{PLAN_NAMES[s.plan] || s.plan}</div>
+                        {s.pending_plan && (
+                          <div className="text-[10px] text-yellow-500">→ {PLAN_NAMES[s.pending_plan] || s.pending_plan}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2"><StatusPill status={s.status} refundedAt={s.refunded_at} /></td>
+                      <td className="px-4 py-2 text-right"><MoneyCell stars={s.stars_paid} rub={s.amount_rub} /></td>
+                      <td className="px-4 py-2 text-neutral-400 text-xs">{fmtDate(s.created_at)}</td>
+                      <td className="px-4 py-2 text-neutral-400 text-xs">
+                        {fmtDateOnly(s.expires_at)}
+                        {s.grace_until && (
+                          <div className="text-[10px] text-yellow-500">grace до {fmtDateOnly(s.grace_until)}</div>
+                        )}
+                        <div className="text-[10px] text-neutral-700 font-mono mt-0.5 truncate max-w-[140px]"
+                             title={s.payment_id || ''}>
+                          {s.payment_id || '—'}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {isActive && (
+                            <>
+                              <ExtendSubButton subId={s.id} days={7} />
+                              <ExtendSubButton subId={s.id} days={30} />
+                            </>
+                          )}
+                          {!alreadyRefunded && s.plan !== 'vpn_trial' && (
+                            <RefundSubButton subId={s.id} isStars={isStars} />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
