@@ -211,7 +211,7 @@ export default function Home() {
                     <div className="flex-1 min-h-[20px]" />
                     <button
                       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
-                      className="w-full py-2 rounded-[10px] border-none bg-primary/[0.13] text-primary text-xs font-bold cursor-pointer"
+                      className="press-fb w-full py-2 rounded-[10px] border-none bg-primary/[0.13] text-primary text-xs font-bold cursor-pointer"
                     >
                       {t('home_manage')} →
                     </button>
@@ -278,7 +278,7 @@ export default function Home() {
                 </div>
                 <button
                   onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
-                  className={`w-full py-[11px] rounded-[12px] border-none text-[14px] font-bold cursor-pointer mt-[14px] ${
+                  className={`press-fb w-full py-[11px] rounded-[12px] border-none text-[14px] font-bold cursor-pointer mt-[14px] ${
                     sub
                       ? 'bg-primary/[0.13] text-primary'
                       : 'bg-gradient-to-br from-primary to-[#5856d6] text-white shadow-[0_4px_14px_rgba(36,129,204,0.35)]'
