@@ -225,6 +225,26 @@ export default function PaymentSheet({
             </div>
           ))}
         </div>
+        {/* Lava-recurring info-badge. Lava тип offer'а у нас SUBSCRIPTION —
+            каждая покупка автоматически становится подпиской с автосписанием
+            каждые N дней. Toggle отключения нет (Lava требует subscription
+            offer'ом, ONE_TIME не настроен) — юзер видит что это подписка +
+            знает как отменить, без сюрприза при втором списании. */}
+        {method === 'lavatop' && (
+          <div className="flex items-start gap-3 p-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color,#f1f1f1)] mb-3">
+            <span className="text-base shrink-0">🔁</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold text-[var(--tg-theme-text-color,#000)]">
+                {t('pay_lava_autorenew' as never)}
+              </div>
+              <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
+                {t('pay_lava_autorenew_hint' as never)
+                  .replace('{period}', PERIOD_LABEL_RU[period])
+                  .replace('{amount}', String(rubPrice))}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Auto-renew toggle для Stars+1m subscription. Telegram поддерживает
             только 30-дневный subscription_period — поэтому для 3/6/12 toggle
             скрыт (длинные периоды всегда one-time). По дефолту ON — экономит

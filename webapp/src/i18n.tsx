@@ -381,6 +381,8 @@ const T = {
     pay_stars_save:      'Экономия {pct}% vs месячной подписки',
     pay_stars_autorenew: 'Автопродление каждый месяц',
     pay_stars_autorenew_hint: 'Telegram сам спишет {stars} ⭐ через 30 дней. Отменить можно в любой момент в Telegram → Настройки → Звёзды.',
+    pay_lava_autorenew:      'Автопродление подписки',
+    pay_lava_autorenew_hint: 'Каждые {period}: списание {amount} ₽ с карты. Отменить можно одной кнопкой в разделе VPN после оплаты.',
     // Post-payment onboarding (Lava / Cryptomus / CryptoBot)
     postpay_title:        'Платёж открыт',
     postpay_subtitle:     'Завершите оплату в открывшейся вкладке',
@@ -854,6 +856,8 @@ const T = {
     pay_stars_save:      'Save {pct}% vs monthly',
     pay_stars_autorenew: 'Auto-renew monthly',
     pay_stars_autorenew_hint: 'Telegram will charge {stars} ⭐ every 30 days. Cancel any time in Telegram → Settings → Stars.',
+    pay_lava_autorenew:      'Subscription auto-renewal',
+    pay_lava_autorenew_hint: 'Every {period}: ₽{amount} will be charged from the card. Cancel any time from the VPN page after payment.',
     postpay_title:        'Payment opened',
     postpay_subtitle:     'Complete the payment in the opened tab',
     postpay_step1_title:  'Pay in browser',
