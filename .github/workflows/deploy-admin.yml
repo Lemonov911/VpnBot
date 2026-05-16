@@ -8,9 +8,11 @@ on:
       - '.github/workflows/deploy-admin.yml'
   workflow_dispatch:
 
-# Только один деплой админки одновременно — npm build не любит race.
+# Shared group across bot+admin — оба workflow дёргают один /opt/vpnbot/.git
+# через одного deploy-юзера. Раздельные группы → race на git pull при двух
+# одновременных merge'ах. Бэкап-страховка: flock в самих deploy-скриптах.
 concurrency:
-  group: deploy-admin
+  group: deploy-vpnbot-server
   cancel-in-progress: false
 
 jobs:
