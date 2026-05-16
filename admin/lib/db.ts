@@ -55,7 +55,7 @@ export function recentPayments(limit = 20) {
   // 1=1 — корректное условие, добавляет AND-фильтр без логического влияния
   // если фильтра нет (excl="") или если есть.
   return db().prepare(`
-    SELECT s.id, s.plan, s.stars_paid, s.payment_id, s.status,
+    SELECT s.id, s.plan, s.stars_paid, s.amount_rub, s.payment_id, s.status,
            s.created_at, s.expires_at,
            u.username, u.first_name
     FROM subscriptions s
@@ -242,15 +242,19 @@ export function moneyTotals() {
   const excl = excludeAdminsClause('user_id')
   return {
     total_revenue_stars: r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' ${excl}`),
-    paying_users:        r(`SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND stars_paid > 0 ${excl}`),
-    avg_revenue_per_payer: 0, // computed in route from above
-    avg_ltv_stars:       0, // same
+    total_revenue_rub:   r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' ${excl}`),
+    paying_users:        r(`SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND (stars_paid > 0 OR amount_rub > 0) ${excl}`),
+    avg_revenue_per_payer: 0,
+    avg_ltv_stars:       0,
     revenue_7d:          r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
     revenue_30d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
     revenue_90d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days') ${excl}`),
+    revenue_rub_7d:      r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
+    revenue_rub_30d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_rub_90d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days') ${excl}`),
     repeat_buyers:       r(`SELECT COUNT(*) as n FROM (
       SELECT user_id FROM subscriptions
-      WHERE plan!='vpn_trial' AND stars_paid > 0 ${excl}
+      WHERE plan!='vpn_trial' AND (stars_paid > 0 OR amount_rub > 0) ${excl}
       GROUP BY user_id HAVING COUNT(*) > 1
     )`),
   }

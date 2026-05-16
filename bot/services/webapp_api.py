@@ -732,6 +732,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         plan=plan_key,
         payment_id=payment_id,
         stars_paid=0,
+        amount_rub=int(float(plan.get("rub", 0))),
         expires_at=expires_at,
     )
     # None = UNIQUE-constraint сработал → дубль webhook'а от CryptoBot

@@ -8,11 +8,6 @@ import AdminNav from './_components/AdminNav'
 // Используется только для дисплея — фактические выплаты от Telegram идут в их курсе.
 const STARS_TO_RUB = 1.4
 
-function rubFromStars(stars: number): string {
-  if (!stars) return '0'
-  return Math.round(stars * STARS_TO_RUB).toLocaleString('ru')
-}
-
 function StatCard({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
   return (
     <div className={`bg-neutral-900 border rounded-2xl p-5 ${warn ? 'border-yellow-500/30' : 'border-neutral-800'}`}>
@@ -22,14 +17,23 @@ function StatCard({ label, value, warn }: { label: string; value: string | numbe
   )
 }
 
-function MoneyCell({ label, stars, highlight }: { label: string; stars: number; highlight?: boolean }) {
+function starsToRub(stars: number): number {
+  return Math.round(stars * STARS_TO_RUB)
+}
+
+function MoneyCell({ label, stars, rub, highlight }: { label: string; stars: number; rub?: number; highlight?: boolean }) {
+  const totalRub = starsToRub(stars) + (rub || 0)
   return (
     <div>
       <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-2xl font-bold ${highlight ? 'text-emerald-400' : 'text-white'}`}>
-        ⭐ {stars.toLocaleString('ru')}
+        ≈ {totalRub.toLocaleString('ru')} ₽
       </div>
-      <div className="text-[10px] text-neutral-500">≈ {rubFromStars(stars)} ₽</div>
+      <div className="text-[10px] text-neutral-500">
+        {stars > 0 && <span>⭐ {stars.toLocaleString('ru')}</span>}
+        {stars > 0 && rub != null && rub > 0 && <span className="mx-1">·</span>}
+        {rub != null && rub > 0 && <span>💎 {rub.toLocaleString('ru')} ₽</span>}
+      </div>
     </div>
   )
 }
@@ -75,10 +79,10 @@ export default async function Dashboard() {
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
         <div className="text-xs text-neutral-500 uppercase tracking-wider mb-3">💰 Выручка</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <MoneyCell label="Всего"        stars={money.total_revenue_stars} highlight />
-          <MoneyCell label="За 7 дней"    stars={money.revenue_7d} />
-          <MoneyCell label="За 30 дней"   stars={money.revenue_30d} />
-          <MoneyCell label="За 90 дней"   stars={money.revenue_90d} />
+          <MoneyCell label="Всего"        stars={money.total_revenue_stars} rub={money.total_revenue_rub} highlight />
+          <MoneyCell label="За 7 дней"    stars={money.revenue_7d}  rub={money.revenue_rub_7d} />
+          <MoneyCell label="За 30 дней"   stars={money.revenue_30d} rub={money.revenue_rub_30d} />
+          <MoneyCell label="За 90 дней"   stars={money.revenue_90d} rub={money.revenue_rub_90d} />
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-neutral-800">
           <div>
@@ -94,12 +98,7 @@ export default async function Dashboard() {
             <div className="text-[10px] text-neutral-500 uppercase tracking-wider">Средний LTV</div>
             <div className="text-xl font-bold text-white">
               {money.paying_users > 0
-                ? `⭐ ${Math.round(money.total_revenue_stars / money.paying_users)}`
-                : '—'}
-            </div>
-            <div className="text-[10px] text-neutral-500">
-              ≈ {money.paying_users > 0
-                ? `${rubFromStars(Math.round(money.total_revenue_stars / money.paying_users))} ₽`
+                ? `≈ ${Math.round((starsToRub(money.total_revenue_stars) + money.total_revenue_rub) / money.paying_users).toLocaleString('ru')} ₽`
                 : '—'}
             </div>
           </div>
@@ -123,7 +122,11 @@ export default async function Dashboard() {
                   <div className="text-xs text-neutral-500">{planName(p.plan)} · {payMethod(p.payment_id)}</div>
                 </div>
                 <div className="text-right shrink-0">
-                  <div className="text-sm font-semibold">⭐ {p.stars_paid}</div>
+                  <div className="text-sm font-semibold">
+                    {p.amount_rub > 0
+                      ? `💎 ${p.amount_rub.toLocaleString('ru')} ₽`
+                      : `⭐ ${p.stars_paid}`}
+                  </div>
                   <div className="text-xs text-neutral-500">
                     {new Date(p.created_at).toLocaleDateString('ru')}
                   </div>

@@ -311,6 +311,8 @@ async def _migrate(db: aiosqlite.Connection):
     # отчёты показывают "active" / "expired" по refunded подпискам как доход.
     if "refunded_at" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN refunded_at TIMESTAMP")
+    if "amount_rub" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN amount_rub INTEGER NOT NULL DEFAULT 0")
 
     # support_tickets — admin_msg_id for reply relay
     async with db.execute("PRAGMA table_info(support_tickets)") as cur:
@@ -469,7 +471,7 @@ async def get_server_by_id(server_id: int) -> dict | None:
 
 # ── subscriptions ──────────────────────────────────────────────────────────────
 
-async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at) -> int | None:
+async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at, amount_rub: int = 0) -> int | None:
     """Создаёт подписку. Возвращает sub_id или None если payment_id уже использован
     (UNIQUE-constraint сработал → дубль платежа от Telegram, идемпотентный no-op).
 
@@ -480,9 +482,9 @@ async def create_subscription(user_id, plan, payment_id, stars_paid, expires_at)
     try:
         async with _connect() as db:
             cur = await db.execute(
-                """INSERT INTO subscriptions (user_id, plan, payment_id, stars_paid, expires_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (user_id, plan, payment_id, stars_paid, expires_at.isoformat()),
+                """INSERT INTO subscriptions (user_id, plan, payment_id, stars_paid, amount_rub, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, plan, payment_id, stars_paid, amount_rub, expires_at.isoformat()),
             )
             await db.commit()
             return cur.lastrowid
