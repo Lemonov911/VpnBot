@@ -19,14 +19,21 @@ function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
   // FAQ q3+a3 — про установку eSIM. Скрываем если eSIM выключен (build flag),
   // иначе юзер видит подробную инструкцию на отсутствующий в UI продукт.
   const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
+  // Порядок:
+  //   q1 «какое приложение нужно» — самый важный для new юзера
+  //   q2 «не подключается» — самый частый troubleshoot
+  //   q3 «Happ vs Amnezia VPN» — закрывает confusion о выборе клиента
+  //   q4/q5 — eSIM (только если SHOW_ESIM)
+  //   q6 — payment failed
   const faqItems = [
     { q: t('faq_q1'), a: t('faq_a1') },
     { q: t('faq_q2'), a: t('faq_a2') },
+    { q: t('faq_q3'), a: t('faq_a3') },
     ...(SHOW_ESIM ? [
-      { q: t('faq_q3'), a: t('faq_a3') },
-      { q: t('faq_q4'), a: t('faq_a4') },
+      { q: t('faq_q4' as never), a: t('faq_a4' as never) },
+      { q: t('faq_q5' as never), a: t('faq_a5' as never) },
     ] : []),
-    { q: t('faq_q5'), a: t('faq_a5') },
+    { q: t('faq_q6' as never), a: t('faq_a6' as never) },
   ]
   return (
     <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
