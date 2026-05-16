@@ -1,9 +1,16 @@
 """
-AWG/WG RU split-tunneling: качаем RU CIDR-список от ipdeny.com раз в 24ч,
-вычисляем «весь IPv4 минус RU» (`0.0.0.0/0 - 11k RU блоков` → ~6-7k не-RU
-CIDR), кешируем строку. При скачивании .conf бот подменяет `AllowedIPs`
-на эту строку — WG-клиент НЕ маршрутизирует RU-трафик в туннель, юзер
-открывает Сбер/Кинопоиск/Госуслуги с локального RU-IP.
+AWG/WG RU split-tunneling: качаем curated RU CIDR-список от Amnezia VPN
+раз в 24ч (~150 CIDR ключевых RU-сервисов: банки, Yandex, Госуслуги, Mail.ru,
+Кинопоиск, СБП). Вычисляем «весь IPv4 минус RU» через set subtraction →
+~300 bypass CIDR одной строкой (~5KB). При скачивании .conf бот подменяет
+`AllowedIPs` на эту строку — WG-клиент НЕ маршрутизирует RU-трафик в туннель,
+юзер открывает Сбер/Кинопоиск/Госуслуги с локального RU-IP.
+
+Почему НЕ full ipdeny.com (11k CIDR → 21k bypass → 346 KB AllowedIPs):
+- iOS WG UI лагает на > 10k AllowedIPs entries
+- В .conf-файл это всё ещё ОК, но мобильный клиент тормозит
+- Long-tail (мелкие региональные RU сервисы) — статистически невелики
+- Amnezia curated собран командой VPN-вендора под именно этот use case
 
 Эквивалент `route.rules → direct` из sing-box (см. `singbox_sub.py`),
 только для AWG где routing — это лишь AllowedIPs в .conf.
@@ -28,13 +35,17 @@ RULES_DIR = Path(os.environ.get(
 RU_CIDRS_FILE = "ru-cidrs.txt"
 BYPASS_CACHE_FILE = "awg-bypass-allowedips.txt"
 
-# ipdeny.com — public GeoIP CIDR в plain-text. ~11k RU блоков, обновляется
-# ежедневно. Без аутентификации, давно живёт, многими используется.
-_IPDENY_URL = "https://www.ipdeny.com/ipblocks/data/countries/ru.zone"
+# Amnezia VPN curated список «IP prefixes for sites accessible only TO Russia»
+# — банки, Yandex, Госуслуги, Mail.ru, Кинопоиск, СБП. ~150 CIDR, ровно то
+# что геоблочит не-RU IP. Maintained Amnezia командой (вендор того же AWG).
+_PRIMARY_URL = (
+    "https://raw.githubusercontent.com/amnezia-vpn/unblock-lists-ru/master/to_ru.csv"
+)
 
-# Тоже самое только free-mirror на случай если ipdeny ляжет.
+# Fallback на случай если GitHub ляжет — full ipdeny RU список. Огромный
+# (11k → 21k bypass → 346 KB), но лучше чем ничего; iOS WG может лагать.
 _FALLBACK_URLS = [
-    "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ru.cidr",
+    "https://www.ipdeny.com/ipblocks/data/countries/ru.zone",
 ]
 
 # Кешируем готовую строку в памяти процесса — она формируется ~3-5 KB
@@ -139,7 +150,7 @@ async def refresh_bypass(force: bool = False) -> dict:
             return stats
 
     text: str | None = None
-    for url in [_IPDENY_URL, *_FALLBACK_URLS]:
+    for url in [_PRIMARY_URL, *_FALLBACK_URLS]:
         try:
             text = await _fetch_text(url)
             stats["downloaded_bytes"] = len(text)
