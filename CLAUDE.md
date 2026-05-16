@@ -200,9 +200,13 @@ ssh root@151.243.113.31 'systemctl restart vpnbot'
 # Логи в реальном времени
 ssh root@151.243.113.31 'journalctl -u vpnbot -f'
 
-# Обновление кода бота на сервере (из корня репо)
+# Обновление кода бота на сервере (из корня репо).
+# ВАЖНО: target — /opt/vpnbot/bot/ а НЕ /opt/vpnbot/ (последний — legacy
+# layout который ещё лежит на диске, но НЕ используется systemd-unit'ом).
+# systemd: WorkingDirectory=/opt/vpnbot/bot, ExecStart=/opt/vpnbot/venv/bin/python bot.py
 rsync -avz --exclude='__pycache__' --exclude='*.pyc' --exclude='.env' \
-  bot/ root@151.243.113.31:/opt/vpnbot/
+  --exclude='bot.db*' --exclude='tests' --exclude='data' \
+  bot/ root@151.243.113.31:/opt/vpnbot/bot/
 ssh root@151.243.113.31 'systemctl restart vpnbot'
 ```
 
