@@ -1100,7 +1100,7 @@ _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 
 
 def _parse_user_id_from_email(email: str) -> int | None:
-    """email формата tg-{user_id}@vpnbot.local — fallback identifier когда мы
+    """email формата tg-{user_id}@maxvpnesim.com — fallback identifier когда мы
     создавали invoice без реального email. Возвращает None если email не наш."""
     if not email.startswith("tg-"):
         return None
@@ -1140,14 +1140,15 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
         )
 
     # Email опционален в нашем UI — Lava его требует API'но, но не валидирует
-    # домен. Если юзер ничего не передал, генерим синтетический по user_id:
-    # tg-{id}@maxvpnesim.local. По нему в webhook парсим user_id обратно
-    # (см. _parse_user_id_from_email). Юзер не вводит — нет UI-friction.
+    # на доставку, только на формат публичного TLD. Если юзер ничего не передал,
+    # генерим tg-{id}@maxvpnesim.com (наш реальный домен) — Lava принимает.
+    # По email в webhook парсим user_id обратно (_parse_user_id_from_email).
+    # Раньше использовали @maxvpnesim.local — Lava отбила как невалидный TLD.
     raw_email = (body.get("email") or "").strip().lower()
     if raw_email and _EMAIL_RE.match(raw_email):
         email = raw_email  # юзер сам ввёл — используем (для receipt'а Lava)
     else:
-        email = f"tg-{user['id']}@maxvpnesim.local"
+        email = f"tg-{user['id']}@maxvpnesim.com"
 
     existing_sub = await get_active_subscription(user["id"])
     # Триал — не платная подписка, юзер должен иметь возможность купить
@@ -1328,7 +1329,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         logger.info("Lava webhook: ignoring event=%s", event)
         return web.Response(status=200)
 
-    # Идентифицируем юзера: сначала по email (синтетический tg-{id}@vpnbot.local
+    # Идентифицируем юзера: сначала по email (синтетический tg-{id}@maxvpnesim.com
     # или сохранённый реальный), потом fallback на поиск по users.email.
     user_id = _parse_user_id_from_email(email)
     if user_id is None and email:

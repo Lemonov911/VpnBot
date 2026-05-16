@@ -804,7 +804,7 @@ async def get_user_email(user_id: int) -> str | None:
 
 
 async def get_user_id_by_email(email: str) -> int | None:
-    """Lava webhook fallback: если email юзера реальный (а не tg-{id}@vpnbot.local),
+    """Lava webhook fallback: если email юзера реальный (а не tg-{id}@maxvpnesim.com),
     ищем user_id по сохранённой почте."""
     async with _connect() as db:
         async with db.execute("SELECT id FROM users WHERE email=? LIMIT 1", (email,)) as cur:
