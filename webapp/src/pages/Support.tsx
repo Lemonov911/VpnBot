@@ -88,7 +88,12 @@ export default function Support() {
       WebApp.HapticFeedback.notificationOccurred('success')
       setState('done')
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : t('server_error'))
+      const raw = e instanceof Error ? e.message : ''
+      // API возвращает {"error": "rate_limited"} как 429 — у нас он попадает
+      // в Error.message как сырая строка.  Маппим в человеческое сообщение.
+      const friendly = raw === 'rate_limited' ? t('support_rate_limited' as never)
+                      : raw || t('server_error' as never)
+      setErrMsg(friendly)
       setState('error')
     }
   }

@@ -350,8 +350,11 @@ export default function VPN() {
   const isGrace     = sub.status === 'grace'
   const isExpiring  = !isGrace && sub.days_remaining <= 7
 
-  const vlessTotal  = configs?.filter(c => c.protocol === 'vless').length ?? 0
-  const vlessActive = configs?.filter(c => c.protocol === 'vless' && c.status === 'active').length ?? 0
+  // "Устройства" = per-device файлы (AWG + plain WG). VLESS теперь общая подписка
+  // и не считается «устройством» — один sub-URL юзер импортирует на любое число
+  // устройств.  Поэтому здесь только AWG/WG-слоты.
+  const deviceTotal  = configs?.filter(c => c.protocol === 'awg' || c.protocol === 'wg').length ?? 0
+  const deviceActive = configs?.filter(c => (c.protocol === 'awg' || c.protocol === 'wg') && c.status === 'active').length ?? 0
 
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
@@ -384,7 +387,9 @@ export default function VPN() {
               {sub.days_remaining <= 3 ? t('vpn_expiry_banner_1') : t('vpn_expiry_banner_3')}
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">
-              {t('vpn_days_left')} {sub.days_remaining} {p(sub.days_remaining, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: ['day', 'days'] })}
+              {/* usePlural уже включает число в результат («2 дня»), поэтому
+                  отдельно sub.days_remaining не выводим — иначе «Осталось 2 2 дня». */}
+              {t('vpn_days_left')} {p(sub.days_remaining, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: ['day', 'days'] })}
             </div>
           </div>
           <button onClick={() => nav('/vpn/plans')} className={`px-3.5 py-1.5 rounded-lg border-none text-white text-xs font-semibold cursor-pointer shrink-0 ${sub.days_remaining <= 3 ? 'bg-danger' : 'bg-warning'}`}>
@@ -407,11 +412,11 @@ export default function VPN() {
           </span>
         </div>
 
-        {vlessTotal > 0 && (
+        {deviceTotal > 0 && (
           <div className="mt-3.5">
             <div className="text-[10px] text-[var(--tg-theme-hint-color,#707579)] mb-1 uppercase tracking-[0.4px]">{t('vpn_slots_devs')}</div>
-            <SlotDots active={vlessActive} total={vlessTotal} color="#8e44ad" />
-            <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">{vlessActive} / {vlessTotal} {t('vpn_connected')}</div>
+            <SlotDots active={deviceActive} total={deviceTotal} color="#06b6d4" />
+            <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-[3px]">{deviceActive} / {deviceTotal} {t('vpn_connected')}</div>
           </div>
         )}
 

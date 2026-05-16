@@ -1442,9 +1442,10 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
 
-    # Rate-limit: 30 сек / юзер. Каждый тикет = сообщение админу в TG, спам
-    # затопит чат поддержки и DB. Легитимный юзер пишет 1 тикет в час.
-    if not _rate_limit_check_evict(_ticket_rate, str(user["id"]), _time.monotonic(), window=30.0):
+    # Rate-limit: 10 сек / юзер.  Каждый тикет = сообщение админу в TG, спам
+    # затопит чат поддержки и DB.  10 сек — успеть исправить опечатку + повторить,
+    # но не флудить (30с предыдущее окно — оказалось fluently-печатающего юзера блокировало).
+    if not _rate_limit_check_evict(_ticket_rate, str(user["id"]), _time.monotonic(), window=10.0):
         return web.json_response({"error": "rate_limited"}, status=429)
 
     try:

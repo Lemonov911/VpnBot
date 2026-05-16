@@ -303,7 +303,12 @@ export default function Plans() {
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
-        {sub === null ? (
+        {/* Триал не в PLANS (нечего покупать) → curPlan find() возвращал бы
+            undefined и мы fallback'или на VISIBLE_PLANS[0] = vpn_base, что
+            делало vpn_base показанным как «Ваш» а vpn_max как «+20 ₽».
+            Для триала фактически нет «текущего платного» — это первая покупка.
+            Поэтому показываем как для null-sub: все mode='buy'. */}
+        {(sub === null || sub.plan === 'vpn_trial') ? (
           VISIBLE_PLANS.map((plan, i) => (
             <PlanCard key={plan.key} plan={plan} mode="buy"
               upgradePrice={0} loading={loading === plan.key}
