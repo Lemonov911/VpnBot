@@ -233,7 +233,8 @@ export default function Plans() {
           else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
         })
       } else if (method === 'cryptomus') {
-        const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
         setLoading(null)
         WebApp.openLink(pay_url)
       } else if (method === 'lavatop') {

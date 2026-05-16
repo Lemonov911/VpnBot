@@ -57,53 +57,58 @@ VPN_PLANS: dict[str, dict] = {
         "description":    "Семья 3+ человек, стриминг и торренты",
     },
 
-    # ── Multi-period Stars-варианты (скрыты из VISIBLE_PLANS — открываются
-    # только через period-chip в PaymentSheet при выборе ⭐ Stars). Те же
+    # ── Multi-period варианты (скрыты из VISIBLE_PLANS — открываются через
+    # period-chip в PaymentSheet при выборе ⭐ Stars или 🔗 Cryptomus). Те же
     # слоты/скорость что у базового vpn_base/vpn_max, отличается только
-    # duration_days + stars (со скидкой за длинный период).
-    # Lava/CryptoBot/Cryptomus не поддерживаются для этих ключей (см.
-    # webapp_api invoice-endpoints — там фильтр по 1-месячным).
+    # duration_days + stars/rub (со скидкой за длинный период).
+    #
+    # Lava (LAVATOP_OFFERS) и CryptoBot эти ключи НЕ принимают (multi_period
+    # guard в webapp_api invoice-endpoints): у Lava нет offer_id для 3/6/12м,
+    # CryptoBot тоже не настроен под мульти-период.
+    #
+    # Скидочная лестница (vs ровно-перемноженной 1м цены):
+    #   3м: −15%   6м: −20%   12м: −30%
     "vpn_base_3m": {
-        "name": "База 3 мес", "stars": 370, "rub": "600", "usd": "6.60",
+        "name": "База 3 мес", "stars": 370, "rub": "510", "usd": "5.60",
         "duration_days": 90,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
-        "stars_only": True,  # отметка: не показываем для не-Stars методов оплаты
+        "multi_period": True,  # доступно только в Stars+Cryptomus
     },
     "vpn_base_6m": {
-        "name": "База 6 мес", "stars": 695, "rub": "1140", "usd": "12.50",
+        "name": "База 6 мес", "stars": 695, "rub": "960", "usd": "10.50",
         "duration_days": 180,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
-        "stars_only": True,
+        "multi_period": True,
     },
     "vpn_base_12m": {
-        "name": "База 1 год", "stars": 1220, "rub": "2000", "usd": "22.00",
+        "name": "База 1 год", "stars": 1220, "rub": "1680", "usd": "18.50",
         "duration_days": 365,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
-        "stars_only": True,
+        "multi_period": True,
     },
     "vpn_max_3m": {
-        "name": "Макс 3 мес", "stars": 920, "rub": "1500", "usd": "16.50",
+        "name": "Макс 3 мес", "stars": 920, "rub": "1275", "usd": "14.00",
         "duration_days": 90,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
-        "stars_only": True,
+        "multi_period": True,
     },
     "vpn_max_6m": {
-        "name": "Макс 6 мес", "stars": 1725, "rub": "2850", "usd": "31.50",
+        "name": "Макс 6 мес", "stars": 1725, "rub": "2400", "usd": "26.50",
         "duration_days": 180,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
-        "stars_only": True,
+        "multi_period": True,
     },
     "vpn_max_12m": {
-        "name": "Макс 1 год", "stars": 3025, "rub": "5000", "usd": "55.00",
+        "name": "Макс 1 год", "stars": 3025, "rub": "4200", "usd": "46.00",
         "duration_days": 365,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
-        "stars_only": True,
+        "multi_period": True,
     },
 
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──

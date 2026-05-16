@@ -611,11 +611,10 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
-    if plan.get("stars_only"):
-        # Multi-period планы (3/6/12 мес) доступны только через Stars.
-        # Без этой проверки юзер мог бы заплатить за 12-месячный план
-        # рублями со Stars-скидкой (vpn_base_12m = 2000 ₽ vs обычные 12×200=2400).
-        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
+    if plan.get("multi_period"):
+        # Multi-period планы (3/6/12 мес) доступны только через Stars и Cryptomus.
+        # CryptoBot не настроен под мульти-период (нет invoice'ов разной длины).
+        return web.json_response({"error": "Этот тариф недоступен через CryptoBot"}, status=400)
 
     currency = body.get("currency", "RUB").upper()
     if currency not in ("RUB", "USD"):
@@ -875,8 +874,8 @@ async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
-    if plan.get("stars_only"):
-        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
+    # multi_period для Cryptomus ОК — он по своей природе one-time crypto payment,
+    # для каждого периода свой invoice с правильной суммой.
 
     currency = (body.get("currency") or "RUB").upper()
     if currency not in ("RUB", "USD"):
@@ -896,9 +895,11 @@ async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
     # order_id формируется детерминированно: тот же юзер + план + минута →
     # повтор кнопки в течение минуты вернёт тот же invoice (Cryptomus
     # отдаёт 422 на duplicate order_id, но мы перехватим — см. ниже).
-    # Cryptomus принимает 1..128 символов из [a-zA-Z0-9_-].
+    # Cryptomus принимает 1..128 символов из [a-zA-Z0-9_-] (включая _).
+    # Используем _ как часть plan_key (vpn_base, vpn_max_3m), а - как
+    # разделитель полей — однозначно парсится на webhook'е.
     ts_min = int(_time.time() // 60)
-    order_id = f"vpn-{user['id']}-{plan_key}-{ts_min}".replace("_", "-")
+    order_id = f"vpn-{user['id']}-{plan_key}-{ts_min}"
 
     base_url = WEBAPP_URL or "https://maxvpnesim.com"
     api_origin = SUB_URL_BASE or "https://maxvpnesim.com"
@@ -977,8 +978,9 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
     # order_id формат: "vpn-{user_id}-{plan_key}-{ts_min}"
+    # plan_key содержит underscores (vpn_base, vpn_max_3m), - только разделитель.
     parts = order_id.split("-")
-    if len(parts) < 3 or parts[0] != "vpn":
+    if len(parts) != 4 or parts[0] != "vpn":
         logger.warning("Cryptomus webhook: unexpected order_id format %s", order_id)
         return web.Response(status=200)
     try:
@@ -986,9 +988,7 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
     except ValueError:
         logger.warning("Cryptomus webhook: bad user_id in order_id %s", order_id)
         return web.Response(status=200)
-    plan_key = "-".join(parts[2:-1])  # план может содержать дефисы
-    if not plan_key:
-        plan_key = parts[2]
+    plan_key = parts[2]
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         logger.warning("Cryptomus webhook: unknown plan %s (order=%s)", plan_key, order_id)
@@ -1139,8 +1139,9 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
-    if plan.get("stars_only"):
-        return web.json_response({"error": "Этот тариф доступен только в Telegram Stars"}, status=400)
+    if plan.get("multi_period"):
+        # Lava требует offer_id per duration — у нас только 1м offer'ы настроены.
+        return web.json_response({"error": "Этот тариф недоступен через Lava"}, status=400)
 
     offer_id = LAVATOP_OFFERS.get(plan_key)
     if not offer_id:

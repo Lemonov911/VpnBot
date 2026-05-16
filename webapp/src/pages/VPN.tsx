@@ -158,7 +158,8 @@ export default function VPN() {
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
         })
       } else if (method === 'cryptomus') {
-        const { pay_url } = await createVpnInvoiceCryptomus(plan.key, 'RUB')
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
         setBuyLoading(null)
         WebApp.openLink(pay_url)
       } else if (method === 'lavatop') {

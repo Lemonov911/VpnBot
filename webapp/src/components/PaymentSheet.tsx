@@ -4,20 +4,34 @@ import { useT } from '../i18n'
 import { getFeatures } from '../api'
 
 export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'lavatop'
-export type StarsPeriod = '1m' | '3m' | '6m' | '12m'
+export type PayPeriod = '1m' | '3m' | '6m' | '12m'
 
-// Stars-only multi-period planы — синхронизировано с bot/services/plans.py.
-// Lava/CryptoBot/Cryptomus поддерживают только 1m (stars_only=True блокирует).
-const STARS_PRICES: Record<string, Record<StarsPeriod, number>> = {
+// Multi-period цены — синхронизировано с bot/services/plans.py.
+// Stars + Cryptomus поддерживают 1/3/6/12. CryptoBot + Lava — только 1m
+// (бэкенд блокирует multi_period для них через 400).
+export const STARS_PRICES: Record<string, Record<PayPeriod, number>> = {
   vpn_base: { '1m': 145,  '3m': 370,  '6m': 695,  '12m': 1220 },
   vpn_max:  { '1m': 360,  '3m': 920,  '6m': 1725, '12m': 3025 },
 }
 
+// RUB-цены multi-period (для Cryptomus). Та же скидочная лестница:
+// 3м −15%, 6м −20%, 12м −30% vs ровно-перемноженной 1м цены.
+export const RUB_PRICES: Record<string, Record<PayPeriod, number>> = {
+  vpn_base: { '1m': 200, '3m': 510,  '6m': 960,  '12m': 1680 },
+  vpn_max:  { '1m': 500, '3m': 1275, '6m': 2400, '12m': 4200 },
+}
+
+const MONTHS_IN_PERIOD = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 } as const
+const PERIOD_LABEL_RU  = { '1m': '1 мес', '3m': '3 мес', '6m': '6 мес', '12m': '1 год' } as const
+
 // Plan_key суффикс по периоду. 1m остаётся без суффикса (vpn_base / vpn_max),
 // остальные — с _3m/_6m/_12m (см. plans.py).
-export function starsPlanKey(baseKey: string, period: StarsPeriod): string {
+export function starsPlanKey(baseKey: string, period: PayPeriod): string {
   return period === '1m' ? baseKey : `${baseKey}_${period}`
 }
+
+// Alias для обратной совместимости + backward-friendly imports
+export type StarsPeriod = PayPeriod
 
 export interface Plan {
   key: string; nameKey: string; stars: number; rub: number; usd: number
@@ -56,17 +70,27 @@ export default function PaymentSheet({
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
   const [showCryptomus, setShowCryptomus] = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
-  const [starsPeriod, setStarsPeriod]     = useState<StarsPeriod>('1m')
+  const [period, setPeriod]               = useState<PayPeriod>('1m')
 
-  // Stars-цена для текущего плана + периода. Fallback на plan.stars если в
-  // STARS_PRICES нет (например legacy-планы) — там всегда 1м.
-  const starsPrice = STARS_PRICES[plan.key]?.[starsPeriod] ?? plan.stars
+  // Какие методы поддерживают multi-period (3/6/12). Lava + CryptoBot — только 1м.
+  const methodSupportsMultiPeriod = method === 'stars' || method === 'cryptomus'
+
+  // Цена и discount по текущему методу/периоду
+  const starsPrice = STARS_PRICES[plan.key]?.[period] ?? plan.stars
+  const rubPrice   = RUB_PRICES[plan.key]?.[period] ?? plan.rub
   const starsBaseMonthly = STARS_PRICES[plan.key]?.['1m'] ?? plan.stars
-  const periodMonths = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 }[starsPeriod]
-  // % скидки vs ровно-перемноженной 1м цены
-  const discountPct = starsPeriod === '1m'
-    ? 0
+  const rubBaseMonthly   = RUB_PRICES[plan.key]?.['1m'] ?? plan.rub
+  const periodMonths = MONTHS_IN_PERIOD[period]
+  const starsDiscountPct = period === '1m' ? 0
     : Math.round((1 - starsPrice / (starsBaseMonthly * periodMonths)) * 100)
+  const rubDiscountPct = period === '1m' ? 0
+    : Math.round((1 - rubPrice / (rubBaseMonthly * periodMonths)) * 100)
+  const discountPct = method === 'stars' ? starsDiscountPct : rubDiscountPct
+
+  // При смене метода на Lava/CryptoBot форсим 1m (они multi-period не умеют)
+  useEffect(() => {
+    if (!methodSupportsMultiPeriod && period !== '1m') setPeriod('1m')
+  }, [method, methodSupportsMultiPeriod, period])
 
   useEffect(() => {
     let cancelled = false
@@ -124,7 +148,7 @@ export default function PaymentSheet({
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
             ['crypto',   '💎', t('pay_method_crypto'),    `${plan.rub} ₽`],
             ...(showCryptomus
-              ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${plan.rub} ₽`]]
+              ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${rubPrice} ₽`]]
               : []),
           ]) as [PayMethod, string, string, string][]).map(([val, icon, label, price], i, arr) => (
             <div key={val}>
@@ -143,38 +167,45 @@ export default function PaymentSheet({
                   {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
               </div>
-              {/* Period chips появляются только под выбранным Stars-методом */}
-              {val === 'stars' && method === 'stars' && (
+              {/* Period chips появляются под Stars и Cryptomus (методы которые
+                  поддерживают multi-period). Lava/CryptoBot — только 1м, чипов нет. */}
+              {(val === 'stars' || val === 'cryptomus') && method === val && methodSupportsMultiPeriod && (
                 <div className={`px-3 pt-1 pb-3 ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''}`}>
                   <div className="flex gap-1.5 flex-wrap">
-                    {(['1m','3m','6m','12m'] as StarsPeriod[]).map(p => {
-                      const stars = STARS_PRICES[plan.key]?.[p] ?? 0
-                      if (stars === 0) return null
-                      const monthlyAvg = stars / { '1m':1,'3m':3,'6m':6,'12m':12 }[p]
-                      const labelMap = { '1m':'1 мес','3m':'3 мес','6m':'6 мес','12m':'1 год' }
-                      const baseMonthly = STARS_PRICES[plan.key]?.['1m'] ?? 1
-                      const discount = p === '1m' ? 0 : Math.round((1 - stars / (baseMonthly * { '1m':1,'3m':3,'6m':6,'12m':12 }[p])) * 100)
+                    {(['1m','3m','6m','12m'] as PayPeriod[]).map(p => {
+                      const isStars = val === 'stars'
+                      const price = isStars
+                        ? (STARS_PRICES[plan.key]?.[p] ?? 0)
+                        : (RUB_PRICES[plan.key]?.[p] ?? 0)
+                      if (!price) return null
+                      const months = MONTHS_IN_PERIOD[p]
+                      const monthlyAvg = price / months
+                      const baseMonthly = isStars
+                        ? (STARS_PRICES[plan.key]?.['1m'] ?? 1)
+                        : (RUB_PRICES[plan.key]?.['1m'] ?? 1)
+                      const discount = p === '1m' ? 0 : Math.round((1 - price / (baseMonthly * months)) * 100)
+                      const priceUnit = isStars ? '⭐' : '₽'
                       return (
                         <button
                           key={p}
-                          onClick={() => setStarsPeriod(p)}
+                          onClick={() => setPeriod(p)}
                           className={`flex-1 min-w-[64px] py-2 px-2 rounded-[10px] border text-[11px] font-semibold leading-tight cursor-pointer transition-colors ${
-                            starsPeriod === p
+                            period === p
                               ? 'border-[var(--tg-theme-button-color,#2481cc)] bg-[var(--tg-theme-button-color,#2481cc)] text-white'
                               : 'border-gray-500/20 bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)]'
                           }`}
                         >
-                          <div>{labelMap[p]}</div>
-                          <div className={`text-[10px] font-normal mt-0.5 ${starsPeriod === p ? 'opacity-90' : 'opacity-60'}`}>
-                            {stars} ⭐
+                          <div>{PERIOD_LABEL_RU[p]}</div>
+                          <div className={`text-[10px] font-normal mt-0.5 ${period === p ? 'opacity-90' : 'opacity-60'}`}>
+                            {price} {priceUnit}
                           </div>
                           {discount > 0 && (
-                            <div className={`text-[9px] font-bold mt-0.5 ${starsPeriod === p ? 'text-white' : 'text-success'}`}>
+                            <div className={`text-[9px] font-bold mt-0.5 ${period === p ? 'text-white' : 'text-success'}`}>
                               −{discount}%
                             </div>
                           )}
-                          <div className={`text-[9px] mt-0.5 ${starsPeriod === p ? 'opacity-80' : 'opacity-50'}`}>
-                            {Math.round(monthlyAvg)}⭐/мес
+                          <div className={`text-[9px] mt-0.5 ${period === p ? 'opacity-80' : 'opacity-50'}`}>
+                            {Math.round(monthlyAvg)}{priceUnit}/мес
                           </div>
                         </button>
                       )
@@ -187,13 +218,15 @@ export default function PaymentSheet({
         </div>
         <button
           className="btn !w-full !text-base !py-3.5"
-          onClick={() => onPay(method, method === 'stars' ? starsPeriod : undefined)}
+          onClick={() => onPay(method, methodSupportsMultiPeriod ? period : undefined)}
         >
           {method === 'stars'
             ? `${t('pay_pay_btn')} ${starsPrice} ⭐`
-            : `${t('pay_pay_btn')} ${plan.rub} ₽`}
+            : method === 'cryptomus'
+              ? `${t('pay_pay_btn')} ${rubPrice} ₽`
+              : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>
-        {method === 'stars' && discountPct > 0 && (
+        {discountPct > 0 && (
           <div className="mt-1.5 text-center text-[11px] text-success font-semibold">
             {t('pay_stars_save' as never).replace('{pct}', String(discountPct))}
           </div>
