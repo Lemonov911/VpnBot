@@ -20,6 +20,11 @@
 :root {
   --card-border: rgba(128,128,128,0.12);
 }
+/* В тёмной теме граница карточек чуть ярче — иначе границы между sections
+   на dark-фоне (#1c1c1e) не видны вообще. */
+.dark {
+  --card-border: rgba(255,255,255,0.08);
+}
 
 /* ── Base ──────────────────────────────────────────── */
 * { box-sizing: border-box; }
@@ -27,9 +32,14 @@
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* Explicit bg чтобы webview не был прозрачным на старых TG-клиентах.
+     В тёмной теме variable приходит от Telegram (#1c1c1e и т.п.). */
+  background: var(--tg-theme-bg-color, #ffffff);
+  color: var(--tg-theme-text-color, #000000);
 }
 
-/* Gradient glow at top — subtle branding */
+/* Gradient glow at top — subtle branding.  Усилен под тёмную тему
+   через .dark селектор (иначе на чёрном фоне glow не виден). */
 body::before {
   content: '';
   position: fixed;
@@ -38,6 +48,9 @@ body::before {
   background: radial-gradient(ellipse 100% 60% at 50% -5%, rgba(36,129,204,0.11) 0%, transparent 100%);
   pointer-events: none;
   z-index: 0;
+}
+.dark body::before {
+  background: radial-gradient(ellipse 100% 60% at 50% -5%, rgba(36,129,204,0.18) 0%, transparent 100%);
 }
 
 /* ── Page layout ───────────────────────────────────── */
@@ -150,6 +163,6 @@ body::before {
 .legal-prose th { background: var(--tg-theme-section-bg-color, rgba(0,0,0,0.04)); font-weight: 600; }
 .legal-prose strong { font-weight: 700; }
 .legal-prose hr { border: 0; border-top: 1px solid var(--card-border); margin: 1.2em 0; }
-.legal-prose code { background: rgba(0,0,0,0.05); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+.legal-prose code { background: rgba(128,128,128,0.15); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
 .legal-prose blockquote { border-left: 3px solid var(--color-primary); padding-left: 0.8em; margin: 0.8em 0; color: var(--tg-theme-hint-color); }
 .legal-prose a { color: var(--tg-theme-link-color, #2481cc); text-decoration: underline; }

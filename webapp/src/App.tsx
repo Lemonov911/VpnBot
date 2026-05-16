@@ -79,12 +79,40 @@ export default function App() {
   useEffect(() => {
     WebApp.ready()
     WebApp.expand()
-    const syncDark = () => {
+
+    const applyTheme = () => {
+      // 1) dark-класс на <html> — для Tailwind dark:варианты
       document.documentElement.classList.toggle('dark', WebApp.colorScheme === 'dark')
+
+      // 2) Telegram-хедер и фон должны совпадать с цветом нашего webview,
+      //    иначе виден шов между Telegram-chrome и Mini App.
+      //    Используем `bg_color` (= bg-color webview) для обоих —
+      //    современные TG-клиенты понимают строковые шаблоны 'bg_color' /
+      //    'secondary_bg_color', fallback — hex от themeParams.
+      try {
+        const bg = WebApp.themeParams.bg_color
+        if (typeof WebApp.setHeaderColor === 'function') {
+          WebApp.setHeaderColor(bg ? (bg as `#${string}`) : 'bg_color')
+        }
+        if (typeof WebApp.setBackgroundColor === 'function') {
+          WebApp.setBackgroundColor(bg ? (bg as `#${string}`) : 'bg_color')
+        }
+        // BottomBar (TG 7.10+) — окраска нижней системной полоски (iOS home indicator).
+        // SDK свежий, метод есть, но проверка typeof — на случай старых клиентов.
+        if (typeof WebApp.setBottomBarColor === 'function') {
+          const bottom = WebApp.themeParams.secondary_bg_color || bg
+          WebApp.setBottomBarColor(bottom ? (bottom as `#${string}`) : 'secondary_bg_color')
+        }
+      } catch (e) {
+        // Старые TG-клиенты могут не поддерживать setHeaderColor — silently ignore
+        // eslint-disable-next-line no-console
+        console.warn('theme apply failed:', e)
+      }
     }
-    syncDark()
-    WebApp.onEvent('themeChanged', syncDark)
-    return () => WebApp.offEvent('themeChanged', syncDark)
+
+    applyTheme()
+    WebApp.onEvent('themeChanged', applyTheme)
+    return () => WebApp.offEvent('themeChanged', applyTheme)
   }, [])
 
   return (
