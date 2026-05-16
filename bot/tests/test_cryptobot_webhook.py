@@ -301,6 +301,48 @@ async def test_C8_wrong_fiat_rejected(
     assert await _count_configs(fresh_db) == 0
 
 
+async def _sub_row(db_path, payment_id: str):
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM subscriptions WHERE payment_id=?", (payment_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+@pytest.mark.asyncio
+async def test_C10_amount_rub_persisted_for_admin_revenue_tracking(
+    app_client, fresh_db, test_cryptobot_token,
+):
+    """C10. RUB amount must be persisted into subscriptions.amount_rub so the
+    admin dashboard can show real revenue (was 0/Stars-only before the fix)."""
+    user_id = 1010
+    plan = VPN_PLANS["vpn_base"]
+    invoice_id = 10010
+    body = _build_invoice_paid_body(
+        user_id=user_id, plan_key="vpn_base", invoice_id=invoice_id,
+        paid_amount=plan["rub"], paid_asset="RUB",
+        fiat="RUB", amount=plan["rub"],
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 200
+
+    # payment_id is built as f"crypto_{invoice_id}" in handle_cryptobot_webhook
+    sub = await _sub_row(fresh_db, f"crypto_{invoice_id}")
+    assert sub is not None, "subscription must exist"
+    assert sub["amount_rub"] == int(float(plan["rub"])), (
+        f"amount_rub should be {plan['rub']}, got {sub['amount_rub']}"
+    )
+    # CryptoBot payments must NOT inflate stars_paid (would double-count revenue)
+    assert sub["stars_paid"] == 0
+
+
 @pytest.mark.asyncio
 async def test_C9_payload_user_id_overridden_by_attacker_still_needs_correct_amount(
     app_client, fresh_db, test_cryptobot_token,
