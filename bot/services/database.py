@@ -803,6 +803,15 @@ async def get_user_email(user_id: int) -> str | None:
             return row[0] if row and row[0] else None
 
 
+async def get_user_id_by_email(email: str) -> int | None:
+    """Lava webhook fallback: если email юзера реальный (а не tg-{id}@vpnbot.local),
+    ищем user_id по сохранённой почте."""
+    async with _connect() as db:
+        async with db.execute("SELECT id FROM users WHERE email=? LIMIT 1", (email,)) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
 async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
     """Lava recurring: для webhook'а с parentContractId находим нашу sub-row."""
     async with _connect() as db:

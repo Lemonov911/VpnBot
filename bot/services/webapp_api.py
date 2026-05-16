@@ -1304,11 +1304,8 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     user_id = _parse_user_id_from_email(email)
     if user_id is None and email:
         # Реальный email — ищем юзера в БД
-        async with _connect() as db:
-            async with db.execute("SELECT id FROM users WHERE email=? LIMIT 1", (email,)) as cur:
-                row = await cur.fetchone()
-                if row:
-                    user_id = row[0]
+        from services.database import get_user_id_by_email
+        user_id = await get_user_id_by_email(email)
     if user_id is None:
         logger.error("Lava webhook: cannot resolve user from email=%s contract=%s",
                      email, contract_id)
