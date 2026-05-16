@@ -246,7 +246,14 @@ export default function Plans() {
       }
     } catch (e) {
       setLoading(null); setPageStatus('error')
-      setErrMsg(e instanceof Error ? e.message : t('plans_error_server'))
+      const msg = e instanceof Error ? e.message : t('plans_error_server')
+      setErrMsg(msg)
+      // Lava/CryptoBot 4xx часто специфичны (email отклонён, etc.) —
+      // показываем модалкой чтобы юзер точно увидел. Generic-ошибки
+      // оставляем тихим баннером внизу.
+      if (method === 'lavatop' || (e instanceof Error && /email|карт|payment/i.test(e.message))) {
+        WebApp.showAlert(msg)
+      }
     }
   }
 
@@ -352,8 +359,11 @@ export default function Plans() {
             undefined и мы fallback'или на VISIBLE_PLANS[0] = vpn_base, что
             делало vpn_base показанным как «Ваш» а vpn_max как «+20 ₽».
             Для триала фактически нет «текущего платного» — это первая покупка.
-            Поэтому показываем как для null-sub: все mode='buy'. */}
-        {(sub === null || sub.plan === 'vpn_trial') ? (
+            Поэтому показываем как для null-sub: все mode='buy'.
+
+            Expired статус — то же самое: подписка истекла, юзер должен видеть
+            обычные «Купить», а не «Понизить»/«Ваш» от прошлого тарифа. */}
+        {(sub === null || sub.plan === 'vpn_trial' || sub.status === 'expired') ? (
           VISIBLE_PLANS.map((plan, i) => (
             <PlanCard key={plan.key} plan={plan} mode="buy"
               upgradePrice={0} loading={loading === plan.key}

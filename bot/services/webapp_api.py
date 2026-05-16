@@ -1149,7 +1149,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     except Exception as e:
         logger.warning("Lava: set_user_email failed user=%d: %s", user["id"], e, exc_info=True)
 
-    from services.lavatop import create_invoice as _lava_create
+    from services.lavatop import create_invoice as _lava_create, LavaError
     try:
         resp = await _lava_create(
             api_key=LAVATOP_API_KEY,
@@ -1158,6 +1158,17 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
             currency="RUB",
             buyer_language="RU",
         )
+    except LavaError as e:
+        logger.warning("Lava invoice rejected: status=%d msg=%s", e.status, e.lava_message)
+        # Маппим типичные Lava-ошибки на user-friendly RU тексты
+        msg = e.lava_message.lower()
+        if "incorrect email" in msg or "self" in msg:
+            user_msg = "Lava не разрешает покупать у себя — введи другой email."
+        elif "email" in msg:
+            user_msg = "Email отклонён платёжной системой — попробуй другой."
+        else:
+            user_msg = "Платёжная система отклонила запрос. Попробуй другой email или метод оплаты."
+        return web.json_response({"error": user_msg}, status=400)
     except Exception as e:
         logger.error("Lava invoice error: %s", e, exc_info=True)
         return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)

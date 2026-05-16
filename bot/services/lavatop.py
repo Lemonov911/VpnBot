@@ -42,6 +42,15 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context(cafile=certifi.where())
 
 
+class LavaError(Exception):
+    """Raised на не-2xx ответе Lava. .lava_message — текст ошибки из body,
+    .status — HTTP-код. Caller'у можно показать lava_message юзеру."""
+    def __init__(self, msg: str, *, status: int = 0, lava_message: str = ""):
+        super().__init__(msg)
+        self.status = status
+        self.lava_message = lava_message
+
+
 async def create_invoice(
     *,
     api_key: str,
@@ -84,12 +93,20 @@ async def create_invoice(
             text = await r.text()
             if r.status not in (200, 201):
                 logger.warning("lava.top create_invoice %d: %s", r.status, text[:500])
-                raise RuntimeError(f"lava.top create_invoice failed: {r.status}")
+                # Парсим Lava-ошибку чтобы показать юзеру нормальный текст
+                # (типа "Incorrect email to purchase" → "введи другой email")
+                lava_err = ""
+                try:
+                    lava_err = (json.loads(text) or {}).get("error", "") or ""
+                except Exception:
+                    pass
+                raise LavaError(f"lava.top create_invoice failed: {r.status}",
+                                status=r.status, lava_message=lava_err)
             try:
                 data = json.loads(text)
             except Exception:
                 logger.exception("lava.top create_invoice: bad JSON | %.200s", text)
-                raise RuntimeError("lava.top create_invoice: bad JSON")
+                raise LavaError("lava.top create_invoice: bad JSON")
     return data
 
 
