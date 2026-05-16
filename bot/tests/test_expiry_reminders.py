@@ -223,3 +223,124 @@ async def test_scheduler_trial_1day_reminder_sent(fresh_db):
     send_t.assert_awaited_once()
     text = send_t.await_args.args[2]  # (bot, user_id, text, ...)
     assert "триал" in text.lower() or "24 часа" in text.lower()
+
+
+# ── Grace-reminder: 3 дня до конца grace_until ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_scheduler_grace_reminder_sent_3d_before_end(fresh_db):
+    """Sub в grace с grace_until через 2.5 дня → reminder уходит, flag ставится."""
+    from services.scheduler import _send_expiry_reminders
+    from services.database import (
+        mark_subscription_grace, get_subscriptions_grace_ending_soon,
+    )
+    from unittest.mock import MagicMock, patch
+
+    await upsert_user(USER_ID, "u", "U")
+    sub_id = await _make_sub(days_until_expiry=-1.0)  # уже истекла
+    grace_end = (datetime.utcnow() + timedelta(days=2.5)).isoformat()
+    await mark_subscription_grace(sub_id, grace_end)
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    with patch("services.scheduler._send_throttled", new=AsyncMock()) as send_t:
+        await _send_expiry_reminders(bot)
+
+    send_t.assert_awaited_once()
+    text = send_t.await_args.args[2]
+    # Текст про закрытие через 3 дня + что-то про продление
+    assert "3 дня" in text or "отключится" in text.lower()
+    # Не должен попасть второй раз
+    subs = await get_subscriptions_grace_ending_soon(3)
+    assert not any(s["id"] == sub_id for s in subs), "должен быть reminded_grace_3d=1"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_grace_reminder_skips_if_far_from_end(fresh_db):
+    """Sub в grace с grace_until через 10 дней (только начал grace) →
+    reminder НЕ должен слать, ждём пока приблизится к концу."""
+    from services.scheduler import _send_expiry_reminders
+    from services.database import mark_subscription_grace
+    from unittest.mock import MagicMock, patch
+
+    await upsert_user(USER_ID, "u", "U")
+    sub_id = await _make_sub(days_until_expiry=-1.0)
+    grace_end = (datetime.utcnow() + timedelta(days=10)).isoformat()
+    await mark_subscription_grace(sub_id, grace_end)
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    with patch("services.scheduler._send_throttled", new=AsyncMock()) as send_t:
+        await _send_expiry_reminders(bot)
+
+    send_t.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_grace_reminder_no_replay(fresh_db):
+    """Уже отправленный grace-reminder не повторяется на следующем тике."""
+    from services.scheduler import _send_expiry_reminders
+    from services.database import mark_subscription_grace
+    from unittest.mock import MagicMock, patch
+
+    await upsert_user(USER_ID, "u", "U")
+    sub_id = await _make_sub(days_until_expiry=-1.0)
+    grace_end = (datetime.utcnow() + timedelta(days=2.5)).isoformat()
+    await mark_subscription_grace(sub_id, grace_end)
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    with patch("services.scheduler._send_throttled", new=AsyncMock()) as send_t:
+        await _send_expiry_reminders(bot)
+        first = send_t.await_count
+        await _send_expiry_reminders(bot)  # replay
+        second = send_t.await_count
+
+    assert first == 1
+    assert second == 1, "replay must not re-send grace reminder"
+
+
+# ── renew_subscription_from_grace ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_renew_from_grace_restores_active_and_resets_reminders(fresh_db):
+    """Sub в grace + renew → status='active', grace_until=NULL, expires_at +30д,
+    reminded_*-флаги сброшены (новый период → новые напоминания должны идти)."""
+    from services.database import (
+        mark_subscription_grace, mark_reminded, mark_grace_reminded,
+        renew_subscription_from_grace, get_subscription_by_id,
+    )
+    import aiosqlite
+
+    await upsert_user(USER_ID, "u", "U")
+    sub_id = await _make_sub(days_until_expiry=-1.0)
+    await mark_subscription_grace(sub_id, (datetime.utcnow() + timedelta(days=5)).isoformat())
+    await mark_reminded(sub_id, 3)
+    await mark_reminded(sub_id, 1)
+    await mark_grace_reminded(sub_id)
+
+    result = await renew_subscription_from_grace(sub_id, days=30)
+    assert result is not None
+    assert result["status"] == "active"
+
+    sub = await get_subscription_by_id(sub_id)
+    assert sub["status"] == "active"
+    assert sub["grace_until"] is None
+    expires = datetime.fromisoformat(sub["expires_at"].replace(" ", "T"))
+    days_ahead = (expires - datetime.utcnow()).total_seconds() / 86400
+    assert 29 < days_ahead < 31
+
+    # Flags сброшены — за 3 дня до новой даты истечения reminder снова пойдёт
+    async with aiosqlite.connect(fresh_db) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT reminded_3d, reminded_1d, reminded_grace_3d FROM subscriptions WHERE id=?",
+            (sub_id,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["reminded_3d"] == 0
+    assert row["reminded_1d"] == 0
+    assert row["reminded_grace_3d"] == 0

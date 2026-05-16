@@ -32,7 +32,9 @@ from services.database import (
     revoke_config,
     reset_config_slot,
     get_subscriptions_expiring_soon,
+    get_subscriptions_grace_ending_soon,
     mark_reminded,
+    mark_grace_reminded,
     get_expired_orders,
     mark_order_expired,
     get_server_by_id,
@@ -687,6 +689,24 @@ async def _send_expiry_reminders(bot: Bot):
                 reply_markup=_renew_kb(),
             )
             await mark_reminded(sub["id"], days)
+
+    # ── Grace reminder: 3 дня до полного закрытия доступа ─────────────────
+    # Юзер в grace ловит throttle 256 кбит/с и через 14 дней теряет доступ
+    # полностью.  За 3 дня до этого момента — последний конверсионный шанс
+    # вернуть его в active, иначе уходит.  Без этого reminder'а retention
+    # loss потому что юзер чаще всего забывает что VPN на throttle.
+    grace_subs = await get_subscriptions_grace_ending_soon(3)
+    for sub in grace_subs:
+        text = (
+            "⏰ <b>Через 3 дня VPN отключится</b>\n\n"
+            "Подписка в режиме 256 кбит/с — а через 3 дня закроется совсем. "
+            "Продли сейчас, чтобы вернуть полную скорость и не остаться без VPN."
+        )
+        await _send_throttled(
+            bot, sub["user_id"], text, parse_mode="HTML",
+            reply_markup=_renew_kb(),
+        )
+        await mark_grace_reminded(sub["id"])
 
 
 async def _send_renewal_reminders(bot: Bot):

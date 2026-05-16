@@ -49,7 +49,7 @@ const PLAN_NAME_KEY: Record<string, TKey> = {
 function PlanCard({
   plan, mode, upgradePrice, loading, isPending, onClick, animDelay,
 }: {
-  plan: Plan; mode: 'buy' | 'current' | 'upgrade' | 'downgrade' | 'pending'
+  plan: Plan; mode: 'buy' | 'current' | 'renew' | 'upgrade' | 'downgrade' | 'pending'
   upgradePrice: number; loading: boolean; isPending: boolean
   onClick: () => void; animDelay?: number
 }) {
@@ -85,6 +85,15 @@ function PlanCard({
       <span className="text-xs font-bold px-3 py-[5px] rounded-[20px] bg-primary/10 text-[var(--tg-theme-button-color,#2481cc)]">
         {t('plans_yours')}
       </span>
+    )
+  } else if (mode === 'renew') {
+    // Юзер в grace на ТОМ ЖЕ плане — единственный способ выйти из throttle
+    // и продлить.  Без этой кнопки grace-юзер был вынужден или upgrade на
+    // более дорогой план, или потерять доступ.
+    btn = (
+      <button className="btn !min-w-[84px] !text-[13px]" disabled={loading} onClick={onClick}>
+        {loading ? '…' : `${plan.rub} ₽`}
+      </button>
     )
   } else if (mode === 'upgrade') {
     btn = <button className="btn !min-w-[84px] !text-[13px]" disabled={loading} onClick={onClick}>{loading ? '…' : `+${upgradePrice} ₽`}</button>
@@ -389,10 +398,14 @@ export default function Plans() {
           (() => {
             const curPlan = PLANS.find(p => p.key === sub.plan) ?? VISIBLE_PLANS[0]
             const planList = VISIBLE_PLANS
+            const inGrace = sub.status === 'grace'
             return planList.map((plan, i) => {
               const isPending = sub.pending_plan === plan.key
-              let mode: 'current' | 'upgrade' | 'downgrade' | 'pending'
-              if (plan.key === curPlan.key) mode = 'current'
+              let mode: 'current' | 'renew' | 'upgrade' | 'downgrade' | 'pending'
+              // Юзер в grace на текущем плане → показываем «Продлить N₽» вместо «Ваш».
+              // Иначе grace-юзер не имеет способа выйти из throttle на тот же тариф.
+              if (plan.key === curPlan.key && inGrace) mode = 'renew'
+              else if (plan.key === curPlan.key) mode = 'current'
               else if (plan.stars > curPlan.stars) mode = 'upgrade'
               else if (isPending) mode = 'pending'
               else mode = 'downgrade'
@@ -401,7 +414,18 @@ export default function Plans() {
                 <PlanCard key={plan.key} plan={plan} mode={mode}
                   upgradePrice={mode === 'upgrade' ? calcUpgradePrice(curPlan.rub, plan.rub, sub.days_remaining) : 0}
                   loading={loading === plan.key} isPending={isPending} animDelay={i + 1}
-                  onClick={() => handleChange(plan)} />
+                  /* renew (юзер в grace на том же плане) идёт через обычный
+                     buy-flow с PaymentSheet, не через changeSubscriptionPlan.
+                     Backend _deliver_vpn детектит grace + same plan и продлевает
+                     существующую sub + делает unthrottle на агенте. */
+                  onClick={() => {
+                    if (mode === 'renew') {
+                      WebApp.HapticFeedback.impactOccurred('light')
+                      setSheetPlan(plan)
+                    } else {
+                      handleChange(plan)
+                    }
+                  }} />
               )
             })
           })()

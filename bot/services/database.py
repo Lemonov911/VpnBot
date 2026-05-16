@@ -302,6 +302,10 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE subscriptions ADD COLUMN reminded_3d INTEGER NOT NULL DEFAULT 0")
     if "reminded_1d" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN reminded_1d INTEGER NOT NULL DEFAULT 0")
+    # Reminder за 3 дня до конца grace_until — без него юзер в grace получает
+    # 0 уведомлений до полного закрытия доступа через 14 дней.  Retention loss.
+    if "reminded_grace_3d" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN reminded_grace_3d INTEGER NOT NULL DEFAULT 0")
     # Tracking: какому рефереру был начислен бонус за эту подписку.
     # NULL = бонус не начислен, иначе referrer_id. Нужно для rollback при refund.
     if "ref_bonus_awarded_to" not in cols:
@@ -1241,6 +1245,70 @@ async def mark_reminded(sub_id: int, days: int):
     async with _connect() as db:
         await db.execute(f"UPDATE subscriptions SET {col}=1 WHERE id=?", (sub_id,))
         await db.commit()
+
+
+async def get_subscriptions_grace_ending_soon(days: int = 3) -> list[dict]:
+    """Подписки в grace у которых `grace_until` истечёт через `days` дней.
+    Используется для напоминания «3 дня до полного закрытия — успей продлить».
+    Без него юзер в grace не получает уведомлений и пропускает окно retention.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            f"""SELECT * FROM subscriptions
+                WHERE status='grace'
+                AND reminded_grace_3d=0
+                AND grace_until IS NOT NULL
+                AND datetime(grace_until) > datetime('now', '+{days-1} days')
+                AND datetime(grace_until) < datetime('now', '+{days} days')""",
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_grace_reminded(sub_id: int):
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET reminded_grace_3d=1 WHERE id=?", (sub_id,)
+        )
+        await db.commit()
+
+
+async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | None:
+    """Продление из grace-состояния: status→active, grace_until=NULL,
+    expires_at = now + days.  Сбрасывает reminded-флаги (новый период,
+    новые напоминания).
+
+    Возвращает обновлённую запись или None если sub не найдена.
+
+    Caller (handlers/vpn.py:_deliver_vpn) после этого должен вызвать
+    unthrottle/move через vpnctl_client — мы только меняем БД, агент
+    отдельно (см. _apply_plan_upgrade для образца).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id FROM subscriptions WHERE id=?", (sub_id,)
+        ) as cur:
+            if not await cur.fetchone():
+                return None
+        await db.execute(
+            f"""UPDATE subscriptions
+                SET status='active',
+                    grace_until=NULL,
+                    expires_at=datetime('now', '+{days} days'),
+                    reminded_3d=0,
+                    reminded_1d=0,
+                    reminded_grace_3d=0
+                WHERE id=?""",
+            (sub_id,),
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT id, user_id, plan, status, expires_at FROM subscriptions WHERE id=?",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
 
 
 # ── referrals ─────────────────────────────────────────────────────────────────
