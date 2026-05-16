@@ -13,19 +13,81 @@ const FAQ_META = [
   { color: '#8e44ad', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2"/><path d="M2 10h20" stroke="#fff" strokeWidth="2"/><path d="M6 15h4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
 ]
 
-/** Простой markdown-парсер для FAQ-текста: **жирный** + \n → newlines.
- *  Раньше строки с `\n` выводились в одну линию, а `**текст**` показывался
- *  с буквальными звёздочками — плохо читалось. */
+/** Inline parser: **жирный** + любой текст внутри строки. */
+function inlineFmt(text: string, keyPrefix = '') {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) => {
+    if (chunk.startsWith('**') && chunk.endsWith('**')) {
+      return <strong key={`${keyPrefix}-b-${i}`} className="text-[var(--tg-theme-text-color)]">{chunk.slice(2, -2)}</strong>
+    }
+    return <React.Fragment key={`${keyPrefix}-t-${i}`}>{chunk}</React.Fragment>
+  })
+}
+
+/** Markdown-light парсер для FAQ-ответов.
+ *  - Строки `1.`, `2.` ... — нумерованный список
+ *  - Строки `• ` или `- ` — буллет-лист
+ *  - Пустая строка — разделитель параграфов
+ *  - **bold** — жирный inline */
 function FaqText({ text }: { text: string }) {
+  const lines = text.split('\n')
+
+  type Block =
+    | { kind: 'para'; lines: string[] }
+    | { kind: 'ol';   items: string[] }
+    | { kind: 'ul';   items: string[] }
+
+  const blocks: Block[] = []
+  const olRe = /^(\d+)\.\s+(.*)$/
+  const ulRe = /^[•\-]\s+(.*)$/
+
+  for (const raw of lines) {
+    const ln = raw.trimEnd()
+    const ol = ln.match(olRe)
+    const ul = ln.match(ulRe)
+    const last = blocks[blocks.length - 1]
+    if (ol) {
+      if (last?.kind === 'ol') last.items.push(ol[2])
+      else blocks.push({ kind: 'ol', items: [ol[2]] })
+    } else if (ul) {
+      if (last?.kind === 'ul') last.items.push(ul[1])
+      else blocks.push({ kind: 'ul', items: [ul[1]] })
+    } else if (ln === '') {
+      if (last?.kind === 'para') last.lines.push('')  // sep
+    } else {
+      if (last?.kind === 'para') last.lines.push(ln)
+      else blocks.push({ kind: 'para', lines: [ln] })
+    }
+  }
+
   return (
-    <span className="whitespace-pre-line">
-      {text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) => {
-        if (chunk.startsWith('**') && chunk.endsWith('**')) {
-          return <strong key={i} className="text-[var(--tg-theme-text-color)]">{chunk.slice(2, -2)}</strong>
+    <div className="space-y-2.5">
+      {blocks.map((b, bi) => {
+        if (b.kind === 'ol') {
+          return (
+            <ol key={bi} className="list-decimal pl-5 space-y-1">
+              {b.items.map((it, ii) => <li key={ii}>{inlineFmt(it, `${bi}-${ii}`)}</li>)}
+            </ol>
+          )
         }
-        return <span key={i}>{chunk}</span>
+        if (b.kind === 'ul') {
+          return (
+            <ul key={bi} className="list-disc pl-5 space-y-1">
+              {b.items.map((it, ii) => <li key={ii}>{inlineFmt(it, `${bi}-${ii}`)}</li>)}
+            </ul>
+          )
+        }
+        return (
+          <p key={bi}>
+            {b.lines.map((ln, li) => (
+              <React.Fragment key={li}>
+                {li > 0 && <br />}
+                {inlineFmt(ln, `${bi}-${li}`)}
+              </React.Fragment>
+            ))}
+          </p>
+        )
       })}
-    </span>
+    </div>
   )
 }
 
