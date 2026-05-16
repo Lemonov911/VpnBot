@@ -240,7 +240,8 @@ export default function Plans() {
         setLoading(null)
         WebApp.openLink(pay_url)
       } else if (method === 'lavatop') {
-        const { pay_url } = await createVpnInvoiceLavatop(plan.key)
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceLavatop(planKey)
         setLoading(null)
         WebApp.openLink(pay_url)
       } else {

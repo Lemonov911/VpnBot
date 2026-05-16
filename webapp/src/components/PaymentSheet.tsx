@@ -74,8 +74,9 @@ export default function PaymentSheet({
   // Stars 1m auto-renew (subscription_period=2592000). Только для stars+1m.
   const [recurring, setRecurring]         = useState(true)
 
-  // Какие методы поддерживают multi-period (3/6/12). Lava + CryptoBot — только 1м.
-  const methodSupportsMultiPeriod = method === 'stars' || method === 'cryptomus'
+  // Какие методы поддерживают multi-period (3/6/12). CryptoBot — только 1м.
+  // Lava подключён (один offer_id × 4 periodicity), Stars/Cryptomus тоже.
+  const methodSupportsMultiPeriod = method === 'stars' || method === 'cryptomus' || method === 'lavatop'
 
   // Цена и discount по текущему методу/периоду
   const starsPrice = STARS_PRICES[plan.key]?.[period] ?? plan.stars
@@ -145,7 +146,7 @@ export default function PaymentSheet({
         <div className="bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-[var(--card-border)] rounded-[14px] overflow-hidden mb-5">
           {(([
             ...(showLavatop
-              ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${plan.rub} ₽`]]
+              ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${rubPrice} ₽`]]
               : []),
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
             ['crypto',   '💎', t('pay_method_crypto'),    `${plan.rub} ₽`],
@@ -169,9 +170,9 @@ export default function PaymentSheet({
                   {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
               </div>
-              {/* Period chips появляются под Stars и Cryptomus (методы которые
-                  поддерживают multi-period). Lava/CryptoBot — только 1м, чипов нет. */}
-              {(val === 'stars' || val === 'cryptomus') && method === val && methodSupportsMultiPeriod && (
+              {/* Period chips под Stars, Cryptomus и Lava (методы с multi-period
+                  поддержкой). CryptoBot — только 1м, чипов нет. */}
+              {(val === 'stars' || val === 'cryptomus' || val === 'lavatop') && method === val && methodSupportsMultiPeriod && (
                 <div className={`px-3 pt-1 pb-3 ${i < arr.length - 1 ? 'border-b border-gray-500/10' : ''}`}>
                   <div className="flex gap-1.5 flex-wrap">
                     {(['1m','3m','6m','12m'] as PayPeriod[]).map(p => {
@@ -255,7 +256,7 @@ export default function PaymentSheet({
         >
           {method === 'stars'
             ? `${t('pay_pay_btn')} ${starsPrice} ⭐`
-            : method === 'cryptomus'
+            : (method === 'cryptomus' || method === 'lavatop')
               ? `${t('pay_pay_btn')} ${rubPrice} ₽`
               : `${t('pay_pay_btn')} ${plan.rub} ₽`}
         </button>

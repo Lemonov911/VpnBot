@@ -1151,11 +1151,19 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         return web.json_response({"error": "Unknown plan"}, status=400)
-    if plan.get("multi_period"):
-        # Lava требует offer_id per duration — у нас только 1м offer'ы настроены.
-        return web.json_response({"error": "Этот тариф недоступен через Lava"}, status=400)
 
-    offer_id = LAVATOP_OFFERS.get(plan_key)
+    # Lava один offer_id поддерживает все 4 периодичности (MONTHLY /
+    # PERIOD_90_DAYS / PERIOD_180_DAYS / PERIOD_YEAR). Базовый offer_id
+    # маппится по корню plan_key (vpn_base / vpn_max) — суффикс _3m/_6m/_12m
+    # определяет periodicity, передаваемое в API.
+    from services.lavatop import periodicity_for_plan_key
+    base_key = plan_key
+    for suf in ("_3m", "_6m", "_12m"):
+        if plan_key.endswith(suf):
+            base_key = plan_key[:-len(suf)]
+            break
+    offer_id = LAVATOP_OFFERS.get(base_key)
+    periodicity = periodicity_for_plan_key(plan_key)
     if not offer_id:
         return web.json_response(
             {"error": f"Lava offer_id для плана {plan_key} не настроен"}, status=503,
@@ -1198,6 +1206,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
             offer_id=offer_id,
             currency="RUB",
             buyer_language="RU",
+            periodicity=periodicity,
         )
     except LavaError as e:
         logger.warning("Lava invoice rejected: status=%d msg=%s", e.status, e.lava_message)

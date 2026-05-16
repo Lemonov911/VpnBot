@@ -51,6 +51,24 @@ class LavaError(Exception):
         self.lava_message = lava_message
 
 
+# Маппинг наших plan-period suffix'ов на Lava periodicity-enum.
+# Используется в webapp_api при создании Lava invoice.
+PERIODICITY_BY_SUFFIX: dict[str, str] = {
+    "":     "MONTHLY",
+    "_3m":  "PERIOD_90_DAYS",
+    "_6m":  "PERIOD_180_DAYS",
+    "_12m": "PERIOD_YEAR",
+}
+
+
+def periodicity_for_plan_key(plan_key: str) -> str:
+    """vpn_base → MONTHLY, vpn_base_3m → PERIOD_90_DAYS, etc."""
+    for suffix, periodicity in PERIODICITY_BY_SUFFIX.items():
+        if suffix and plan_key.endswith(suffix):
+            return periodicity
+    return "MONTHLY"
+
+
 async def create_invoice(
     *,
     api_key: str,
