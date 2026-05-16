@@ -1128,6 +1128,21 @@ async def get_best_server(protocol: str) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_all_active_servers(protocol: str) -> list[dict]:
+    """Все active сервера для протокола с настроенным agent_url.
+    Используется для multi-location VLESS provisioning: один UUID
+    реплицируется на каждый сервер, юзер видит N локаций в sub-URL."""
+    proto_field = "awg" if protocol == "awg" else "vless" if protocol == "vless" else protocol
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM servers
+            WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
+            ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
+        """, (proto_field,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def update_server_peer_count(server_id: int, delta: int):
     async with _connect() as db:
         await db.execute(
@@ -1138,14 +1153,26 @@ async def update_server_peer_count(server_id: int, delta: int):
 
 
 async def save_peer_to_config(config_id: int, server_id: int, wg_pubkey: str,
-                               assigned_ip: str, config_data: str, label: str):
+                               assigned_ip: str, config_data: str, label: str,
+                               vless_uuid: str | None = None):
+    """Активирует слот после успешного provision на агенте.
+
+    `wg_pubkey` хранит «идентификатор пира на агенте» — для AWG это WG-pubkey,
+    для VLESS это UUID (так уж исторически). Для VLESS дополнительно пишем
+    UUID в отдельную колонку `vless_uuid`, чтобы scheduler мог идентифицировать
+    пира при grace/expiry не полагаясь на label (с multi-location label
+    уникален per-server, а UUID шарится между всеми локациями одного слота).
+    """
     async with _connect() as db:
         await db.execute("""
             UPDATE configs SET
                 server_id=?, wg_pubkey=?, assigned_ip=?,
-                config_data=?, peer_name=?, label=?, status='active'
+                config_data=?, peer_name=?, label=?,
+                vless_uuid=COALESCE(?, vless_uuid),
+                status='active'
             WHERE id=?
-        """, (server_id, wg_pubkey, assigned_ip, config_data, label, label, config_id))
+        """, (server_id, wg_pubkey, assigned_ip, config_data, label, label,
+              vless_uuid, config_id))
         await db.commit()
 
 

@@ -350,21 +350,49 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str):
                 logger.warning("vpnctl WG peer error: %s", e, exc_info=True)
 
     vless_service = vless_service_for_plan(plan_key)
+    # Multi-location subscription: каждый VLESS-слот = один UUID, реплицированный
+    # на ВСЕ активные VLESS-сервера.  Юзер импортирует sub-URL в Happ/V2Box и
+    # видит дропдаун со всеми локациями.  Слоты = независимые UUID (для семьи /
+    # нескольких устройств без шеринга трафик-лимита).
+    import uuid as _uuid
+    from urllib.parse import quote as _q
+    from services.database import get_all_active_servers
+    vless_servers = await get_all_active_servers("vless")
     for i in range(vless_slots):
-        config_id = await create_config_record(sub_id, user_id, protocol="vless")
-        server = await get_best_server("vless")
-        if server:
+        slot_uuid = str(_uuid.uuid4())
+        slot_created = False
+        for server in vless_servers:
             try:
-                label = f"user_{user_id}_vless_{i+1}"
-                peer = await provision_peer(server, label, vless_service)
+                # Label включает локацию: на каждом сервере уникален + читаемо в xray.log
+                flag = (server.get("flag") or "").replace(" ", "")
+                label = f"u{user_id}_v{i+1}_{flag or server['id']}"
+                peer = await provision_peer(server, label, vless_service, peer_id=slot_uuid)
+                # Friendly fragment в vless:// URL → Happ/V2Box покажет это
+                # пользователю в дропдауне локаций. Берём из server.flag+city/name.
+                loc = " ".join(filter(None, [
+                    (server.get("flag") or "").strip(),
+                    (server.get("city") or server.get("name") or "").strip(),
+                ])).strip() or f"Server {server['id']}"
+                cfg_data = peer.config or ""
+                if cfg_data.startswith("vless://"):
+                    base = cfg_data.split("#", 1)[0]
+                    cfg_data = f"{base}#{_q(loc, safe='')}"
+                # Per-location config row.  Все строки одного слота имеют одинаковый
+                # vless_uuid + subscription_id, отличаются только server_id и config_data.
+                config_id = await create_config_record(sub_id, user_id, protocol="vless",
+                                                         server_id=server["id"])
                 await save_peer_to_config(
                     config_id, server["id"], peer.id,
-                    "", peer.config, label,
+                    "", cfg_data, label,
+                    vless_uuid=slot_uuid,
                 )
                 await update_server_peer_count(server["id"], +1)
-                created_vless += 1
+                slot_created = True
             except VpnctlError as e:
-                logger.warning("vpnctl VLess peer error: %s", e, exc_info=True)
+                logger.warning("vpnctl VLess peer error server=%s slot=%d: %s",
+                                server.get("id"), i + 1, e, exc_info=True)
+        if slot_created:
+            created_vless += 1
 
     # Plain WireGuard слоты (без AmneziaWG-обфускации) — для роутеров и клиентов
     # которым DPI не страшен / не нужна обфускация. Серверная часть — отдельный

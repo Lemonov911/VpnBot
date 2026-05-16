@@ -209,8 +209,15 @@ def client_for_server(server: dict) -> VpnctlClient:
     return VpnctlClient(server["agent_url"], server["agent_token"])
 
 
-async def provision_peer(server: dict, label: str, protocol: str) -> PeerResult:
-    return await client_for_server(server).add_peer(protocol, label)
+async def provision_peer(server: dict, label: str, protocol: str,
+                          *, peer_id: str | None = None) -> PeerResult:
+    """Provision a peer on `server` for `protocol` (awg / vless / wg).
+
+    `peer_id` — если задан, agent создаст пира с этим UUID. Используется для
+    multi-location VLESS-подписок: один UUID реплицируется на N серверов,
+    юзер импортирует subscription URL и видит список локаций.
+    """
+    return await client_for_server(server).add_peer(protocol, label, peer_id=peer_id)
 
 
 async def revoke_peer(server: dict, peer_id: str, protocol: str):
