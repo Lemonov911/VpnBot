@@ -194,21 +194,29 @@ ESIM_ACCESS_API_KEY=   # ключ esimaccess.com (опционально)
 ## VPS Operations
 
 ```bash
-# Перезапуск бота
+# Перезапуск бота вручную
 ssh root@151.243.113.31 'systemctl restart vpnbot'
 
 # Логи в реальном времени
 ssh root@151.243.113.31 'journalctl -u vpnbot -f'
 
-# Обновление кода бота на сервере (из корня репо).
-# ВАЖНО: target — /opt/vpnbot/bot/ а НЕ /opt/vpnbot/ (последний — legacy
-# layout который ещё лежит на диске, но НЕ используется systemd-unit'ом).
-# systemd: WorkingDirectory=/opt/vpnbot/bot, ExecStart=/opt/vpnbot/venv/bin/python bot.py
-rsync -avz --exclude='__pycache__' --exclude='*.pyc' --exclude='.env' \
-  --exclude='bot.db*' --exclude='tests' --exclude='data' \
-  bot/ root@151.243.113.31:/opt/vpnbot/bot/
-ssh root@151.243.113.31 'systemctl restart vpnbot'
-```
+# Деплой бота — через CI (`.github/workflows/deploy-bot.yml`). На push в
+# main с изменениями в `bot/**` CI ssh'ится на сервер и форсит
+# `/opt/vpnbot/deploy-bot.sh` (forced-command в authorized_keys + sudoers),
+# который делает `cd /opt/vpnbot && git pull --ff-only origin main` +
+# systemctl restart + healthcheck.
+#
+# То есть достаточно `git push origin main` — CI сделает остальное.
+#
+# ⚠️ НЕ ИСПОЛЬЗОВАТЬ rsync напрямую в /opt/vpnbot/bot/ — путает git working
+# tree (rsync'нутые файлы видны как «modified», следующий CI deploy падает
+# с «Your local changes to the following files would be overwritten by
+# merge»). Один раз уже выстрелили 2026-05-17 — час восстановления.
+#
+# Если действительно нужен hotfix без push: сделать commit и push, потом
+# уже CI задеплоит. Если push временно невозможен — rsync в `/tmp/`, затем
+# на сервере `git stash && mv tmp/* /opt/vpnbot/bot/` + restart, но потом
+# обязательно `git stash drop` + reconcile.
 
 ### ⚠️ DESTRUCTIVE OPS ON PROD — ПРАВИЛА
 
