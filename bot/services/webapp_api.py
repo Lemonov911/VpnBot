@@ -2209,11 +2209,19 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     }
 
     if smart:
+        # Happ принимает HTTP-header `exclude-routes` → мапится в iOS kernel
+        # NEIPv4Settings.excludedRoutes → RU CIDR'ы реально идут direct,
+        # минуя VPN-туннель на уровне ОС.  Это ЕДИНСТВЕННЫЙ способ split
+        # tunneling на iOS (xray routing.rules → direct не работает — iOS
+        # sandbox роутит даже direct-сокеты через utun обратно в туннель).
+        # См. https://www.happ.su/main/dev-docs/routing
+        from services.awg_bypass import _EXTRA_RU_CIDRS
+        headers["exclude-routes-set"] = ", ".join(_EXTRA_RU_CIDRS)
+
         # Happ-compatible xray-core JSON-array со встроенным RU bypass routing.
-        # Sing-box формат (предыдущая попытка 17.05) отвергался Happ'ом
-        # «Неверный формат JSON конфигурации» — Happ внутри xray, не sing-box.
-        # geosite:category-ru + geoip:ru ссылаются на bundled в Happ
-        # geo-files (v2fly domain-list-community).
+        # routing.rules с direct outbound — НЕ работают на iOS, но
+        # работают на Android/Desktop xray-клиентах. Оставляем как
+        # second-layer fallback для non-iOS платформ.
         from services.happ_sub import build_happ_subscription, serialize
         configs = build_happ_subscription(urls, profile_title=plan_name)
         if configs:
