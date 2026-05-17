@@ -157,18 +157,19 @@ def test_each_config_has_three_outbounds():
 
 
 def test_routing_has_ru_bypass_rules():
-    """`routing.rules` должны иметь geosite:category-ru → direct,
-    geoip:ru → direct, остальное → proxy.  Это core RU split-tunneling."""
+    """`routing.rules` должны иметь explicit domain list → direct,
+    inline RU CIDRs → direct, остальное → proxy.  17.05: geosite/geoip
+    references заменены на inline т.к. Happ не bundled .dat файлов."""
     configs = build_happ_subscription(
         ["vless://u@a.com:443?security=reality&pbk=K&sid=01#A"],
     )
     rules = configs[0]["routing"]["rules"]
-    # Первое правило — domain RU
-    assert "geosite:category-ru" in rules[0]["domain"]
+    # Первое правило — explicit domain list для Yandex/Сбер/etc.
+    assert any("yandex.ru" in d for d in rules[0]["domain"])
     assert rules[0]["outboundTag"] == "direct"
-    # Второе — IP RU + private
-    assert "geoip:ru" in rules[1]["ip"]
-    assert "geoip:private" in rules[1]["ip"]
+    # Второе — inline RU CIDR + private LAN
+    assert any("77.88" in ip for ip in rules[1]["ip"])
+    assert any("10.0.0.0" in ip for ip in rules[1]["ip"])  # private LAN
     assert rules[1]["outboundTag"] == "direct"
     # Последнее — всё остальное в proxy
     assert rules[-1]["outboundTag"] == "proxy"

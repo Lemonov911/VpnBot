@@ -17,6 +17,58 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 logger = logging.getLogger(__name__)
 
+# Inline domain list для xray-core `routing.rules`.  Юзер 17.05 подтвердил
+# что `geosite:category-ru` молча не сработал в Happ (Yandex через VLESS
+# тоже геоблокировался) — скорее всего Happ не bundled geosite.dat файл,
+# xray-core игнорит правило без ошибки.  Используем explicit `domain:`
+# match'и — это работает БЕЗ внешних .dat файлов.
+#
+# Покрывает Yandex (все домены), VK, Mail.ru, банки, госуслуги, медиа.
+_RU_BYPASS_DOMAINS = [
+    # Yandex universe — yandex.ru, ya.ru, yandex.com, *.yandex.net, и т.д.
+    "domain:yandex.ru", "domain:yandex.net", "domain:yandex.com",
+    "domain:ya.ru", "domain:yandex.com.tr", "domain:yandex.com.am",
+    "domain:yandex.com.ge", "domain:yandex.kz", "domain:yandex.by",
+    "domain:yandex.fr", "domain:yandex.eu",
+    "domain:kinopoisk.ru", "domain:kp.ru", "domain:dzen.ru",
+    # VK / Mail.ru group
+    "domain:vk.com", "domain:vk.ru", "domain:mail.ru", "domain:ok.ru",
+    "domain:my.mail.ru", "domain:list.ru", "domain:bk.ru", "domain:inbox.ru",
+    "domain:vkadre.ru", "domain:vkontakte.ru", "domain:vkuse.ru",
+    # Bookmate
+    "domain:bookmate.com", "domain:bookmate.ru",
+    # Банки
+    "domain:sberbank.ru", "domain:sber.ru", "domain:online.sberbank.ru",
+    "domain:tinkoff.ru", "domain:tbank.ru", "domain:t-bank.ru",
+    "domain:alfabank.ru", "domain:vtb.ru", "domain:raiffeisen.ru",
+    "domain:gazprombank.ru", "domain:rshb.ru", "domain:rsb.ru",
+    "domain:psbank.ru", "domain:mkb.ru", "domain:rosbank.ru",
+    "domain:open.ru", "domain:sovcombank.ru", "domain:gazprom.ru",
+    # СБП / НСПК / Mir card
+    "domain:nspk.ru", "domain:sbp.nspk.ru", "domain:mironline.ru",
+    # Госуслуги, ФНС
+    "domain:gosuslugi.ru", "domain:nalog.gov.ru", "domain:nalog.ru",
+    "domain:mos.ru", "domain:rosreestr.gov.ru", "domain:gibdd.ru",
+    "domain:roskazna.ru", "domain:pfr.gov.ru", "domain:fns.ru",
+    # Маркетплейсы
+    "domain:wildberries.ru", "domain:wb.ru", "domain:ozon.ru",
+    "domain:avito.ru", "domain:dns-shop.ru", "domain:mvideo.ru",
+    "domain:eldorado.ru", "domain:lamoda.ru", "domain:citilink.ru",
+    # Доставка / такси
+    "domain:samokat.ru", "domain:vkusvill.ru", "domain:perekrestok.ru",
+    "domain:5ka.ru", "domain:lavka.yandex.ru", "domain:eda.yandex.ru",
+    # Стриминги
+    "domain:okko.tv", "domain:ivi.ru", "domain:premier.one",
+    "domain:start.ru", "domain:wink.ru", "domain:more.tv",
+    # Связь / провайдеры
+    "domain:mts.ru", "domain:beeline.ru", "domain:megafon.ru",
+    "domain:tele2.ru", "domain:rt.ru", "domain:rostelecom.ru",
+    # .ru tld catch-all — последний rule, всё .ru через direct.
+    # Это широко но в худшем случае ломает редкие случаи когда юзер
+    # хочет .ru-домен через VPN (например russian-political сайты).
+    "regexp:.+\\.ru$",
+]
+
 
 def _parse_vless_url(url: str) -> dict | None:
     """Парсит `vless://uuid@host:port?params#fragment` → 4-tuple
@@ -122,26 +174,36 @@ def _build_single_config(parsed: dict, profile_title: str) -> dict:
     direct_ob = {"tag": "direct", "protocol": "freedom", "settings": {}}
     block_ob  = {"tag": "block",  "protocol": "blackhole", "settings": {}}
 
+    # IP-rules: inline RU CIDR блоки (Yandex AS, VK, Mail.ru, банки, МТС).
+    # Импортируем из awg_bypass чтобы один источник правды для обеих сторон.
+    from services.awg_bypass import _EXTRA_RU_CIDRS
+    ru_ips = list(_EXTRA_RU_CIDRS) + [
+        # Private + reserved — для loopback и LAN.
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8",
+    ]
+
     return {
         "remarks": parsed["tag"],
         "log": {"loglevel": "warning"},
         "outbounds": [proxy_ob, direct_ob, block_ob],
         "routing": {
             # IPIfNonMatch: сначала по домену (быстро), если не сматчилось —
-            # резолвим в IP и пробуем geoip:ru.  Покрывает оба пути.
+            # резолвим в IP и сверяемся с inline RU-блоками.
             "domainStrategy": "IPIfNonMatch",
             "rules": [
-                # RU-домены (Сбер/Кинопоиск/Госуслуги/Яндекс/банки) → direct.
-                # `category-ru` — bundled в Happ, v2fly domain-list-community.
+                # RU-домены → direct.  Explicit list, БЕЗ geosite:
+                # ссылок (Happ не bundled geosite.dat, geosite: refs молча
+                # игнорятся xray-core'ом).
                 {
                     "type": "field",
-                    "domain": ["geosite:category-ru"],
+                    "domain": _RU_BYPASS_DOMAINS,
                     "outboundTag": "direct",
                 },
                 # RU IPs + private (LAN, loopback) → direct.
+                # inline CIDR'ы вместо geoip:ru (та же причина).
                 {
                     "type": "field",
-                    "ip": ["geoip:ru", "geoip:private"],
+                    "ip": ru_ips,
                     "outboundTag": "direct",
                 },
                 # Всё остальное — в VLESS-туннель.
