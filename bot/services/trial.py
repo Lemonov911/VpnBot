@@ -40,6 +40,18 @@ _TRIAL_LOCKS: dict[int, asyncio.Lock] = {}
 # Pink Panther 1). Достаточно чтобы юзер реально потестил скорость и обход
 # DPI на своём операторе.
 TRIAL_DAYS = 3
+# Для тех, кто пришёл по реферальной ссылке — расширенный триал 7 дней
+# (referrer-bonus задокументирован на странице «Друзья»: «другу — 7 дней
+# вместо обычных 3»). Реферал получает реальное преимущество vs
+# обычный новый юзер, что мотивирует кликать по реферальным ссылкам.
+TRIAL_DAYS_REFERRED = 7
+
+
+async def trial_days_for(user_id: int) -> int:
+    """Сколько дней триала юзер получит — 3 или 7 (если есть referred_by)."""
+    from services.database import get_referred_by
+    referrer = await get_referred_by(user_id)
+    return TRIAL_DAYS_REFERRED if referrer else TRIAL_DAYS
 
 # Cooldown между триалами. Один раз в месяц на аккаунт — не «никогда».
 # С одной стороны защищаем от халявы (один и тот же юзер не сидит на цикле
@@ -143,7 +155,8 @@ async def _provision_trial_locked(user_id: int) -> dict:
     if existing:
         raise TrialAlreadyClaimed()
 
-    expires = datetime.utcnow() + timedelta(days=TRIAL_DAYS)
+    days = await trial_days_for(user_id)
+    expires = datetime.utcnow() + timedelta(days=days)
     # Уникальный payment_id с timestamp — `trial_{user_id}` не подходит,
     # т.к. через TRIAL_COOLDOWN_DAYS юзер может взять новый триал, и
     # UNIQUE-constraint на subscriptions.payment_id уронит вставку.
@@ -280,7 +293,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
         "sub_url":         f"https://maxvpnesim.com/sub/{sub_token}",
         "awg_config":      awg_config,
         "expires_at":      expires,
-        "duration_days":   TRIAL_DAYS,
+        "duration_days":   days,
         # Backward-compat: старые callers ждут "config_id"
         "config_id":       vless_cfg_id,
     }

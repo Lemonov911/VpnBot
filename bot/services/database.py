@@ -320,6 +320,13 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE subscriptions ADD COLUMN ref_bonus_awarded_to INTEGER")
     if "ref_bonus_days_awarded" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN ref_bonus_days_awarded INTEGER NOT NULL DEFAULT 0")
+    # ref_bonus_redeemed_at — timestamp активации бонуса юзером (manual redeem
+    # в Mini App «Мои бонусы»). Используется в rollback_referral_bonus чтобы
+    # отличить «бонус ещё в банке» (NULL) vs «уже применён к expires_at» (не-NULL).
+    # NULL = bonus pending в users.ref_bonus_days; refund вычитает оттуда.
+    # NOT NULL = bonus уже сидит в sub.expires_at реферрера; refund -= sub.expires_at.
+    if "ref_bonus_redeemed_at" not in cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN ref_bonus_redeemed_at TIMESTAMP")
     # Refund tracking на уровне подписки. payments.refunded_at был добавлен в
     # P0-5, но MRR/аналитика смотрит на subscriptions — без зеркала там
     # отчёты показывают "active" / "expired" по refunded подпискам как доход.
@@ -343,6 +350,30 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
     if "ref_bonus_days" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN ref_bonus_days INTEGER NOT NULL DEFAULT 0")
+    # One-time migration: семантика поля ref_bonus_days меняется с «lifetime
+    # earned (auto-applied)» на «pending bank, manual redeem». Существующие
+    # значения УЖЕ были применены к sub.expires_at в старой логике — если
+    # оставим как есть, юзер сможет «redeem'нуть» уже использованные дни →
+    # double-dip. Сбрасываем флагом-маркером (создаём ref_bonus_v2_migrated
+    # стeлс-столбец в schema_state — если ещё не сбрасывали, ставим 0).
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_state'"
+    ) as cur:
+        has_state = await cur.fetchone() is not None
+    if not has_state:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS schema_state (key TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        )
+    async with db.execute(
+        "SELECT 1 FROM schema_state WHERE key='ref_bonus_redeem_migration_v1'"
+    ) as cur:
+        already_migrated = await cur.fetchone() is not None
+    if not already_migrated:
+        await db.execute("UPDATE users SET ref_bonus_days=0 WHERE ref_bonus_days > 0")
+        await db.execute(
+            "INSERT INTO schema_state (key) VALUES ('ref_bonus_redeem_migration_v1')"
+        )
+        logger.info("ref_bonus_days reset to 0 (manual redeem semantics, one-time migration)")
     if "sub_token" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN sub_token TEXT")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)")
@@ -1709,13 +1740,18 @@ async def add_referral_bonus(referrer_id: int, days: int):
 
 async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | None = None) -> int | None:
     """Если у юзера был приглашающий И это его первая ПЛАТНАЯ подписка —
-    начисляет рефереру `days` дней бонуса и возвращает referrer_id.
-    Иначе None.
+    КЛАДЁТ `days` дней в банк реферрера (users.ref_bonus_days) и возвращает
+    referrer_id. Иначе None.
 
-    Триал (`plan='vpn_trial'`) не считается «первой покупкой».
+    Manual-redeem семантика: бонус НЕ применяется к expires_at автоматически.
+    Реферрер должен сам нажать «Активировать» в Mini App «Мои бонусы».
+    Это даёт юзеру control, прозрачность и решает кейс «у меня нет active sub
+    в момент конверсии» (бонус ждёт пока юзер не купит новую подписку).
 
-    Если `paid_sub_id` передан — записываем в subscriptions.ref_bonus_awarded_to
-    referrer_id, чтобы при refund можно было откатить через rollback_referral_bonus().
+    Дополнительные условия:
+    - Триал (`plan='vpn_trial'`) не считается «первой покупкой»
+    - Реферрер должен быть PAID юзером (когда-то имел не-trial подписку) —
+      иначе trial-юзеры могли бы рефералить друг друга круговым self-абузом.
     """
     async with _connect() as db:
         async with db.execute(
@@ -1726,10 +1762,20 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
         if not referrer_id:
             return None
 
-        # paid_count считает только реально оплаченные подписки (не refunded),
-        # чтобы после refund + повторной покупки бонус всё-таки начислился.
-        # Используем refunded_at как single source of truth (status='refunded'
-        # выставляется одновременно через mark_subscription_refunded).
+        # Реферрер должен быть paid юзером (когда-то купил, неважно active ли сейчас).
+        # Trial-юзеры рефералы не получают бонусов — это требование #3.
+        async with db.execute(
+            """SELECT COUNT(*) FROM subscriptions
+               WHERE user_id=? AND plan!='vpn_trial'""",
+            (referrer_id,),
+        ) as cur:
+            referrer_paid_subs = (await cur.fetchone())[0]
+        if referrer_paid_subs == 0:
+            logger.info("referral skip: referrer %d не paid юзер", referrer_id)
+            return None
+
+        # paid_count реферала — реально оплаченные (не refunded), чтобы после
+        # refund + повторной покупки бонус всё-таки начислился.
         async with db.execute(
             """SELECT COUNT(*) FROM subscriptions
                WHERE user_id=? AND plan!='vpn_trial' AND refunded_at IS NULL""",
@@ -1755,14 +1801,11 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
             )
             return None
 
-        # Bonus + extend в одной транзакции
+        # Bank +days (НЕ extend sub.expires_at — это сделает redeem_referral_bonus
+        # когда юзер сам нажмёт кнопку в Mini App).
         await db.execute(
             "UPDATE users SET ref_bonus_days=ref_bonus_days+? WHERE id=?",
             (days, referrer_id),
-        )
-        await db.execute(
-            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
-            (f"+{days} days", referrer_id),
         )
         # Tracking — кому был начислен бонус, чтобы можно было откатить при refund
         if paid_sub_id is not None:
@@ -1776,12 +1819,118 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
         return referrer_id
 
 
+async def redeem_referral_bonus(user_id: int) -> dict | None:
+    """Манульная активация bonus-дней реферрера → продлевает active sub.
+
+    Условия:
+    - У юзера есть active sub (status='active')
+    - users.ref_bonus_days > 0
+
+    Возвращает {days, new_expires_at} если успешно, None если нет active sub
+    или нет бонуса. Caller (API endpoint) должен показать юзеру нужный error.
+
+    Также ставит ref_bonus_redeemed_at=NOW на ВСЕ subscriptions с
+    ref_bonus_awarded_to=referrer_id AND redeemed_at IS NULL — это нужно для
+    корректного rollback_referral_bonus (различает pre vs post-redeem state).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        # Атомарная транзакция: читаем bank + active sub в одной серии
+        async with db.execute(
+            "SELECT ref_bonus_days FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        bank = (row["ref_bonus_days"] if row else 0) or 0
+        if bank <= 0:
+            return None
+
+        async with db.execute(
+            """SELECT id, expires_at FROM subscriptions
+               WHERE user_id=? AND status='active'
+               ORDER BY id DESC LIMIT 1""",
+            (user_id,),
+        ) as cur:
+            sub = await cur.fetchone()
+        if not sub:
+            return None  # нет active sub — caller покажет «Купи подписку»
+
+        # Extend expires_at + reset bank
+        await db.execute(
+            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE id=?",
+            (f"+{bank} days", sub["id"]),
+        )
+        await db.execute(
+            "UPDATE users SET ref_bonus_days=0 WHERE id=?", (user_id,)
+        )
+        # Ставим redeemed_at на все subs где этот юзер был реферрером и бонус
+        # ещё не помечен redeemed. Для rollback логики — отличить bank vs sub.
+        await db.execute(
+            """UPDATE subscriptions
+               SET ref_bonus_redeemed_at=CURRENT_TIMESTAMP
+               WHERE ref_bonus_awarded_to=? AND ref_bonus_redeemed_at IS NULL""",
+            (user_id,),
+        )
+        # Достаём новый expires_at для возврата UI
+        async with db.execute(
+            "SELECT expires_at FROM subscriptions WHERE id=?", (sub["id"],)
+        ) as cur:
+            new_row = await cur.fetchone()
+        await db.commit()
+        return {
+            "days": bank,
+            "sub_id": sub["id"],
+            "new_expires_at": new_row["expires_at"] if new_row else sub["expires_at"],
+        }
+
+
+# ── Helpers для referral pre-check (start handler + API endpoints) ────────────
+
+async def has_any_subscription(user_id: int) -> bool:
+    """True если у юзера есть ЛЮБАЯ подписка (trial / paid / expired / refunded).
+    Используется в /start ref_<id> handler чтобы блокировать поздний referral."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1", (user_id,)
+        ) as cur:
+            return (await cur.fetchone()) is not None
+
+
+async def has_active_paid_sub(user_id: int) -> bool:
+    """True если у юзера есть текущая active платная (не triаl) подписка.
+    Используется для проверки «может ли юзер делиться реферальной ссылкой»."""
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT 1 FROM subscriptions
+               WHERE user_id=? AND status='active' AND plan!='vpn_trial'
+               LIMIT 1""",
+            (user_id,),
+        ) as cur:
+            return (await cur.fetchone()) is not None
+
+
+async def get_referred_by(user_id: int) -> int | None:
+    """Возвращает referrer_id если юзер пришёл по реферальной ссылке, иначе None.
+    Используется в trial.py для определения 7-day vs 3-day триала."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT referred_by FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row and row[0] else None
+
+
 async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | None:
     """Откатывает реферальный бонус для подписки, которая была refund-нута.
 
     Возвращает (referrer_id, days) если откат прошёл, None если бонус не был начислен.
-    Использовать когда юзер вернул деньги через support — рефер получил +7 дней
-    за пустой платёж, надо вычесть.
+
+    Manual-redeem-aware logic:
+    - Если ref_bonus_redeemed_at IS NULL → бонус ещё в банке, вычитаем из
+      users.ref_bonus_days (без трогания active sub).
+    - Если ref_bonus_redeemed_at IS NOT NULL → бонус уже сидит в sub.expires_at
+      реферрера, вычитаем оттуда (банк пустой, не трогаем).
+
+    Это избегает double-discount (раньше мы вычитали И из bank, И из active sub).
 
     Атомарность: claim-first pattern. Сначала UPDATE с WHERE ... IS NOT NULL
     очищает поля; если rowcount=0 — кто-то другой уже откатил, return None.
@@ -1789,9 +1938,9 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        # Шаг 1: читаем awarded поля
+        # Шаг 1: читаем awarded поля + redeemed_at статус
         async with db.execute(
-            """SELECT ref_bonus_awarded_to, ref_bonus_days_awarded
+            """SELECT ref_bonus_awarded_to, ref_bonus_days_awarded, ref_bonus_redeemed_at
                FROM subscriptions WHERE id=?""",
             (refunded_sub_id,),
         ) as cur:
@@ -1801,6 +1950,7 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
 
         referrer_id = row["ref_bonus_awarded_to"]
         days = row["ref_bonus_days_awarded"] or 0
+        was_redeemed = row["ref_bonus_redeemed_at"] is not None
         if days == 0:
             return None
 
@@ -1809,7 +1959,8 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
         # без двойного списания дней.
         claim_cur = await db.execute(
             """UPDATE subscriptions
-               SET ref_bonus_awarded_to=NULL, ref_bonus_days_awarded=0
+               SET ref_bonus_awarded_to=NULL, ref_bonus_days_awarded=0,
+                   ref_bonus_redeemed_at=NULL
                WHERE id=? AND ref_bonus_awarded_to IS NOT NULL""",
             (refunded_sub_id,),
         )
@@ -1817,17 +1968,21 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
             await db.commit()
             return None  # race: другой запрос откатил первым
 
-        # Шаг 3: claim успешен, делаем reverse
-        await db.execute(
-            """UPDATE users SET ref_bonus_days=MAX(0, ref_bonus_days-?)
-               WHERE id=?""",
-            (days, referrer_id),
-        )
-        await db.execute(
-            """UPDATE subscriptions SET expires_at=datetime(expires_at, ?)
-               WHERE user_id=? AND status='active'""",
-            (f"-{days} days", referrer_id),
-        )
+        # Шаг 3: claim успешен, делаем reverse — куда именно зависит от redeemed_at
+        if was_redeemed:
+            # Бонус был активирован → сидит в sub.expires_at реферрера
+            await db.execute(
+                """UPDATE subscriptions SET expires_at=datetime(expires_at, ?)
+                   WHERE user_id=? AND status='active'""",
+                (f"-{days} days", referrer_id),
+            )
+        else:
+            # Бонус в банке pending → вычитаем оттуда
+            await db.execute(
+                """UPDATE users SET ref_bonus_days=MAX(0, ref_bonus_days-?)
+                   WHERE id=?""",
+                (days, referrer_id),
+            )
         await db.commit()
         return referrer_id, days
 

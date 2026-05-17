@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
-import { getReferralStats, type ReferralStats } from '../api'
+import { getReferralStats, redeemReferralBonus, type ReferralStats } from '../api'
 import { useT, useLang } from '../i18n'
 import { copyText } from '../utils/clipboard'
 
@@ -19,18 +19,50 @@ export default function Referral() {
   const [stats,    setStats]   = useState<ReferralStats | null>(null)
   const [loading,  setLoading] = useState(true)
   const [copied,   setCopied]  = useState(false)
+  const [redeemLoading, setRedeemLoading] = useState(false)
   // Cooldown на share — без него юзер при двойном тапе открывает TG share-sheet
   // дважды (вторая инстанция перебивает первую), и TG-чат флудит дубликатами
   // приглашений если юзер быстро тапает 5 раз.
   const [shareLock, setShareLock] = useState(false)
 
+  const refreshStats = () => {
+    return getReferralStats()
+      .then(setStats)
+      .catch(() => setStats(null))
+  }
+
+  const handleRedeem = async () => {
+    if (!stats || redeemLoading) return
+    if (!stats.has_active_sub) {
+      WebApp.showAlert(t('ref_redeem_no_sub' as never))
+      return
+    }
+    setRedeemLoading(true)
+    WebApp.HapticFeedback.impactOccurred('medium')
+    try {
+      const res = await redeemReferralBonus()
+      WebApp.HapticFeedback.notificationOccurred('success')
+      const dateStr = new Date(res.new_expires_at).toLocaleDateString('ru-RU',
+        { day: '2-digit', month: 'long', year: 'numeric' })
+      WebApp.showAlert(
+        (t('ref_redeem_done' as never) as string)
+          .replace('{days}', String(res.days_applied))
+          .replace('{date}', dateStr)
+      )
+      await refreshStats()
+    } catch {
+      WebApp.HapticFeedback.notificationOccurred('error')
+      WebApp.showAlert(t('ref_redeem_err' as never))
+    } finally {
+      setRedeemLoading(false)
+    }
+  }
+
   useEffect(() => {
     WebApp.BackButton.show()
     const goBack = () => nav('/')
     WebApp.BackButton.onClick(goBack)
-    getReferralStats()
-      .then(setStats)
-      .catch(() => setStats(null))  // API упал — UI покажет ref_error fallback
+    refreshStats()
       .finally(() => setLoading(false))
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
@@ -88,16 +120,34 @@ export default function Referral() {
         ))}
       </div>
 
-      {/* Ссылка */}
-      <span className="section-title">{t('ref_link_title')}</span>
+      {/* Ссылка / paid-only gate / Мои бонусы */}
       {loading ? (
         <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] py-3 px-[14px]">
           <div className="h-1 rounded bg-[rgba(128,128,128,0.12)] overflow-hidden">
             <div className="h-full rounded bg-gradient-to-r from-transparent via-[var(--tg-theme-button-color,#2481cc)] to-transparent animate-[progress-slide_1.4s_ease-in-out_infinite] w-1/2" />
           </div>
         </div>
-      ) : stats ? (
+      ) : stats ? !stats.can_refer ? (
+        /* Заглушка для триал-юзеров и тех, у кого нет paid sub:
+           реферальная программа недоступна, ссылка не работает. CTA — купить. */
+        <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl py-5 px-4 text-center">
+          <div className="text-3xl mb-2">🔒</div>
+          <div className="text-[15px] font-semibold text-[var(--tg-theme-text-color)] mb-1">
+            {t('ref_locked_title' as never)}
+          </div>
+          <div className="text-[12px] text-[var(--tg-theme-hint-color)] mb-4 leading-snug">
+            {t('ref_locked_sub' as never)}
+          </div>
+          <button
+            onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
+            className="btn !w-full !py-3 !text-[14px]"
+          >
+            {t('ref_locked_btn' as never)}
+          </button>
+        </div>
+      ) : (
         <>
+          <span className="section-title">{t('ref_link_title')}</span>
           <div className="bg-[var(--tg-theme-section-bg-color)] rounded-[14px] py-3 px-[14px] flex items-center gap-[10px]">
             <span className="flex-1 text-[13px] text-[var(--tg-theme-hint-color)] overflow-hidden text-ellipsis whitespace-nowrap">
               {stats.ref_link}
@@ -113,16 +163,51 @@ export default function Referral() {
             className="w-full py-[13px] rounded-[14px] border-none text-white text-[15px] font-semibold cursor-pointer flex items-center justify-center gap-2.5 transition-opacity disabled:opacity-55 disabled:cursor-not-allowed"
             style={{ background: 'var(--tg-theme-button-color, #2481cc)', color: 'var(--tg-theme-button-text-color, #fff)' }}
           >
-            {/* Telegram silhouette paper-plane (filled).  Узнаваемая иконка
-                бренда — для share-в-TG кнопки лучше чем generic stroke-arrow. */}
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.27 1.4.18 1.12 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/>
             </svg>
             {t('ref_share')}
           </button>
 
-          {/* Статистика */}
-          {(stats.invited > 0 || stats.converted > 0 || stats.bonus_days > 0) && (
+          {/* Мои бонусы — показываем только если bonus_days_pending > 0.
+              Если пусто (default state для новых) — не загромождаем UI.
+              has_active_sub: гейтит кнопку redeem (т.к. бонус применяется
+              только к active sub). */}
+          {stats.bonus_days_pending > 0 && (
+            <>
+              <span className="section-title">🎁 {t('ref_my_bonuses' as never)}</span>
+              <div className="bg-gradient-to-br from-[#27ae60]/15 to-[#2ecc71]/8 border border-[#27ae60]/30 rounded-2xl py-4 px-4">
+                <div className="flex items-baseline justify-between mb-2">
+                  <span className="text-[13px] text-[var(--tg-theme-hint-color)]">
+                    {t('ref_my_bonuses_label' as never)}
+                  </span>
+                  <span className="text-[24px] font-extrabold text-success leading-none">
+                    +{stats.bonus_days_pending}
+                  </span>
+                </div>
+                <div className="text-[11px] text-[var(--tg-theme-hint-color)] mb-3 leading-snug">
+                  {stats.has_active_sub
+                    ? t('ref_my_bonuses_hint_active' as never)
+                    : t('ref_my_bonuses_hint_no_sub' as never)}
+                </div>
+                <button
+                  onClick={handleRedeem}
+                  disabled={redeemLoading || !stats.has_active_sub}
+                  className="w-full py-2.5 rounded-[10px] border-none text-white text-[14px] font-semibold cursor-pointer bg-success disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {redeemLoading
+                    ? '…'
+                    : stats.has_active_sub
+                      ? (t('ref_redeem_btn' as never) as string).replace('{days}', String(stats.bonus_days_pending))
+                      : t('ref_redeem_btn_no_sub' as never)}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Статистика — invited + converted. Bonus_days НЕ показываем тут
+              отдельно (есть отдельный блок «Мои бонусы» выше с redeem-кнопкой). */}
+          {(stats.invited > 0 || stats.converted > 0) && (
             <>
               <span className="section-title">{t('ref_stats')}</span>
               <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
@@ -138,12 +223,6 @@ export default function Referral() {
                     icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="2"/></svg>,
                     label: t('ref_bought'),
                     value: stats.converted,
-                  },
-                  {
-                    color: '#e67e22',
-                    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z" stroke="#fff" strokeWidth="2"/><path d="M12 6v6l4 2" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg>,
-                    label: t('ref_bonus'),
-                    value: `+${stats.bonus_days}`,
                   },
                 ].map(({ color, icon, label, value }, i, arr) => (
                   <div key={label} className={`py-[13px] px-4 flex items-center gap-[14px] ${i < arr.length - 1 ? 'border-b border-solid border-[var(--card-border)]' : ''}`}>

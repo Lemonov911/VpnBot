@@ -9,7 +9,10 @@ from aiogram.types import (
 )
 
 from config import ADMIN_ID, SHOW_ESIM
-from services.database import upsert_user, set_referred_by, get_referral_stats, add_referral_bonus
+from services.database import (
+    upsert_user, set_referred_by, get_referral_stats, add_referral_bonus,
+    has_any_subscription, has_active_paid_sub,
+)
 from services.trial import can_claim_trial, TRIAL_DAYS
 
 router = Router()
@@ -78,11 +81,23 @@ async def cmd_start(message: Message):
     args = message.text.split(maxsplit=1)
     start_param = args[1].strip() if len(args) > 1 else ""
 
+    # Реферальный код. Логика:
+    # 1. Self-referral — silently игнорируем
+    # 2. Юзер уже подписан (trial или paid) — НЕ записываем ref + шлём
+    #    «ты уже зарегистрирован» (поздний ref нечестен — потенциальный абуз)
+    # 3. Реферрер не paid юзер — silently игнорируем (его ссылка не работает,
+    #    требование #3: реферальная программа только с платной подпиской)
+    # 4. Иначе — set_referred_by, юзер получит 7-day trial вместо 3-day
+    ref_link_late = False  # для warning внизу
     if start_param.startswith("ref_"):
         try:
             referrer_id = int(start_param[4:])
             if referrer_id != user_id:
-                await set_referred_by(user_id, referrer_id)
+                if await has_any_subscription(user_id):
+                    ref_link_late = True
+                elif await has_active_paid_sub(referrer_id):
+                    await set_referred_by(user_id, referrer_id)
+                # else: реферрер на триале/без подписки — silent skip
         except ValueError:
             pass
 
@@ -111,6 +126,17 @@ async def cmd_start(message: Message):
         text = (
             "👋 Привет! Я помогу тебе получить доступ к интернету без ограничений.\n\n"
             "Выбери, что тебя интересует:"
+        )
+
+    # Сначала шлём «уже зарегистрирован» если был поздний ref-клик —
+    # юзер должен понять что ссылка не применилась, чтобы не ждал бонуса.
+    if ref_link_late:
+        await message.answer(
+            "ℹ️ <b>Реферальная ссылка не применилась</b>\n\n"
+            "Ты уже зарегистрирован в боте — реферальные ссылки работают только "
+            "для новых юзеров. Расширенный 7-дневный триал предназначен только "
+            "для тех, кто впервые открывает бота по ссылке.",
+            parse_mode="HTML",
         )
 
     await message.answer(

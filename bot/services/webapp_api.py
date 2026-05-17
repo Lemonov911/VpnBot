@@ -1905,14 +1905,18 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
 
 
 async def handle_vpn_trial_status(request: web.Request) -> web.Response:
-    """GET /api/vpn/trial — eligible: можно ли юзеру взять триал."""
-    from services.trial import can_claim_trial, TRIAL_DAYS
+    """GET /api/vpn/trial — eligible: можно ли юзеру взять триал.
+    duration_days — 3 или 7 (для referred-юзеров). UI должен показать
+    правильное число в CTA «получить триал» (отдельная мотивация для тех
+    кто пришёл по реферальной ссылке)."""
+    from services.trial import can_claim_trial, trial_days_for
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    days = await trial_days_for(user["id"])
     return web.json_response({
         "eligible":      await can_claim_trial(user["id"]),
-        "duration_days": TRIAL_DAYS,
+        "duration_days": days,
     })
 
 
@@ -2303,11 +2307,58 @@ async def handle_referral_stats(request: web.Request) -> web.Response:
     bot_info = await bot.get_me()
     stats = await db_get_referral_stats(user["id"])
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user['id']}"
+
+    # Расширения для manual-redeem flow:
+    # - can_refer: есть ли paid sub (только paid юзеры могут делиться ссылкой)
+    # - bonus_days_pending: сколько накоплено в банке (= ref_bonus_days)
+    # - has_active_sub: для UI логики «можно redeem'нуть СЕЙЧАС или нет»
+    from services.database import has_active_paid_sub
+    can_refer = await has_active_paid_sub(user["id"])
+    has_sub = can_refer  # active paid = has redeemable target
     return web.json_response({
         "ref_link":   ref_link,
         "invited":    stats["invited"],
         "converted":  stats["converted"],
-        "bonus_days": stats["bonus_days"],
+        "bonus_days": stats["bonus_days"],          # legacy display
+        "bonus_days_pending": stats["bonus_days"],  # alias — это и есть pending bank
+        "can_refer":  can_refer,
+        "has_active_sub": has_sub,
+    })
+
+
+async def handle_referral_redeem(request: web.Request) -> web.Response:
+    """POST /api/referral/redeem — активация bonus-дней к active sub."""
+    user = _resolve_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    from services.database import redeem_referral_bonus
+    result = await redeem_referral_bonus(user["id"])
+    if result is None:
+        # Узнаем причину для понятного error message
+        from services.database import has_active_paid_sub
+        if not await has_active_paid_sub(user["id"]):
+            return web.json_response({"error": "no_active_sub"}, status=400)
+        return web.json_response({"error": "no_bonus"}, status=400)
+
+    # Notify юзеру в чат бота
+    try:
+        bot: Bot = request.app["bot"]
+        new_date = result["new_expires_at"][:10]
+        await bot.send_message(
+            user["id"],
+            f"🎁 <b>Бонусные дни активированы!</b>\n\n"
+            f"Добавлено: <b>+{result['days']} дней</b>\n"
+            f"Подписка действует до: <b>{new_date}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("referral redeem notify failed user=%d: %s", user["id"], e, exc_info=True)
+
+    return web.json_response({
+        "ok": True,
+        "days_applied":   result["days"],
+        "new_expires_at": result["new_expires_at"],
     })
 
 
@@ -2859,5 +2910,6 @@ def create_api_app(bot: Bot) -> web.Application:
 
     # Реферальная программа
     app.router.add_get ("/api/referral/stats",             handle_referral_stats)
+    app.router.add_post("/api/referral/redeem",            handle_referral_redeem)
 
     return app

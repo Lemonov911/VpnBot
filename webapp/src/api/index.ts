@@ -359,11 +359,24 @@ export interface ReferralStats {
   ref_link:   string
   invited:    number
   converted:  number
-  bonus_days: number
+  bonus_days: number          // legacy display field (same as bonus_days_pending)
+  bonus_days_pending: number  // accumulated bank, ready to redeem
+  can_refer:        boolean   // только paid юзеры могут делиться ссылкой
+  has_active_sub:   boolean   // нужно для redeem (gates кнопку «Активировать»)
 }
 
 export function getReferralStats(): Promise<ReferralStats> {
   return get('/api/referral/stats')
+}
+
+export interface RedeemResult {
+  ok:               boolean
+  days_applied:     number
+  new_expires_at:   string
+}
+
+export function redeemReferralBonus(): Promise<RedeemResult> {
+  return post('/api/referral/redeem', {})
 }
 
 // ── User stats ────────────────────────────────────────────────────────────────
