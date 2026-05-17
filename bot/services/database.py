@@ -848,7 +848,7 @@ async def extend_subscription_expires_at(sub_id: int, new_expires_at: str, *, re
             await db.execute(
                 "UPDATE subscriptions SET expires_at=?, status='active', "
                 "grace_until=NULL, reminded_3d=0, reminded_1d=0, "
-                "reminded_renewal_3d=0 WHERE id=?",
+                "reminded_renewal_3d=0, reminded_grace_3d=0 WHERE id=?",
                 (new_expires_at, sub_id),
             )
         else:

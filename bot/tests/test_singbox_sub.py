@@ -104,6 +104,28 @@ def test_build_config_with_multiple_servers_creates_selector():
     assert selector["default"] == "NL"
 
 
+def test_build_config_dedups_colliding_tags():
+    """Два сервера в одной локации (одинаковый fragment) — sing-box требует
+    уникальные tag'и, иначе reject. Дедуп через «#N»."""
+    urls = [
+        "vless://u1@a.example.com:443?security=reality&pbk=K1&sid=01#NL",
+        "vless://u2@b.example.com:443?security=reality&pbk=K2&sid=02#NL",
+        "vless://u3@c.example.com:443?security=reality&pbk=K3&sid=03#NL",
+    ]
+    cfg = build_singbox_config(urls, rules_base_url="https://x.test/r")
+    vless_obs = [o for o in cfg["outbounds"] if o["type"] == "vless"]
+    tags = [o["tag"] for o in vless_obs]
+    # Все 3 уникальные
+    assert len(set(tags)) == 3
+    # Первый — оригинальный, второй и третий — с суффиксом
+    assert tags[0] == "NL"
+    assert tags[1] == "NL #2"
+    assert tags[2] == "NL #3"
+    # Selector ссылается на дедуплицированные tag'и
+    selector = next(o for o in cfg["outbounds"] if o["type"] == "selector")
+    assert selector["outbounds"] == tags
+
+
 def test_build_config_drops_malformed_urls_silently():
     urls = [
         "vless://u1@a.example.com:443?security=reality&pbk=K&sid=01#OK",

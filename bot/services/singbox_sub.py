@@ -122,11 +122,21 @@ def build_singbox_config(
     outbounds: list[dict] = []
     vless_tags: list[str] = []
 
+    # Sing-box требует уникальные tag'и среди outbounds. Tag берётся из
+    # fragment'а vless:// URL (= label локации). Два сервера в одной городе
+    # (две Amsterdam-ноды) → одинаковый fragment → дубль → sing-box rejects
+    # весь config молча. Дедуп через суффикс «#2», «#3» при коллизии.
+    seen: dict[str, int] = {}
     for url in vless_urls:
         ob = _parse_vless_url(url)
-        if ob:
-            outbounds.append(ob)
-            vless_tags.append(ob["tag"])
+        if not ob:
+            continue
+        base = ob["tag"]
+        seen[base] = seen.get(base, 0) + 1
+        if seen[base] > 1:
+            ob["tag"] = f"{base} #{seen[base]}"
+        outbounds.append(ob)
+        vless_tags.append(ob["tag"])
 
     # Селектор поверх всех VLESS — в Happ выглядит как «выбери локацию».
     # Без него Happ возьмёт первый outbound и не покажет UI выбора.

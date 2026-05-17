@@ -344,71 +344,16 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         logger.warning("Дубль платежа %s для user %d — игнорируем", payment_id, user_id)
         return
 
-    # Renew-from-grace: если у юзера есть grace-sub того же плана — продлеваем
-    # её вместо создания новой (иначе бардак: две sub параллельно, конфиги
-    # старой в vless-grace inbound, новой — заново нужно провижить).
-    # Также вызывает unthrottle на агенте чтобы AWG/VLESS-grace пиры
-    # вернулись на normal speed немедленно (без ожидания scheduler tick).
-    from services.database import (
-        get_active_subscription, renew_subscription_from_grace,
-        get_configs_for_subscription, get_server_by_id, update_config_data,
-    )
-    from services.plans import vless_service_for_plan as _vless_svc
-    existing_active = await get_active_subscription(user_id)
-    if (existing_active and existing_active.get("status") == "grace"
-            and existing_active.get("plan") == plan_key):
-        renewed = await renew_subscription_from_grace(
-            existing_active["id"], days=plan["duration_days"]
-        )
-        if renewed:
-            logger.info("Renew-from-grace: user=%d sub=%d plan=%s",
-                         user_id, existing_active["id"], plan_key)
-            # Unthrottle на агенте — AWG-tc снять, VLESS из vless-grace
-            # вернуть в normal inbound по тарифу.
-            try:
-                from services.vpnctl_client import client_for_server
-                configs = await get_configs_for_subscription(existing_active["id"])
-                target_svc = _vless_svc(plan_key)
-                for cfg in configs:
-                    server_id = cfg.get("server_id")
-                    if not server_id:
-                        continue
-                    server = await get_server_by_id(server_id)
-                    if not server or not server.get("agent_url"):
-                        continue
-                    client = client_for_server(server)
-                    proto = cfg.get("protocol", "")
-                    peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                    assigned_ip = cfg.get("assigned_ip") or ""
-                    try:
-                        if proto == "awg" and peer_id and assigned_ip:
-                            await client.unthrottle_peer("awg", peer_id, assigned_ip)
-                        elif proto in ("vless", "vless-reality") and peer_id:
-                            new_peer = await client.add_peer(
-                                target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id
-                            )
-                            await client.remove_peer("vless-grace", peer_id)
-                            if new_peer.config:
-                                await update_config_data(cfg["id"], new_peer.config)
-                    except VpnctlError as e:
-                        logger.warning("renew-from-grace unthrottle cfg #%d: %s",
-                                        cfg["id"], e, exc_info=True)
-            except Exception as e:
-                logger.error("renew-from-grace unthrottle outer: %s", e, exc_info=True)
-
-            # Записываем платёж + reply юзеру и выходим — новую sub не создаём.
-            await record_payment(
-                user_id=user_id, subscription_id=existing_active["id"],
-                method="stars" if not payment_id.startswith("crypto_") else "crypto",
-                stars=payment.total_amount, tx_id=payment_id,
-            )
-            await message.answer(
-                f"✅ <b>Подписка продлена!</b>\n\n"
-                f"📅 Действует до: <b>{renewed['expires_at'][:10]}</b>\n"
-                f"⚡ Полная скорость восстановлена — VPN снова работает без ограничений.",
-                parse_mode="HTML",
-            )
-            return
+    # Renew-from-grace: shared helper.  Если grace найден и renew выполнен —
+    # внутри отправит сообщение юзеру и запишет платёж; мы выходим.
+    from services.grace import try_renew_from_grace
+    bot_obj = message.bot
+    if await try_renew_from_grace(
+        bot_obj, user_id, plan_key, plan, payment_id,
+        method="stars" if not payment_id.startswith("crypto_") else "crypto",
+        stars=payment.total_amount,
+    ):
+        return
 
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
 

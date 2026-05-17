@@ -213,10 +213,17 @@ def rewrite_allowedips(conf_text: str, bypass: str) -> str:
     """Заменяет строку `AllowedIPs = ...` в WG/AWG-conf на bypass-вариант.
     Если строки нет — возвращает оригинал (не наш .conf).
 
+    Дополняет `::/0` чтобы не было IPv6 leak'а: bypass-список — только IPv4
+    (RU CIDR'ы IPv6 не покрыты в Amnezia source'е). Без `::/0` весь IPv6
+    трафик (DNS AAAA, Cloudflare/Google IPv6) шёл бы мимо тоннеля,
+    раскрывая активность юзера ISP'у. С `::/0` — IPv6 идёт в туннель.
+    Trade-off: RU-сайты через IPv6 (если они доступны) пойдут через VPN.
+    На практике почти весь RU-трафик IPv4, риск минимален.
+
     Идемпотентно: повторный вызов с тем же bypass-стрингом ничего не меняет.
     """
     if not bypass:
         return conf_text
     if "AllowedIPs" not in conf_text:
         return conf_text
-    return _ALLOWED_IPS_RE.sub(f"AllowedIPs = {bypass}", conf_text)
+    return _ALLOWED_IPS_RE.sub(f"AllowedIPs = {bypass}, ::/0", conf_text)

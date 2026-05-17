@@ -130,8 +130,16 @@ PersistentKeepalive = 25
 def test_rewrite_replaces_full_tunnel_with_bypass():
     bypass = "1.0.0.0/8, 2.0.0.0/8, 3.0.0.0/8"
     result = rewrite_allowedips(SAMPLE_AWG_CONF, bypass)
-    assert "AllowedIPs = 1.0.0.0/8, 2.0.0.0/8, 3.0.0.0/8" in result
+    # bypass для IPv4 + ::/0 чтобы IPv6 не утекал
+    assert "AllowedIPs = 1.0.0.0/8, 2.0.0.0/8, 3.0.0.0/8, ::/0" in result
     assert "AllowedIPs = 0.0.0.0/0" not in result
+
+
+def test_rewrite_appends_ipv6_catch_all():
+    """Защита от IPv6 leak: bypass — только IPv4, но AllowedIPs должен включать
+    ::/0 чтобы IPv6 шёл в туннель а не мимо."""
+    result = rewrite_allowedips(SAMPLE_AWG_CONF, "1.0.0.0/8")
+    assert ", ::/0" in result
 
 
 def test_rewrite_keeps_other_lines_intact():
@@ -175,6 +183,6 @@ def test_rewrite_handles_extra_whitespace():
     )
     result = rewrite_allowedips(conf_with_spaces, "1.0.0.0/8")
     assert "AllowedIPs = 1.0.0.0/8" in result
-    # Стара версия с пробелами/IPv6 удалилась полностью
+    # Старый 0.0.0.0/0 удалился, ::/0 переставлен в конец append'ом
     assert "0.0.0.0/0" not in result
-    assert "::/0" not in result
+    assert ", ::/0" in result  # IPv6 catch-all всегда в конце

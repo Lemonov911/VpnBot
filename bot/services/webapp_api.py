@@ -779,6 +779,16 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning("CryptoBot: duplicate payment %s", payment_id)
         return web.Response(status=200)
 
+    # Renew-from-grace: если у юзера grace-sub того же плана — продлеваем
+    # её, шлём unthrottle на агентов, returnsim 200. Иначе обычный create.
+    from services.grace import try_renew_from_grace
+    bot: Bot = request.app["bot"]
+    if await try_renew_from_grace(
+        bot, user_id, plan_key, plan, payment_id, method="crypto",
+        amount_rub=int(float(plan.get("rub", 0))),
+    ):
+        return web.Response(status=200)
+
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
     sub_id = await create_subscription(
         user_id=user_id,
@@ -807,7 +817,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # config_record-ы без peer'ов → юзер платил USDT, видел "оплачен", но в
     # Mini App конфиги вечно empty. Теперь делаем реальный провижининг —
     # тот же helper что Stars-flow.
-    bot: Bot = request.app["bot"]
+    # bot уже извлечён выше (для try_renew_from_grace).
     try:
         from handlers.vpn import provision_vpn_slots_async
         delivered, total = await provision_vpn_slots_async(
@@ -1056,6 +1066,15 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
         logger.warning("Cryptomus: duplicate payment %s", payment_id)
         return web.Response(status=200)
 
+    # Renew-from-grace: shared с другими платёжками.
+    from services.grace import try_renew_from_grace
+    bot: Bot = request.app["bot"]
+    if await try_renew_from_grace(
+        bot, user_id, plan_key, plan, payment_id, method="cryptomus",
+        amount_rub=int(float(plan.get("rub", 0))),
+    ):
+        return web.Response(status=200)
+
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
     sub_id = await create_subscription(
         user_id=user_id,
@@ -1075,7 +1094,7 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
     )
     await complete_order(order_db_id, payment_id=payment_id)
 
-    bot: Bot = request.app["bot"]
+    # bot уже извлечён выше (для try_renew_from_grace).
     try:
         from handlers.vpn import provision_vpn_slots_async
         delivered, total = await provision_vpn_slots_async(
@@ -1415,6 +1434,17 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
         logger.warning("Lava: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+
+    # Renew-from-grace: первый платёж по новому Lava-контракту, но у юзера
+    # есть grace-sub того же плана.  Продлеваем существующую (не создаём
+    # новую с parent_contract_id — это нюанс: при следующей покупке
+    # автопродления Lava сам подключит контракт через email).
+    from services.grace import try_renew_from_grace
+    if await try_renew_from_grace(
+        bot, user_id, plan_key, plan, payment_id, method="lavatop",
+        amount_rub=int(round(amount)),
+    ):
         return web.Response(status=200)
 
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
