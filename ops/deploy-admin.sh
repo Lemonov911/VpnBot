@@ -9,6 +9,15 @@ exec 9>/var/lock/vpnbot-deploy.lock
 flock -x -w 300 9 || { echo "[deploy-admin] could not acquire deploy lock in 300s" >&2; exit 1; }
 
 cd /opt/vpnbot
+
+# Dirty-tree guard — см. deploy-bot.sh для контекста.
+DIRTY=$(git -c safe.directory=/opt/vpnbot status --porcelain)
+if [ -n "$DIRTY" ]; then
+  echo "[deploy-admin] REFUSE — working tree dirty:" >&2
+  echo "$DIRTY" >&2
+  exit 1
+fi
+
 echo "[deploy-admin] $(date -Is) — pulling..."
 git -c safe.directory=/opt/vpnbot pull --ff-only origin main
 echo "[deploy-admin] HEAD now: $(git -c safe.directory=/opt/vpnbot log --oneline -1)"

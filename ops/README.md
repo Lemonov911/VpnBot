@@ -15,11 +15,13 @@ they survive accidental deletion (one-time outage 2026-05-17 lost both — see
 
 `.github/workflows/deploy-bot.yml` and `deploy-admin.yml` SSH to prod as
 the `deploy` user. The deploy SSH keys have **forced-command** restrictions
-in `~/.deploy/.ssh/authorized_keys`:
+in `~deploy/.ssh/authorized_keys` (modern `restrict` = maximally locked:
+no-agent-forwarding + no-port-forwarding + no-X11 + no-pty + no-user-rc):
 
 ```
-command="sudo /opt/vpnbot/deploy-bot.sh",no-pty,no-port-forwarding ssh-ed25519 AAAA... bot-deploy
-command="sudo /opt/vpnbot/deploy-admin.sh",no-pty,no-port-forwarding ssh-ed25519 AAAA... admin-deploy
+restrict,no-pty,command="sudo /opt/vpnbot/deploy-bot.sh" ssh-ed25519 AAAA... github-actions-bot-deploy
+restrict,no-pty,command="sudo /opt/vpnbot/deploy-admin.sh" ssh-ed25519 AAAA... github-actions-admin
+restrict,no-pty,command="/usr/bin/rrsync /opt/vpnbot/webapp/dist" ssh-ed25519 AAAA... github-actions-vpnbot-deploy
 ```
 
 So whatever the CI sends (`ssh ... true`), the server actually runs the
