@@ -372,6 +372,7 @@ export interface UserStats {
   stars_spent: number
   bonus_days:  number
   invited:     number
+  converted:   number
 }
 
 export function getUserStats(): Promise<UserStats> {

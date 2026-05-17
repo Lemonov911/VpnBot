@@ -360,6 +360,8 @@ export default function Home() {
         </div>
 
         {/* ── Referral banner ── */}
+        {/* Если юзер уже кого-то пригласил — показываем его прогресс прямо
+            в баннере (без клика). Иначе — generic CTA. */}
         <div
           onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/referral') }}
           className="bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-center gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
@@ -373,13 +375,30 @@ export default function Home() {
               <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
-          <div className="flex-1">
-            <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
-              {t('home_invite')}
-            </div>
-            <div className="text-xs text-[var(--tg-theme-hint-color)]">
-              {t('home_invite_sub')}
-            </div>
+          <div className="flex-1 min-w-0">
+            {stats && stats.invited > 0 ? (
+              <>
+                <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
+                  {t('home_invite_progress')
+                    .replace('{invited}', String(stats.invited))
+                    .replace('{bonus}', String(stats.bonus_days))}
+                </div>
+                <div className="text-xs text-[var(--tg-theme-hint-color)]">
+                  {stats.converted > 0
+                    ? t('home_invite_progress_sub_with_converts').replace('{converted}', String(stats.converted))
+                    : t('home_invite_progress_sub')}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
+                  {t('home_invite')}
+                </div>
+                <div className="text-xs text-[var(--tg-theme-hint-color)]">
+                  {t('home_invite_sub')}
+                </div>
+              </>
+            )}
           </div>
           <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
             <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>

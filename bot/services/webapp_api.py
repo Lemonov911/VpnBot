@@ -2274,11 +2274,21 @@ async def handle_user_stats(request: web.Request) -> web.Response:
             "SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)
         ) as cur:
             invited = (await cur.fetchone())[0]
+        # converted — сколько из приглашённых реально оформили подписку.
+        # Используется на Home banner: «3 пригласил · 1 уже оформил».
+        async with db.execute(
+            """SELECT COUNT(DISTINCT u.id) FROM users u
+               JOIN subscriptions s ON s.user_id=u.id
+               WHERE u.referred_by=? AND s.status IN ('active','expired','grace')""",
+            (uid,),
+        ) as cur:
+            converted = (await cur.fetchone())[0]
 
     return web.json_response({
         "stars_spent": stars_spent,
         "bonus_days":  bonus_days,
         "invited":     invited,
+        "converted":   converted,
     })
 
 
