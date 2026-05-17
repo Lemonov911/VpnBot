@@ -2158,17 +2158,18 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     }
 
     if smart:
-        # Sing-box JSON со встроенным RU split-tunneling. Happ парсит
-        # `application/json` напрямую; rule_set URL'ы указывают на наш
-        # /static/xray-rules — sing-box их закеширует и обновляет раз в 24ч.
-        from services.singbox_sub import build_singbox_config, serialize_config
-        rules_base = (SUB_URL_BASE or "https://maxvpnesim.com").rstrip("/") + "/static/xray-rules"
-        cfg = build_singbox_config(
-            urls, rules_base_url=rules_base, profile_title=plan_name,
-        )
-        json_body = serialize_config(cfg)
-        headers["Content-Type"] = "application/json; charset=utf-8"
-        return web.Response(text=json_body, headers=headers)
+        # Happ-compatible xray-core JSON-array со встроенным RU bypass routing.
+        # Sing-box формат (предыдущая попытка 17.05) отвергался Happ'ом
+        # «Неверный формат JSON конфигурации» — Happ внутри xray, не sing-box.
+        # geosite:category-ru + geoip:ru ссылаются на bundled в Happ
+        # geo-files (v2fly domain-list-community).
+        from services.happ_sub import build_happ_subscription, serialize
+        configs = build_happ_subscription(urls, profile_title=plan_name)
+        if configs:
+            json_body = serialize(configs)
+            headers["Content-Type"] = "application/json; charset=utf-8"
+            return web.Response(text=json_body, headers=headers)
+        # fallthrough на plain base64 если все URL'ы битые
 
     return web.Response(text=encoded, headers=headers)
 
