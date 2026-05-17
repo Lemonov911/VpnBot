@@ -54,13 +54,23 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
       }, { status: 400 })
     }
 
-    // Empty-slot configs (revoke'нутые пиры) — обнуляем server_id перед
-    // DELETE servers, чтобы не нарушить FK (если PRAGMA foreign_keys=ON).
-    db.prepare(
-      "UPDATE configs SET server_id=NULL WHERE server_id=? AND status='empty'"
-    ).run(sid)
-
-    db.prepare('DELETE FROM servers WHERE id=?').run(sid)
+    // FK references на servers.id есть в 3 таблицах. PRAGMA foreign_keys=ON
+    // активен → DELETE servers упадёт «FOREIGN KEY constraint failed»
+    // если эти ссылки не убрать.  Делаем всё в одной транзакции.
+    const tx = db.transaction((serverId: number) => {
+      // configs: для не-active обнуляем server_id (history-данные слотов
+      // юзеров — empty/revoked/etc.).
+      db.prepare(
+        "UPDATE configs SET server_id=NULL WHERE server_id=?"
+      ).run(serverId)
+      // server_health_log: historical probe data — каскадим delete (он
+      // относится к удаляемому серверу, без сервера бесполезен).
+      db.prepare('DELETE FROM server_health_log WHERE server_id=?').run(serverId)
+      // incidents: то же — история инцидентов привязана к серверу.
+      db.prepare('DELETE FROM incidents WHERE server_id=?').run(serverId)
+      db.prepare('DELETE FROM servers WHERE id=?').run(serverId)
+    })
+    tx(sid)
     return NextResponse.json({ ok: true, deleted: srv.name })
   } finally {
     db.close()
