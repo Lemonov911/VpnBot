@@ -875,10 +875,13 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # тот же helper что Stars-flow.
     # bot уже извлечён выше (для try_renew_from_grace).
     try:
-        from handlers.vpn import provision_vpn_slots_async
+        from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
         delivered, total = await provision_vpn_slots_async(
             bot, user_id, sub_id, plan, plan_key,
         )
+        # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
+        # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
+        await maybe_award_referral_bonus(bot, user_id, sub_id)
     except Exception as e:
         logger.error("CryptoBot: provision crashed for user=%d sub=%d: %s",
                      user_id, sub_id, e, exc_info=True)
@@ -1152,10 +1155,13 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
 
     # bot уже извлечён выше (для try_renew_from_grace).
     try:
-        from handlers.vpn import provision_vpn_slots_async
+        from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
         delivered, total = await provision_vpn_slots_async(
             bot, user_id, sub_id, plan, plan_key,
         )
+        # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
+        # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
+        await maybe_award_referral_bonus(bot, user_id, sub_id)
     except Exception as e:
         logger.error("Cryptomus: provision crashed user=%d sub=%d: %s",
                      user_id, sub_id, e, exc_info=True)
@@ -1559,10 +1565,13 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     await complete_order(order_db_id, payment_id=payment_id)
 
     try:
-        from handlers.vpn import provision_vpn_slots_async
+        from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
         delivered, total = await provision_vpn_slots_async(
             bot, user_id, sub_id, plan, plan_key,
         )
+        # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
+        # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
+        await maybe_award_referral_bonus(bot, user_id, sub_id)
     except Exception as e:
         logger.error("Lava: provision crashed user=%d sub=%d: %s",
                      user_id, sub_id, e, exc_info=True)

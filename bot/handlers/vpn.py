@@ -643,25 +643,9 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         parse_mode="HTML",
     )
 
-    # Реферальный бонус: try_award_referral_bonus сам проверяет (а) есть ли
-    # реферер у юзера, (б) это ли первая ПЛАТНАЯ подписка (триалы не считаются).
-    # Возвращает referrer_id если бонус начислен, иначе None.
-    try:
-        from services.database import try_award_referral_bonus
-        from handlers.start import REFERRAL_BONUS_DAYS
-        referrer_id = await try_award_referral_bonus(user_id, REFERRAL_BONUS_DAYS, paid_sub_id=sub_id)
-        if referrer_id:
-            try:
-                await message.bot.send_message(
-                    referrer_id,
-                    f"🎁 <b>+{REFERRAL_BONUS_DAYS} дней к подписке!</b>\n\n"
-                    "Твой друг купил VPN по твоей реферальной ссылке.",
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-    except Exception as e:
-        logger.warning("Ошибка реферального бонуса: %s", e, exc_info=True)
+    # Реферальный бонус (Stars-flow). Общий helper используется и в Cryptobot/
+    # Cryptomus/Lava webhook'ах — единый код для всех payment-методов.
+    await maybe_award_referral_bonus(message.bot, user_id, sub_id)
 
 
 # Per-user lock — защита от race между _close_trial_on_paid_purchase и
@@ -1041,6 +1025,46 @@ async def _esim_refund_and_notify(bot: Bot, user_id: int, charge_id: str, order_
         )
     except Exception as e:
         logger.error("Refund failed: %s", e, exc_info=True)
+
+
+async def maybe_award_referral_bonus(bot: Bot, user_id: int, sub_id: int) -> None:
+    """Шлёт реферрер-бонус в банк если у юзера есть referred_by + это первая платная.
+
+    Идемпотентно — атомарный CLAIM через WHERE ref_bonus_awarded_to IS NULL
+    в try_award_referral_bonus защищает от double-award race (если webhook
+    прилетит дважды от одной покупки).
+
+    Вызывается из всех 4 платёжных flows:
+    - Stars (_deliver_vpn в этом же файле)
+    - CryptoBot webhook (handle_cryptobot_webhook)
+    - Cryptomus webhook (handle_cryptomus_webhook)
+    - Lava webhook (handle_lavatop_webhook + recurring)
+
+    Реферрер получает TG-сообщение «+N в банк, активируй в Mini App».
+    Текст явно говорит «в банк» — не «к подписке», чтобы юзер не ожидал
+    auto-extend (он удалён в пользу manual redeem).
+    """
+    try:
+        from services.database import try_award_referral_bonus
+        from handlers.start import REFERRAL_BONUS_DAYS
+        referrer_id = await try_award_referral_bonus(
+            user_id, REFERRAL_BONUS_DAYS, paid_sub_id=sub_id,
+        )
+        if referrer_id:
+            try:
+                await bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>+{REFERRAL_BONUS_DAYS} дней в твой бонус-банк!</b>\n\n"
+                    f"Твой друг купил VPN по реферальной ссылке. "
+                    f"Активируй бонус в Mini App: <b>Друзья → 🎁 Мои бонусы</b>.\n\n"
+                    f"Бонус применится к твоей активной подписке (продлит срок).",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass  # юзер заблокировал бота — не страшно
+    except Exception as e:
+        logger.warning("maybe_award_referral_bonus failed user=%d sub=%d: %s",
+                       user_id, sub_id, e, exc_info=True)
 
 
 async def provision_vpn_slots_async(
