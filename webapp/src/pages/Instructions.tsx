@@ -177,11 +177,20 @@ export default function Instructions() {
             ['2', 'bg-purple',   'instr_step2', 'instr_step2_sub'],
             ['3', 'bg-success',  'instr_step3', 'instr_step3_sub'],
           ] as const).map(([n, bg, title, sub]) => (
-            <li key={n} className="flex items-center gap-3">
-              <div className={`w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-white text-[15px] font-bold ${bg}`}>{n}</div>
+            <li key={n} className="flex items-start gap-3">
+              <div className={`w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-white text-[15px] font-bold ${bg} mt-px`}>{n}</div>
               <div className="flex-1 min-w-0">
                 <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color)]">{t(title)}</div>
                 <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-px">{t(sub)}</div>
+                {/* Шаг 1 — кнопки скачать Happ прямо здесь, чтоб юзер не
+                    скроллил до accordion'а ниже. На step 2/3 — text-only. */}
+                {n === '1' && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    <DownloadChip link={APPS[0].links.ios!}     icon="🍎" />
+                    <DownloadChip link={APPS[0].links.android!} icon="▶" />
+                    <DownloadChip link={APPS[0].links.desktop!} icon="🖥" />
+                  </div>
+                )}
               </div>
             </li>
           ))}
