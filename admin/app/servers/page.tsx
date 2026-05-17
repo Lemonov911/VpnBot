@@ -71,6 +71,28 @@ export default function ServersPage() {
     load()
   }
 
+  // Двухступенчатое подтверждение для destructive ops — стандартный паттерн
+  // в админке (`/admin/clients/[id]`-проба, audit-suggestion 16.05). Первый
+  // тап ставит state.confirmDelete = id, второй (на той же кнопке)
+  // действительно удаляет. State сбрасывается через 5 сек.
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null)
+
+  async function deleteServer(id: number, name: string) {
+    if (confirmDelete !== id) {
+      setConfirmDelete(id)
+      setTimeout(() => setConfirmDelete(c => c === id ? null : c), 5000)
+      return
+    }
+    setConfirmDelete(null)
+    const r = await fetch(`/admin/api/servers/${id}`, { method: 'DELETE' })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) {
+      alert(`Не удалось удалить «${name}»: ${data.error || r.statusText}`)
+      return
+    }
+    load()
+  }
+
   async function setCapacity(id: number, current: number) {
     const raw = prompt('Новый capacity (1..10000):', String(current))
     if (raw === null) return
@@ -229,10 +251,23 @@ export default function ServersPage() {
                     Drain
                   </button>
                 ) : (
-                  <button onClick={() => enableServer(s.id)}
-                    className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors shrink-0">
-                    Включить
-                  </button>
+                  <>
+                    <button onClick={() => enableServer(s.id)}
+                      className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors shrink-0">
+                      Включить
+                    </button>
+                    {/* Hard-delete только для drained servers. Двойной тап.
+                        Backend дополнительно блочит если есть active configs. */}
+                    <button onClick={() => deleteServer(s.id, s.name)}
+                      className={`text-xs transition-colors shrink-0 ${
+                        confirmDelete === s.id
+                          ? 'text-red-400 font-semibold animate-pulse'
+                          : 'text-neutral-600 hover:text-red-400'
+                      }`}
+                      title="Удалить сервер из БД (только если drained и нет active configs)">
+                      {confirmDelete === s.id ? 'Точно?' : 'Удалить'}
+                    </button>
+                  </>
                 )}
               </div>
             ))}
