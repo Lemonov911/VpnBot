@@ -230,6 +230,30 @@ async def test_fetch_rejects_suspiciously_short_response(tmp_path, monkeypatch):
     assert not (tmp_path / awg_bypass.BYPASS_CACHE_FILE).exists()
 
 
+def test_rewrite_dns_replaces_with_yandex():
+    """В smart-режиме DNS должен быть Yandex (77.88.8.8) чтобы
+    DNS-запросы шли direct и Yandex резолвер отдавал RU IPs."""
+    from services.awg_bypass import rewrite_dns_for_smart
+    conf = "[Interface]\nDNS = 8.8.8.8, 1.1.1.1\nMTU = 1240\n"
+    result = rewrite_dns_for_smart(conf)
+    assert "DNS = 77.88.8.8, 1.1.1.1" in result
+    assert "8.8.8.8" not in result
+
+
+def test_rewrite_dns_idempotent():
+    """Повторный вызов на уже-обработанном конфиге — no-op."""
+    from services.awg_bypass import rewrite_dns_for_smart
+    conf = "DNS = 77.88.8.8, 1.1.1.1\n"
+    assert rewrite_dns_for_smart(conf) == conf
+
+
+def test_rewrite_dns_no_op_when_no_dns_line():
+    """Если в .conf нет DNS строки — оригинал возвращается."""
+    from services.awg_bypass import rewrite_dns_for_smart
+    conf = "[Interface]\nAddress = 10.0.0.2\nMTU = 1240\n"
+    assert rewrite_dns_for_smart(conf) == conf
+
+
 def test_rewrite_handles_extra_whitespace():
     """AllowedIPs с разным форматом — кейсы из реальных .conf."""
     conf_with_spaces = SAMPLE_AWG_CONF.replace(

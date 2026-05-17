@@ -86,6 +86,16 @@ STALE_AGE_SEC = 24 * 3600  # сутки
 # одинаково. Хватаем всё до конца строки чтобы не оставить хвоста от
 # старого full-tunnel списка.
 _ALLOWED_IPS_RE = re.compile(r"^AllowedIPs\s*=\s*.*$", re.MULTILINE)
+_DNS_RE         = re.compile(r"^DNS\s*=\s*.*$", re.MULTILINE)
+
+# DNS-серверы для smart-режима: Яндекс DNS primary (77.88.8.0/24 уже в
+# bypass → DNS-запрос идёт direct), Cloudflare fallback (через тоннель
+# если первый недоступен).  Зачем не 8.8.8.8 / 1.1.1.1: DNS-запрос ушёл
+# бы через VPN → провайдер DNS видит запрос с Amsterdam → отдаёт
+# глобально-оптимизированные IPs для Yandex/Сбера → они либо CDN-edge
+# (правильно), либо неоптимальные для RU-юзера.  Яндекс DNS отдаёт
+# свои-же сервисы по RU-IP, который мы потом в bypass отправим direct.
+_SMART_DNS_LINE = "DNS = 77.88.8.8, 1.1.1.1"
 
 _DOWNLOAD_TIMEOUT = 60
 
@@ -252,6 +262,20 @@ def get_bypass_allowedips() -> str | None:
             _cached_bypass = p.read_text().strip() or None
             _cached_at = p.stat().st_mtime
     return _cached_bypass
+
+
+def rewrite_dns_for_smart(conf_text: str) -> str:
+    """В smart-режиме подменяет `DNS = ...` на RU-резолвер.
+
+    Без этого DNS-запрос идёт на 8.8.8.8 (агент так дефолтит) → через VPN →
+    Google видит Amsterdam IP → отдаёт CDN-оптимизированный под Европу
+    ответ для RU-сервисов → юзер думает «yandex.ru не работает».
+
+    Идемпотентно: повторный вызов с тем же DNS — no-op.
+    """
+    if "DNS" not in conf_text:
+        return conf_text
+    return _DNS_RE.sub(_SMART_DNS_LINE, conf_text)
 
 
 def rewrite_allowedips(conf_text: str, bypass: str) -> str:

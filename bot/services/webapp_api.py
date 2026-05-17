@@ -242,13 +242,18 @@ async def handle_vpn_config_download(request: web.Request) -> web.Response:
     protocol = (config.get("protocol") or "").lower()
     mode = (request.query.get("mode") or "smart").lower()
 
-    # AWG/WG: подменяем AllowedIPs на bypass-список если smart и список загружен.
-    # VLESS не трогаем — его smart routing живёт в sing-box sub-URL.
+    # AWG/WG: подменяем AllowedIPs на bypass-список + DNS на RU-резолвер.
+    # VLESS не трогаем — его smart routing живёт в xray sub-URL.
     if protocol in ("awg", "wg") and mode == "smart":
-        from services.awg_bypass import get_bypass_allowedips, rewrite_allowedips
+        from services.awg_bypass import (
+            get_bypass_allowedips, rewrite_allowedips, rewrite_dns_for_smart,
+        )
         bypass = get_bypass_allowedips()
         if bypass:
             body = rewrite_allowedips(body, bypass)
+            # DNS = 77.88.8.8 (Yandex) — иначе DNS-запросы идут на Google/CF
+            # через VPN → RU-сервисы видят Amsterdam-резолв и отдают CDN.
+            body = rewrite_dns_for_smart(body)
 
     # Human-friendly filename — `MAX VPN 🇳🇱 Amsterdam.conf` вместо
     # `tg154923518_41.conf` (наш внутренний tg-id-based label).
