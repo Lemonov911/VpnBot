@@ -6,7 +6,19 @@ import {
   getTrialStatus, claimTrial,
   type Subscription, type UserStats, type TrialStatus,
 } from '../api'
-import { useT, usePlural } from '../i18n'
+import { useT, usePlural, useLang } from '../i18n'
+
+// "2026-05-30 21:00:58" / "2026-05-30T21:00:58.123" → "30 мая" / "May 30"
+function formatNiceDate(iso: string, lang: 'ru' | 'en'): string {
+  try {
+    // SQLite формат может быть с пробелом → даже встроенный Date парсит ISO.
+    const d = new Date(iso.replace(' ', 'T'))
+    if (isNaN(d.getTime())) return ''
+    return new Intl.DateTimeFormat(lang === 'ru' ? 'ru-RU' : 'en-US', {
+      day: 'numeric', month: 'short',
+    }).format(d)
+  } catch { return '' }
+}
 
 // Feature flag — VITE_SHOW_ESIM=false скрывает eSIM-блок (parity с BottomNav).
 const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
@@ -15,6 +27,7 @@ export default function Home() {
   const nav    = useNavigate()
   const t      = useT()
   const p      = usePlural()
+  const { lang } = useLang()
 
   const [sub,       setSub]       = useState<Subscription | null | undefined>(undefined)
   const [stats,     setStats]     = useState<UserStats | null>(null)
@@ -207,6 +220,7 @@ export default function Home() {
                     <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">{planLabel(sub.plan)}</div>
                     <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
                       {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
+                      {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}
                     </div>
                     <div className="flex-1 min-h-[20px]" />
                     <button
@@ -261,6 +275,7 @@ export default function Home() {
                         </div>
                         <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-0.5">
                           {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
+                          {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}
                         </div>
                       </>
                     ) : (

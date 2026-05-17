@@ -1946,7 +1946,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     except TrialAlreadyClaimed:
         return web.json_response(
             {"error": "already_claimed",
-             "message": "Триал уже использован."},
+             "message": "Пробный период уже использован."},
             status=409,
         )
     except TrialNoServer:
@@ -2199,7 +2199,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 # активная подписка в Happ-Profile-Title должен выглядеть
                 # узнаваемо, а не как «VPN» (default).
                 if sub["plan"] == "vpn_trial":
-                    plan_name = "Триал 🎁"
+                    plan_name = "Пробный 🎁"
                 else:
                     plan_name = plan.get("name", "VPN")
                 cap_gb = plan.get("soft_cap_gb")
