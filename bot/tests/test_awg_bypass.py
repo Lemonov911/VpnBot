@@ -201,33 +201,22 @@ def test_extra_ru_cidrs_cover_major_services():
 
 
 @pytest.mark.asyncio
-async def test_fetch_rejects_suspiciously_short_response(tmp_path, monkeypatch):
-    """GitHub maintenance page / captcha / broken redirect → ответ 200 OK с
-    HTML внутри. ru_lines = 0-2 строки. Без sanity-check'а помещали бы это
-    в кеш → bypass становится 0.0.0.0/0 (full-tunnel) тихо. Защита."""
-    from unittest.mock import patch
+async def test_refresh_uses_hardcoded_lite_list(tmp_path, monkeypatch):
+    """Lite-режим (17.05): refresh не дёргает сеть, только hardcoded
+    `_EXTRA_RU_CIDRS`. Компромисс из-за iOS WG limit на split-tunnel
+    routes (юзер 17.05 на 1202 entries не открывал yandex.ru даже по
+    raw IP — клиент молча игнорил bypass)."""
     from services import awg_bypass
 
     monkeypatch.setattr(awg_bypass, "RULES_DIR", tmp_path)
+    stats = await awg_bypass.refresh_bypass(force=True)
 
-    class FakeResp:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return None
-        def raise_for_status(self): pass
-        async def text(self): return "<html><body>maintenance</body></html>"
-
-    class FakeSess:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return None
-        def get(self, url): return FakeResp()
-
-    with patch("aiohttp.ClientSession", return_value=FakeSess()):
-        stats = await awg_bypass.refresh_bypass(force=True)
-
-    assert stats["error"] is not None
-    assert "suspicious" in stats["error"].lower()
-    # bypass файл НЕ записан
-    assert not (tmp_path / awg_bypass.BYPASS_CACHE_FILE).exists()
+    assert stats["error"] is None
+    assert stats["downloaded_bytes"] == 0  # сеть НЕ дёргалась
+    assert stats["ru_cidrs"] == len(awg_bypass._EXTRA_RU_CIDRS)
+    # bypass должен быть существенно меньше 1k чтобы не упереться в iOS limit
+    assert stats["bypass_cidrs"] < 600
+    assert (tmp_path / awg_bypass.BYPASS_CACHE_FILE).exists()
 
 
 def test_rewrite_dns_replaces_with_yandex():

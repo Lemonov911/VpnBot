@@ -190,39 +190,16 @@ async def refresh_bypass(force: bool = False) -> dict:
             stats["took_ms"] = int((time.monotonic() - t0) * 1000)
             return stats
 
-    # Sanity-check внутри loop'а: каждый URL проверяем на «> 10 валидных CIDR».
-    # GitHub maintenance/captcha → 200 OK с HTML → 0-2 строки → пробуем
-    # fallback. Иначе тихо кешировали бы мусор и юзеры получали full-tunnel.
-    text: str | None = None
-    ru_lines: list[str] = []
-    for url in [_PRIMARY_URL, *_FALLBACK_URLS]:
-        try:
-            text = await _fetch_text(url)
-            stats["downloaded_bytes"] = len(text)
-            ru_lines = [l for l in text.splitlines()
-                        if l.strip() and not l.startswith("#")]
-            if len(ru_lines) < 10:
-                logger.warning(
-                    "awg-bypass: %s returned suspicious list (%d CIDRs)",
-                    url, len(ru_lines),
-                )
-                text = None
-                ru_lines = []
-                continue
-            break
-        except Exception as e:
-            logger.warning("awg-bypass: %s failed: %s", url, e)
-            continue
-
-    if text is None or not ru_lines:
-        stats["error"] = "all sources failed or returned suspicious data"
-        stats["took_ms"] = int((time.monotonic() - t0) * 1000)
-        return stats
-
-    # Augmentация: добавляем hardcoded CIDR'ы для крупных RU-сервисов
-    # которые НЕ в Amnezia curated (Yandex, VK, Mail.ru, etc.).
-    # Юзер 17.05 поймал yandex.ru геоблок — фикс через расширение списка.
-    ru_lines = ru_lines + _EXTRA_RU_CIDRS
+    # 2026-05-17: переход на «lite»-режим — только hardcoded major AS-блоки.
+    # Причина: Amnezia curated (145) + EXTRA (30) = ~1200 bypass CIDR в
+    # AllowedIPs. iOS WireGuard / AmneziaWG молча игнорят split-tunnel
+    # routes при таком объёме (тестировал юзер: yandex.ru / Bookmate /
+    # Я.Еда не работали, raw IP 77.88.55.88 timeout).
+    # Lite-список: 28 major RU AS-блоков → 282 bypass CIDR, 4 KB.
+    # Покрывает Yandex, VK/Mail.ru, Bookmate, МТС, Sber, Госуслуги.
+    # Off-list RU services работают только если хостятся под этими AS.
+    text = None  # не качаем из сети
+    ru_lines = list(_EXTRA_RU_CIDRS)
 
     stats["ru_cidrs"] = len(ru_lines)
 
@@ -244,7 +221,7 @@ async def refresh_bypass(force: bool = False) -> dict:
 
     # Сохраняем RU список тоже — полезно для debug + чтобы агент/админ мог
     # глянуть «какой RU список используется сейчас».
-    (RULES_DIR / RU_CIDRS_FILE).write_text(text)
+    (RULES_DIR / RU_CIDRS_FILE).write_text("\n".join(ru_lines))
 
     _cached_bypass = bypass_str
     _cached_at = time.time()
