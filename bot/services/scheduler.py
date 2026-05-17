@@ -230,6 +230,31 @@ async def _process_expired_subscriptions(bot: Bot):
                     if assigned_ip and peer_name:
                         await client.throttle_peer("awg", peer_name, assigned_ip, kbps=256)
                         logger.info("AWG конфиг #%d throttled 256kbps (sub=%d)", cfg_id, sub_id)
+                    else:
+                        # Data drift: assigned_ip пустой → throttle невозможен
+                        # без него (tc нужен dst IP для фильтра).  Без alert'а
+                        # юзер получит full speed бесплатно 14 дней grace.
+                        # Audit 17.05 поймал — раньше silently skipped.
+                        logger.error(
+                            "AWG cfg #%d (sub=%d) cannot throttle: "
+                            "assigned_ip=%r peer_name=%r — admin must check data drift",
+                            cfg_id, sub_id, assigned_ip, peer_name,
+                        )
+                        try:
+                            from config import ADMIN_ID
+                            if ADMIN_ID and bot is not None:
+                                await bot.send_message(
+                                    ADMIN_ID,
+                                    f"⚠️ <b>AWG grace throttle SKIPPED</b>\n\n"
+                                    f"cfg #{cfg_id} sub #{sub_id} — assigned_ip="
+                                    f"<code>{assigned_ip or 'NULL'}</code>, "
+                                    f"peer_name=<code>{peer_name or 'NULL'}</code>\n\n"
+                                    f"Юзер сейчас на full speed в grace. "
+                                    f"Найди и пофикси data drift вручную.",
+                                    parse_mode="HTML",
+                                )
+                        except Exception:
+                            pass  # admin alert — best effort
 
                 elif protocol in ("vless", "vless-reality"):
                     # Перемещаем в grace inbound (порт 9453, tc 256 кбит/с).
@@ -313,7 +338,16 @@ async def _process_grace_expired_subscriptions(bot: Bot):
 
     AWG  — снимает tc-throttle, удаляет пир, освобождает слот.
     VLESS — удаляет пир из vless-grace inbound, освобождает слот.
+
+    Race protection: между snapshot'ом `grace_subs` и началом revoke юзер
+    может заплатить и `try_renew_from_grace` атомарно перевёл sub в active.
+    Atomic UPDATE в БД сам по себе НЕ останавливает наш скедулер — поэтому
+    делаем явный re-check `subscriptions.status` ДО revoke каждого config'а.
+    Audit 17.05 #2: без re-check'a юзер платил → DB renew OK → 10 сек спустя
+    скедулер revoke'ал все его VLESS peers, юзер видел «отвал» сразу после
+    оплаты.
     """
+    from services.database import get_subscription_by_id
     grace_subs = await get_grace_expired_subscriptions()
     if not grace_subs:
         return
@@ -325,9 +359,31 @@ async def _process_grace_expired_subscriptions(bot: Bot):
         user_id  = sub["user_id"]
         plan_key = sub.get("plan", "")
 
+        # Re-check status перед началом revoke'а — sub могла быть renew'нута.
+        cur = await get_subscription_by_id(sub_id)
+        if not cur or cur.get("status") != "grace":
+            logger.info(
+                "sub #%d skipped — status уже %s (race с renew-from-grace)",
+                sub_id, cur.get("status") if cur else "deleted",
+            )
+            continue
+
         configs = await get_configs_for_subscription(sub_id)
 
+        aborted = False
         for cfg in configs:
+            # Per-config re-check: даже внутри одной sub revoke'ом всех конфигов
+            # может занять несколько секунд (агент-RPC). Renew-from-grace мог
+            # прилететь в этом окне.
+            cur = await get_subscription_by_id(sub_id)
+            if not cur or cur.get("status") != "grace":
+                logger.info(
+                    "sub #%d revoke aborted mid-loop — status стал %s",
+                    sub_id, cur.get("status") if cur else "deleted",
+                )
+                aborted = True
+                break
+
             server_id   = cfg.get("server_id")
             protocol    = cfg.get("protocol", "")
             cfg_id      = cfg["id"]
@@ -360,8 +416,21 @@ async def _process_grace_expired_subscriptions(bot: Bot):
             await reset_config_slot(cfg_id)
             logger.info("Конфиг #%d отозван (grace истёк, sub=%d)", cfg_id, sub_id)
 
-        await mark_subscription_expired(sub_id)
-        logger.info("Подписка #%d → expired (post-grace)", sub_id)
+        if aborted:
+            continue
+
+        # Final atomic check: переводим в expired ТОЛЬКО если ещё grace.
+        # Если renew-from-grace успел между нашими per-config re-check'ами
+        # и этим финальным UPDATE — no-op, юзер получает renew'нутый sub
+        # без destructive change.
+        from services.database import mark_subscription_expired_from_grace
+        if await mark_subscription_expired_from_grace(sub_id):
+            logger.info("Подписка #%d → expired (post-grace)", sub_id)
+        else:
+            logger.info(
+                "sub #%d: mark_expired no-op — статус уже не grace (renew race)",
+                sub_id,
+            )
 
         await _send_throttled(
             bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",

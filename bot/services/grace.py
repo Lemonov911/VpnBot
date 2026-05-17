@@ -58,7 +58,12 @@ async def try_renew_from_grace(
     if existing.get("status") != "grace":
         return False
     if existing.get("plan") != plan_key:
-        return False
+        # Юзер в grace на ДРУГОМ плане. Раньше: создавалась 2-я sub, старая
+        # grace sub висела до natural expire (14 дней throttle, дальше
+        # auto-revoke).  Audit 17.05 #8: закрываем старую grace, чтобы
+        # её AWG/VLESS пиры освободили слоты и не сбивали с толку в Mini App.
+        await _close_dangling_grace(bot, existing["id"], existing.get("plan", ""))
+        return False  # caller продолжает обычный create-flow
 
     sub_id = existing["id"]
     renewed = await renew_subscription_from_grace(
@@ -138,3 +143,54 @@ async def try_renew_from_grace(
         logger.warning("send grace-renew confirmation to user %d: %s", user_id, e)
 
     return True
+
+
+async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
+    """Закрывает grace-sub (status='grace' → 'expired') + revoke агент-side
+    конфигов. Используется когда юзер в grace на одном плане покупает другой
+    (cross-plan upgrade/downgrade), audit 17.05 #8.
+
+    Best-effort: если agent down, DB всё равно помечается expired. Drift на
+    агенте подберёт `_sync_vless_active_uuids` следующим тиком.
+    """
+    from services.database import (
+        get_configs_for_subscription, get_server_by_id,
+        update_server_peer_count, reset_config_slot,
+        mark_subscription_expired_from_grace,
+    )
+    from services.plans import vless_service_for_plan as _vless_svc
+
+    configs = await get_configs_for_subscription(sub_id)
+    for cfg in configs:
+        cfg_id = cfg["id"]
+        server_id = cfg.get("server_id")
+        protocol = cfg.get("protocol", "")
+        peer_name = cfg.get("peer_name") or ""
+        vless_uuid = cfg.get("vless_uuid") or ""
+        if server_id:
+            server = await get_server_by_id(server_id)
+            if server and server.get("agent_url"):
+                try:
+                    cli = client_for_server(server)
+                    if protocol == "awg" and peer_name:
+                        try: await cli.remove_peer("awg", peer_name)
+                        except VpnctlError: pass
+                        await update_server_peer_count(server_id, -1)
+                    elif protocol in ("vless", "vless-reality") and vless_uuid:
+                        # peer мог быть в vless-grace или обычном inbound
+                        config_data = cfg.get("config_data") or ""
+                        svc = "vless-grace" if ":9453" in config_data else _vless_svc(plan_key)
+                        try: await cli.remove_peer(svc, vless_uuid)
+                        except VpnctlError: pass
+                        await update_server_peer_count(server_id, -1)
+                except Exception as e:
+                    logger.warning("close_dangling_grace cfg #%d: %s", cfg_id, e)
+        await reset_config_slot(cfg_id)
+
+    # Финальный atomic mark: только grace → expired (защита от race с
+    # параллельным renew, хотя в нашем callsite race нет).
+    if await mark_subscription_expired_from_grace(sub_id):
+        logger.info(
+            "Cross-plan: dangling grace sub #%d (plan=%s) → expired, configs revoked",
+            sub_id, plan_key,
+        )

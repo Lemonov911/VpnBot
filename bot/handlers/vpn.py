@@ -221,6 +221,29 @@ async def pre_checkout(query: PreCheckoutQuery):
             )
             await query.answer(ok=False, error_message="Неверная сумма платежа.")
             return
+
+        # Audit 17.05 #11: re-check active sub.  Между invoice gen и
+        # pre_checkout юзер мог parallel'но купить другой тариф (открыл
+        # 2 окна Mini App / тапнул на разные планы). Без проверки получим
+        # 2 active sub.  Разрешаем grace (renew-from-grace flow legitimate).
+        from services.database import get_active_subscription
+        existing = await get_active_subscription(query.from_user.id)
+        if existing and existing.get("status") == "active":
+            # У юзера УЖЕ active sub. На Stars нет auto-renew через
+            # pre_checkout (recurring обходит pre_checkout) → значит это
+            # либо double-purchase, либо upgrade через wrong flow.
+            existing_plan = existing.get("plan", "")
+            if existing_plan == payload:
+                msg = f"У тебя уже активная подписка «{VPN_PLANS[payload]['name']}». Открой Mini App."
+            else:
+                msg = "У тебя уже есть активная подписка. Для смены тарифа используй кнопку «Улучшить» в Mini App."
+            logger.warning(
+                "pre_checkout REJECT user=%d: existing active sub plan=%s tried=%s",
+                query.from_user.id, existing_plan, payload,
+            )
+            await query.answer(ok=False, error_message=msg)
+            return
+
         await query.answer(ok=True)
         return
     # Unknown plan_key (мог быть удалён из VPN_PLANS пока юзер тормозил)
@@ -275,13 +298,14 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
     payment_id = payment.telegram_payment_charge_id
     logger.info("Stars renewal: user=%d plan=%s charge_id=%s", user_id, plan_key, payment_id)
 
-    # Дубль-guard: если этот renewal charge_id мы уже видели — игнорируем
+    # Дубль-guard: если этот renewal charge_id мы уже видели — игнорируем.
+    # Audit 17.05 #1: проверяем `payments.tx_id` (recurring create's own row),
+    # не `subscriptions.payment_id` (тот для первоначальной sub).
     from services.database import (
-        get_subscription_by_payment_id, get_recurring_sub_for_renewal,
+        is_payment_recorded, get_recurring_sub_for_renewal,
         extend_subscription_expires_at, record_payment,
     )
-    existing = await get_subscription_by_payment_id(payment_id)
-    if existing:
+    if await is_payment_recorded(payment_id):
         logger.warning("Stars renewal: duplicate charge_id %s, ignored", payment_id)
         return
 
@@ -296,6 +320,19 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         await _deliver_vpn(message, payment, plan, plan_key, auto_renew=True)
         return
 
+    # record_payment FIRST — atomic UNIQUE на tx_id будет gate'ом перед
+    # extend. Если retry прилетит после первой записи но до commit'а DB
+    # extend'а — второй record_payment вернёт False, extend будет skipped.
+    inserted = await record_payment(
+        user_id=user_id, subscription_id=sub["id"],
+        method="stars",
+        stars=payment.total_amount,
+        tx_id=payment_id,
+    )
+    if not inserted:
+        logger.warning("Stars renewal: tx_id %s already recorded (race), ignored", payment_id)
+        return
+
     # Extend expires_at от max(now, current) + plan duration. Если sub был в grace
     # или просрочен — extend от now (не теряем неоплаченное время).
     try:
@@ -305,17 +342,6 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
     base = max(cur_expires, datetime.utcnow())
     new_expires = base + timedelta(days=plan["duration_days"])
     await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
-
-    # Фиксируем платёж для аналитики (не sub-row, отдельный payments-record).
-    try:
-        await record_payment(
-            user_id=user_id, subscription_id=sub["id"],
-            method="stars",
-            stars=payment.total_amount,
-            tx_id=payment_id,
-        )
-    except Exception as e:
-        logger.warning("Stars renewal: record_payment failed %s", e, exc_info=True)
 
     try:
         await bot.send_message(
@@ -378,9 +404,13 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     # Закрываем триал сразу: revoke его пиры и mark_expired.
     try:
         from services.database import get_user_subscriptions_by_plan
-        from services.scheduler import _process_expired_subscriptions  # not used directly, just for clarity
-        active_trials = await get_user_subscriptions_by_plan(user_id, "vpn_trial", status="active")
-        for trial_sub in active_trials:
+        # Закрываем И active И grace trial'ы — иначе grace-trial sub висит,
+        # peers продолжают балансироваться в Happ subscription URL юзера
+        # (audit 17.05 #C1).
+        trials = await get_user_subscriptions_by_plan(
+            user_id, "vpn_trial", status=("active", "grace"),
+        )
+        for trial_sub in trials:
             await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
     except Exception as e:
         logger.warning("close-trial-on-paid failed user %d: %s (продолжаем)", user_id, e, exc_info=True)
@@ -1034,8 +1064,11 @@ async def provision_vpn_slots_async(
     # _deliver_vpn делает то же для Stars-flow.
     try:
         from services.database import get_user_subscriptions_by_plan
-        active_trials = await get_user_subscriptions_by_plan(user_id, "vpn_trial", status="active")
-        for trial_sub in active_trials:
+        # И active И grace — см. audit #C1.
+        trials = await get_user_subscriptions_by_plan(
+            user_id, "vpn_trial", status=("active", "grace"),
+        )
+        for trial_sub in trials:
             if trial_sub["id"] != sub_id:  # не закрываем сами себя на всякий случай
                 await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
     except Exception as e:

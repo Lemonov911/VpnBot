@@ -292,6 +292,14 @@ async def _migrate(db: aiosqlite.Connection):
         cols = {row[1] for row in await cur.fetchall()}
     if "refunded_at" not in cols:
         await db.execute("ALTER TABLE payments ADD COLUMN refunded_at TIMESTAMP")
+    # UNIQUE на `tx_id` (partial — игнорит пустые/NULL) — payment-level
+    # идемпотентность.  Audit 17.05 #1: без неё Lava/CryptoBot webhook retry
+    # дважды записывал payments-row, а Stars/Lava recurring без проверки
+    # `payments.tx_id` экстендили sub на 60 дней за 1 списание.
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_tx_id "
+        "ON payments(tx_id) WHERE tx_id != '' AND tx_id IS NOT NULL"
+    )
 
     # subscriptions — pending_plan, expiry reminders
     async with db.execute("PRAGMA table_info(subscriptions)") as cur:
@@ -580,6 +588,22 @@ async def mark_subscription_expired(subscription_id: int):
             (subscription_id,),
         )
         await db.commit()
+
+
+async def mark_subscription_expired_from_grace(subscription_id: int) -> bool:
+    """Atomic: переводит ТОЛЬКО `grace` → `expired`.  Если sub уже active
+    (race с renew-from-grace) — no-op, возвращает False, caller skip'ает
+    destructive op'ы.  Audit 17.05 #2 — scheduler грейс-loop revoke'ал
+    конфиги юзера который только что заплатил.
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE subscriptions SET status='expired', pending_plan=NULL "
+            "WHERE id=? AND status='grace'",
+            (subscription_id,),
+        )
+        await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def mark_subscription_refunded(subscription_id: int):
@@ -1052,16 +1076,27 @@ async def get_subscription_by_id(sub_id: int) -> dict | None:
             return dict(row) if row else None
 
 
-async def get_user_subscriptions_by_plan(user_id: int, plan: str, status: str = "active") -> list[dict]:
-    """Список подписок юзера определённого плана и статуса. Используется чтобы
-    найти активный триал когда юзер платит за тариф."""
+async def get_user_subscriptions_by_plan(
+    user_id: int, plan: str,
+    status: str | tuple[str, ...] = "active",
+) -> list[dict]:
+    """Список подписок юзера определённого плана и статуса (или нескольких).
+
+    Используется чтобы найти trial когда юзер платит — `status=("active","grace")`
+    закрывает и активные, и в-grace trial'ы (раньше grace trials оставались
+    висеть, плодя дубль-подписок и orphan'ные VLESS peers — audit 17.05 #C1).
+    """
+    statuses = (status,) if isinstance(status, str) else tuple(status)
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT id, plan, status, expires_at, created_at FROM subscriptions
-               WHERE user_id=? AND plan=? AND status=?
-               ORDER BY created_at DESC""",
-            (user_id, plan, status),
+            f"""SELECT id, plan, status, expires_at, created_at FROM subscriptions
+                WHERE user_id=? AND plan=? AND status IN ({placeholders})
+                ORDER BY created_at DESC""",
+            (user_id, plan, *statuses),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -1294,6 +1329,7 @@ async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | N
                 SET status='active',
                     grace_until=NULL,
                     expires_at=datetime('now', '+{days} days'),
+                    pending_plan=NULL,
                     reminded_3d=0,
                     reminded_1d=0,
                     reminded_grace_3d=0
@@ -1598,13 +1634,49 @@ async def get_user_configs_full(user_id: int) -> list[dict]:
 
 
 async def record_payment(user_id: int, subscription_id: int, method: str,
-                          stars: int = 0, amount_usd: float = 0.0, tx_id: str = ""):
+                          stars: int = 0, amount_usd: float = 0.0, tx_id: str = "") -> bool:
+    """Records a payment. Returns True if NEW row inserted, False if dedup
+    (duplicate tx_id — webhook retry, recurring re-fire).  Caller must handle
+    False as «already processed» — don't extend sub, don't bonus referrer.
+
+    UNIQUE(payments.tx_id) гарантирует idempotency на уровне БД.  Без
+    защиты раньше Stars/Lava recurring дважды экстендили sub на 30 дней
+    при retry webhook'а (audit 17.05 #1).
+    """
+    if not tx_id:
+        # Legacy free/admin path без tx_id — пропускаем dedup, как было.
+        async with _connect() as db:
+            await db.execute("""
+                INSERT INTO payments (user_id, subscription_id, method, stars, amount_usd, tx_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, subscription_id, method, stars, amount_usd, tx_id))
+            await db.commit()
+        return True
+
     async with _connect() as db:
-        await db.execute("""
-            INSERT INTO payments (user_id, subscription_id, method, stars, amount_usd, tx_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, subscription_id, method, stars, amount_usd, tx_id))
-        await db.commit()
+        try:
+            await db.execute("""
+                INSERT INTO payments (user_id, subscription_id, method, stars, amount_usd, tx_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, subscription_id, method, stars, amount_usd, tx_id))
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            # tx_id уже в БД — duplicate webhook / recurring retry.
+            return False
+
+
+async def is_payment_recorded(tx_id: str) -> bool:
+    """True если payment с таким tx_id уже был записан.  Используется как
+    gate перед extend_subscription/etc — не чтобы вернуть ответ юзеру,
+    а чтобы не дублировать side-effects."""
+    if not tx_id:
+        return False
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT 1 FROM payments WHERE tx_id=? LIMIT 1", (tx_id,)
+        ) as cur:
+            return await cur.fetchone() is not None
 
 
 async def get_configs_by_server(server_id: int) -> list[dict]:

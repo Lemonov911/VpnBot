@@ -1401,7 +1401,10 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     # ── 2. Recurring продление (success) ────────────────────────────────────
     if event == "subscription.recurring.payment.success":
-        from services.database import get_subscription_by_parent_contract, extend_subscription_expires_at
+        from services.database import (
+            get_subscription_by_parent_contract, extend_subscription_expires_at,
+            is_payment_recorded, record_payment,
+        )
         sub = await get_subscription_by_parent_contract(parent_id or contract_id)
         if not sub:
             logger.error("Lava recurring success: sub not found parent=%s contract=%s",
@@ -1411,6 +1414,35 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         if not plan:
             logger.error("Lava recurring: unknown plan %s sub=%d", sub["plan"], sub["id"])
             return web.Response(status=200)
+
+        # Sanity: amount должна совпадать с plan.rub ± 10% (audit 17.05 #7).
+        # Без проверки Lava-misconfig или mock event мог бы экстендить
+        # подписку любого плана при любом amount.
+        plan_rub = float(plan.get("rub", 0))
+        if plan_rub > 0 and (amount < plan_rub * 0.9 or amount > plan_rub * 1.5):
+            logger.error(
+                "Lava recurring: amount mismatch sub=%d expected=%.2f got=%.2f",
+                sub["id"], plan_rub, amount,
+            )
+            return web.Response(status=200)
+
+        # Idempotency на recurring contract_id (per-charge). Audit 17.05 #1:
+        # без записи в payments дважды экстендили sub на 30 дней.
+        recurring_tx_id = f"lavatop_recur_{contract_id}"
+        if await is_payment_recorded(recurring_tx_id):
+            logger.warning("Lava recurring duplicate %s ignored", recurring_tx_id)
+            return web.Response(status=200)
+        # record_payment FIRST — atomic UNIQUE gate.
+        inserted = await record_payment(
+            user_id=sub["user_id"], subscription_id=sub["id"],
+            method="lavatop", stars=0,
+            amount_usd=amount,  # сохраняем как usd для аналитики, фактически ₽
+            tx_id=recurring_tx_id,
+        )
+        if not inserted:
+            logger.warning("Lava recurring race-duplicate %s ignored", recurring_tx_id)
+            return web.Response(status=200)
+
         # Продлеваем от max(now, current_expires_at) + duration — если был
         # grace и юзер просрочил, expires_at в прошлом → продлеваем от now,
         # иначе от старого expires_at (не теряем неиспользованные дни).
@@ -2006,7 +2038,14 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     expires       = datetime.fromisoformat(sub["expires_at"])
     remaining_days = max(0, (expires - datetime.utcnow()).days)
 
-    is_upgrade = new_plan["stars"] > cur_plan["stars"]
+    # Сравниваем per-day цену, не абсолютные stars — иначе multi-period
+    # планы (1m/3m/6m/12m, commit 5fab925) классифицируются неправильно:
+    # vpn_base_12m (1525⭐ / 365 дн = 4.2⭐/day) vs vpn_max (450⭐ / 30 = 15⭐/day)
+    # — naive compare `1525 > 450` дал бы «downgrade», на деле upgrade.
+    # Audit 17.05 #Y1.
+    cur_per_day = cur_plan["stars"] / max(1, cur_plan.get("duration_days", 30))
+    new_per_day = new_plan["stars"] / max(1, new_plan.get("duration_days", 30))
+    is_upgrade = new_per_day > cur_per_day
 
     # Rate-limit: только для upgrade (создаёт CryptoBot invoice — стоит денег
     # и медленный). Downgrade/cancel — только DB UPDATE, бесплатно и быстро,
@@ -2018,14 +2057,23 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         return web.json_response({"error": "rate_limited"}, status=429)
 
     if is_upgrade:
-        # Доплата пропорционально оставшимся дням, в рублях.
-        # ceil() а не round() — иначе при 29 днях остатка апгрейд дешевле
-        # на 1₽ от справедливой цены (округление вниз). Юзер не страдает,
-        # но бизнес теряет копейки на каждом апгрейде.
         from math import ceil as _ceil
         cur_rub = int(cur_plan.get("rub", cur_plan["stars"]))
         new_rub = int(new_plan.get("rub", new_plan["stars"]))
-        rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days / 30))
+
+        # Pricing зависит от статуса sub:
+        # - Active: pro-rated delta `(new - cur) × remaining_days / 30`.
+        #   Юзер платит за «улучшение оставшегося периода».
+        # - Grace: full new-plan цена.  Юзер уже в просрочке (плата за
+        #   старый период истекла), upgrade = новый период с 0.  Раньше
+        #   `remaining_days=0` → rub_price=1 → юзер платил 1₽ и получал
+        #   30 дней нового плана. Audit 17.05 #4.
+        if sub.get("status") == "grace":
+            rub_price = new_rub
+            upgrade_desc = f"Подписка «{new_plan['name']}»"
+        else:
+            rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days / 30))
+            upgrade_desc = f"Апгрейд до «{new_plan['name']}». Доплата за {remaining_days} дн."
 
         awg_delta   = new_plan["awg_slots"]   - cur_plan["awg_slots"]
         vless_delta = new_plan["vless_slots"] - cur_plan["vless_slots"]
@@ -2045,7 +2093,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
                 fiat="RUB",
                 amount=str(rub_price),
                 payload=payload,
-                description=f"Апгрейд до «{new_plan['name']}». Доплата за {remaining_days} дн.",
+                description=upgrade_desc,
                 bot_username=bot_info.username,
             )
         except Exception as e:
@@ -2500,7 +2548,12 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
             row = await cur.fetchone()
             payment_id = row[0] if row else None
 
-    is_stars = payment_id and not payment_id.startswith(("crypto_", "free_"))
+    # Определяем provider по префиксу payment_id.  Stars = всё что НЕ
+    # crypto_/cryptomus_/lavatop_/free_.  Раньше `not startswith(crypto_,
+    # free_)` ошибочно классифицировало `cryptomus_` и `lavatop_` как Stars
+    # → bot.refund_star_payment получал чужой charge_id → Telegram 400.
+    _NON_STARS_PREFIXES = ("crypto_", "cryptomus_", "lavatop_", "free_")
+    is_stars = payment_id and not payment_id.startswith(_NON_STARS_PREFIXES)
     stars_refund_done = False
 
     if do_stars_refund and is_stars and payment_id:
@@ -2523,14 +2576,25 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     # Откат реф-бонуса если он был начислен на эту подписку
     await rollback_referral_bonus(sub_id)
 
+    # Источник платежа — для audit log + UI чтобы админ видел корректный канал.
+    payment_source = "stars"
+    if payment_id:
+        if payment_id.startswith("cryptomus_"): payment_source = "cryptomus"
+        elif payment_id.startswith("lavatop_"): payment_source = "lavatop"
+        elif payment_id.startswith("crypto_"): payment_source = "cryptobot"
+        elif payment_id.startswith("free_"): payment_source = "free"
+
     await audit_log_record(
         admin_id=0, action="sub_refund",
         target=f"sub:{sub_id}",
-        details=f"user={sub['user_id']} stars_refund={stars_refund_done} reason={reason or '-'}",
+        details=f"user={sub['user_id']} method={payment_source} stars_refund={stars_refund_done} reason={reason or '-'}",
     )
     return web.json_response({
         "ok": True,
         "stars_refund_done": stars_refund_done,
+        "payment_source": payment_source,
+        # backwards-compat: was_crypto был только CryptoBot. Если фронт
+        # ориентируется на этот флаг — он по-прежнему получит ожидаемое.
         "was_crypto": payment_id and payment_id.startswith("crypto_"),
     })
 

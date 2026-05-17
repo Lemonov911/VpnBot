@@ -206,6 +206,73 @@ async def test_no_crash_when_send_message_fails(fresh_db):
 # ── method propagated to record_payment ───────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_renew_clears_pending_plan(fresh_db):
+    """Audit 17.05 #10: renew-from-grace должен сбросить pending_plan.
+    Иначе stale downgrade фиксируется при следующем expiry."""
+    from services.database import (
+        renew_subscription_from_grace, schedule_plan_change, get_subscription_by_id,
+    )
+
+    sub_id = await _make_sub(plan="vpn_max", status="grace")
+    # Юзер успел запланировать downgrade на vpn_base до renew
+    await schedule_plan_change(sub_id, "vpn_base")
+    sub = await get_subscription_by_id(sub_id)
+    assert sub["pending_plan"] == "vpn_base"
+
+    # Renew должен сбросить pending_plan
+    await renew_subscription_from_grace(sub_id, days=30)
+    sub = await get_subscription_by_id(sub_id)
+    assert sub["pending_plan"] is None, "pending_plan must be cleared on renew"
+    assert sub["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_cross_plan_grace_closes_dangling(fresh_db):
+    """Audit 17.05 #8: юзер в grace на vpn_max покупает vpn_base — старая
+    grace sub должна быть закрыта (expired), не оставаться висеть."""
+    from services.grace import try_renew_from_grace
+    from services.database import get_subscription_by_id
+
+    old_sub_id = await _make_sub(plan="vpn_max", status="grace")
+
+    with patch("services.grace.client_for_server"):
+        result = await try_renew_from_grace(
+            _fake_bot(), USER_ID, "vpn_base", _fake_plan("vpn_base"),
+            "stars_xyz", method="stars",
+        )
+
+    # Result = False (caller должен создать новую sub)
+    assert result is False
+    # Старая grace sub теперь expired
+    old = await get_subscription_by_id(old_sub_id)
+    assert old["status"] == "expired", "old grace sub must be closed"
+
+
+@pytest.mark.asyncio
+async def test_payment_idempotency_via_record_payment(fresh_db):
+    """Audit 17.05 #1: повторный record_payment с тем же tx_id возвращает
+    False (UNIQUE index gate). Caller не должен extend'ить sub дважды."""
+    from services.database import record_payment, is_payment_recorded
+
+    await _make_sub(plan="vpn_base", status="active")
+
+    # Первый вызов — записан
+    ok1 = await record_payment(
+        user_id=USER_ID, subscription_id=1,
+        method="lavatop", tx_id="lavatop_recur_42",
+    )
+    assert ok1 is True
+    assert await is_payment_recorded("lavatop_recur_42") is True
+
+    # Повторный — gate'нут, False
+    ok2 = await record_payment(
+        user_id=USER_ID, subscription_id=1,
+        method="lavatop", tx_id="lavatop_recur_42",
+    )
+    assert ok2 is False, "duplicate tx_id must be rejected by UNIQUE"
+
+
+@pytest.mark.asyncio
 async def test_atomic_renew_loses_race_to_scheduler(fresh_db):
     """Race: scheduler перевёл sub в expired между check и renew →
     UPDATE WHERE status='grace' не trogger'ит rowcount, helper returns False,
