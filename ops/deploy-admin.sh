@@ -11,9 +11,9 @@ flock -x -w 300 9 || { echo "[deploy-admin] could not acquire deploy lock in 300
 cd /opt/vpnbot
 
 # Dirty-tree guard — см. deploy-bot.sh для контекста.
-DIRTY=$(git -c safe.directory=/opt/vpnbot status --porcelain)
+DIRTY=$(git -c safe.directory=/opt/vpnbot status --porcelain --untracked-files=no)
 if [ -n "$DIRTY" ]; then
-  echo "[deploy-admin] REFUSE — working tree dirty:" >&2
+  echo "[deploy-admin] REFUSE — tracked files modified:" >&2
   echo "$DIRTY" >&2
   exit 1
 fi

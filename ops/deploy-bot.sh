@@ -11,16 +11,20 @@ flock -x -w 300 9 || { echo "[deploy-bot] could not acquire deploy lock in 300s"
 cd /opt/vpnbot
 
 # Dirty-tree guard. Если кто-то rsync'нул в /opt/vpnbot/bot/ (или ручно
-# правил файлы) — git working tree расходится с HEAD. `git pull --ff-only`
-# тут падает с конфузным «Your local changes would be overwritten», уже
-# поймали этот сценарий 2026-05-17. Ловим явно — лучше понятная ошибка.
-DIRTY=$(git -c safe.directory=/opt/vpnbot status --porcelain)
+# правил tracked файлы) — git working tree расходится с HEAD,
+# `git pull --ff-only` падает с конфузным «Your local changes would be
+# overwritten» (поймали 2026-05-17). Ловим явно — лучше понятная ошибка.
+#
+# `--untracked-files=no` — runtime-state (.last_backup_date, .snapshots/,
+# /opt/vpnbot/deploy-*.sh) НЕ tracked'ы, не мешают pull'у; не флагуем.
+# Учитываем только modified/staged tracked files.
+DIRTY=$(git -c safe.directory=/opt/vpnbot status --porcelain --untracked-files=no)
 if [ -n "$DIRTY" ]; then
-  echo "[deploy-bot] REFUSE — working tree dirty:" >&2
+  echo "[deploy-bot] REFUSE — tracked files modified:" >&2
   echo "$DIRTY" >&2
   echo "[deploy-bot] manual recovery on prod:" >&2
-  echo "  cd /opt/vpnbot && git -c safe.directory=/opt/vpnbot stash push -u" >&2
-  echo "  # затем review stash, drop если duplicate, иначе pop & resolve" >&2
+  echo "  cd /opt/vpnbot && git -c safe.directory=/opt/vpnbot stash" >&2
+  echo "  # review stash, drop если duplicate, иначе pop & resolve" >&2
   exit 1
 fi
 
