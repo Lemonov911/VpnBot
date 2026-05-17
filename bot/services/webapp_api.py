@@ -1985,11 +1985,6 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    # Rate-limit: один пользователь — один change-запрос в минуту.
-    # Спам означает либо UI-бой, либо preview-abuse инвойсов.
-    if not _rate_limit_check_evict(_change_rate, str(user["id"]), _time.monotonic(), window=60.0):
-        return web.json_response({"error": "rate_limited"}, status=429)
-
     body     = await request.json()
     plan_key = body.get("plan_key", "")
     new_plan = VPN_PLANS.get(plan_key)
@@ -2012,6 +2007,15 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     remaining_days = max(0, (expires - datetime.utcnow()).days)
 
     is_upgrade = new_plan["stars"] > cur_plan["stars"]
+
+    # Rate-limit: только для upgrade (создаёт CryptoBot invoice — стоит денег
+    # и медленный). Downgrade/cancel — только DB UPDATE, бесплатно и быстро,
+    # 60-сек window раньше блокировал отмену «случайного» downgrade'а сразу
+    # после клика (юзер 17.05 поймал это).
+    if is_upgrade and not _rate_limit_check_evict(
+        _change_rate, str(user["id"]), _time.monotonic(), window=10.0,
+    ):
+        return web.json_response({"error": "rate_limited"}, status=429)
 
     if is_upgrade:
         # Доплата пропорционально оставшимся дням, в рублях.

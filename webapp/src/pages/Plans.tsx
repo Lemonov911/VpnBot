@@ -281,8 +281,35 @@ export default function Plans() {
     }
   }
 
-  const handleChange = async (plan: Plan) => {
+  // showConfirm wrapped в Promise — TG WebApp API использует callback.
+  // На старых Telegram-клиентах showConfirm не доступен → fallback на
+  // window.confirm (или sync true если ни того ни того). Для надёжности
+  // на iOS 17+ / Android — нативный TG-диалог.
+  const showConfirm = (msg: string): Promise<boolean> => new Promise((resolve) => {
+    try {
+      if (WebApp.showConfirm) {
+        WebApp.showConfirm(msg, resolve)
+        return
+      }
+    } catch { /* ignore */ }
+    resolve(typeof window !== 'undefined' && window.confirm ? window.confirm(msg) : true)
+  })
+
+  const handleChange = async (plan: Plan, action: 'downgrade' | 'cancel' | 'upgrade') => {
     if (loading || !sub) return
+
+    // Confirm для downgrade и cancel — без него юзер случайным тапом
+    // меняет план без обратной связи (баг репортнут 17.05).
+    // Upgrade без confirm — там followed by payment screen, юзер успеет
+    // отказаться при выставлении инвойса.
+    if (action === 'downgrade') {
+      const ok = await showConfirm(t('plans_downgrade_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key])))
+      if (!ok) return
+    } else if (action === 'cancel') {
+      const ok = await showConfirm(t('plans_cancel_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key])))
+      if (!ok) return
+    }
+
     WebApp.HapticFeedback.impactOccurred('light')
     setLoading(plan.key); setPageStatus('idle')
     try {
@@ -422,8 +449,12 @@ export default function Plans() {
                     if (mode === 'renew') {
                       WebApp.HapticFeedback.impactOccurred('light')
                       setSheetPlan(plan)
+                    } else if (mode === 'pending') {
+                      handleChange(plan, 'cancel')
+                    } else if (mode === 'upgrade') {
+                      handleChange(plan, 'upgrade')
                     } else {
-                      handleChange(plan)
+                      handleChange(plan, 'downgrade')
                     }
                   }} />
               )
