@@ -169,41 +169,65 @@ export default function Referral() {
             {t('ref_share')}
           </button>
 
-          {/* Мои бонусы — показываем только если bonus_days_pending > 0.
-              Если пусто (default state для новых) — не загромождаем UI.
-              has_active_sub: гейтит кнопку redeem (т.к. бонус применяется
-              только к active sub). */}
-          {stats.bonus_days_pending > 0 && (
-            <>
-              <span className="section-title">🎁 {t('ref_my_bonuses' as never)}</span>
-              <div className="bg-gradient-to-br from-[#27ae60]/15 to-[#2ecc71]/8 border border-[#27ae60]/30 rounded-2xl py-4 px-4">
-                <div className="flex items-baseline justify-between mb-2">
-                  <span className="text-[13px] text-[var(--tg-theme-hint-color)]">
-                    {t('ref_my_bonuses_label' as never)}
-                  </span>
-                  <span className="text-[24px] font-extrabold text-success leading-none">
-                    +{stats.bonus_days_pending}
-                  </span>
+          {/* Мои бонусы — показываем ВСЕГДА (даже когда bank=0) чтобы юзер
+              понимал что система существует, как работает и сколько он может
+              получить. 3 состояния стилизуются по-разному:
+                — bank=0: серый, кнопка disabled, hint «Пригласи друга — +7 дней»
+                — bank>0 + active sub: зелёный, кнопка активна
+                — bank>0 + no sub: зелёный, кнопка disabled с hint «Купи подписку»
+          */}
+          {(() => {
+            const bonus = stats.bonus_days_pending
+            const hasBonus = bonus > 0
+            const canRedeem = hasBonus && stats.has_active_sub
+            // Tone: зелёный для positive bank, нейтральный для пустого
+            const cardClass = hasBonus
+              ? 'bg-gradient-to-br from-[#27ae60]/15 to-[#2ecc71]/8 border border-[#27ae60]/30'
+              : 'bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]'
+            const valueClass = hasBonus
+              ? 'text-success'
+              : 'text-[var(--tg-theme-hint-color)]'
+            const btnClass = canRedeem
+              ? 'bg-success text-white'
+              : 'bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-hint-color)] border border-[var(--card-border)]'
+            const hint = !hasBonus
+              ? t('ref_my_bonuses_hint_empty' as never)
+              : stats.has_active_sub
+                ? t('ref_my_bonuses_hint_active' as never)
+                : t('ref_my_bonuses_hint_no_sub' as never)
+            const btnLabel = redeemLoading
+              ? '…'
+              : !hasBonus
+                ? t('ref_redeem_btn_empty' as never)
+                : stats.has_active_sub
+                  ? (t('ref_redeem_btn' as never) as string).replace('{days}', String(bonus))
+                  : t('ref_redeem_btn_no_sub' as never)
+            return (
+              <>
+                <span className="section-title">🎁 {t('ref_my_bonuses' as never)}</span>
+                <div className={`${cardClass} rounded-2xl py-4 px-4`}>
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-[13px] text-[var(--tg-theme-hint-color)]">
+                      {t('ref_my_bonuses_label' as never)}
+                    </span>
+                    <span className={`text-[24px] font-extrabold leading-none ${valueClass}`}>
+                      {hasBonus ? `+${bonus}` : '0'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-[var(--tg-theme-hint-color)] mb-3 leading-snug">
+                    {hint}
+                  </div>
+                  <button
+                    onClick={handleRedeem}
+                    disabled={redeemLoading || !canRedeem}
+                    className={`w-full py-2.5 rounded-[10px] text-[14px] font-semibold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${btnClass}`}
+                  >
+                    {btnLabel}
+                  </button>
                 </div>
-                <div className="text-[11px] text-[var(--tg-theme-hint-color)] mb-3 leading-snug">
-                  {stats.has_active_sub
-                    ? t('ref_my_bonuses_hint_active' as never)
-                    : t('ref_my_bonuses_hint_no_sub' as never)}
-                </div>
-                <button
-                  onClick={handleRedeem}
-                  disabled={redeemLoading || !stats.has_active_sub}
-                  className="w-full py-2.5 rounded-[10px] border-none text-white text-[14px] font-semibold cursor-pointer bg-success disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {redeemLoading
-                    ? '…'
-                    : stats.has_active_sub
-                      ? (t('ref_redeem_btn' as never) as string).replace('{days}', String(stats.bonus_days_pending))
-                      : t('ref_redeem_btn_no_sub' as never)}
-                </button>
-              </div>
-            </>
-          )}
+              </>
+            )
+          })()}
 
           {/* Статистика — invited + converted. Bonus_days НЕ показываем тут
               отдельно (есть отдельный блок «Мои бонусы» выше с redeem-кнопкой). */}
