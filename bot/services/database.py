@@ -1278,20 +1278,18 @@ async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | N
     expires_at = now + days.  Сбрасывает reminded-флаги (новый период,
     новые напоминания).
 
-    Возвращает обновлённую запись или None если sub не найдена.
+    Atomic: UPDATE с гардом `WHERE id=? AND status='grace'`.  Возвращает
+    None если sub не найдена ИЛИ уже не grace (race с
+    `_process_grace_expired_subscriptions`-scheduler-таском который мог
+    перевести её в expired между check и renew).
 
-    Caller (handlers/vpn.py:_deliver_vpn) после этого должен вызвать
+    Caller (`services/grace.py`) после этого должен вызвать
     unthrottle/move через vpnctl_client — мы только меняем БД, агент
     отдельно (см. _apply_plan_upgrade для образца).
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT id FROM subscriptions WHERE id=?", (sub_id,)
-        ) as cur:
-            if not await cur.fetchone():
-                return None
-        await db.execute(
+        cur = await db.execute(
             f"""UPDATE subscriptions
                 SET status='active',
                     grace_until=NULL,
@@ -1299,10 +1297,14 @@ async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | N
                     reminded_3d=0,
                     reminded_1d=0,
                     reminded_grace_3d=0
-                WHERE id=?""",
+                WHERE id=? AND status='grace'""",
             (sub_id,),
         )
         await db.commit()
+        if cur.rowcount == 0:
+            # Либо sub не существует, либо уже не grace (scheduler выпил
+            # её первым). Caller получит None и fallback'нется на create.
+            return None
         async with db.execute(
             "SELECT id, user_id, plan, status, expires_at FROM subscriptions WHERE id=?",
             (sub_id,),
@@ -1483,6 +1485,10 @@ async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
     (subscription_id, user_id, vless_uuid, plan, sub_status) — этого хватает
     провижить пир с тем же UUID на новом сервере.
 
+    Trial-подписки (`plan='vpn_trial'`) исключены: длятся 3 дня, выдают 1 VLESS,
+    bаckfill на них = трата capacity (через ~2 дня сами истечут).
+    Платные тарифы — backfill'им.
+
     Идемпотентна: если слот уже на сервере — не возвращается. Используется
     кнопкой «Backfill VLESS» в админке при подключении нового VLESS-сервера.
     """
@@ -1496,6 +1502,7 @@ async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
                WHERE c.protocol='vless' AND c.status='active'
                  AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
                  AND s.status IN ('active', 'grace')
+                 AND s.plan != 'vpn_trial'
                  AND c.vless_uuid NOT IN (
                      SELECT vless_uuid FROM configs
                      WHERE server_id=? AND protocol='vless' AND status='active'

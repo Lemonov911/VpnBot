@@ -176,6 +176,36 @@ def test_rewrite_no_op_when_bypass_empty():
     assert result == SAMPLE_AWG_CONF
 
 
+@pytest.mark.asyncio
+async def test_fetch_rejects_suspiciously_short_response(tmp_path, monkeypatch):
+    """GitHub maintenance page / captcha / broken redirect → ответ 200 OK с
+    HTML внутри. ru_lines = 0-2 строки. Без sanity-check'а помещали бы это
+    в кеш → bypass становится 0.0.0.0/0 (full-tunnel) тихо. Защита."""
+    from unittest.mock import patch
+    from services import awg_bypass
+
+    monkeypatch.setattr(awg_bypass, "RULES_DIR", tmp_path)
+
+    class FakeResp:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+        def raise_for_status(self): pass
+        async def text(self): return "<html><body>maintenance</body></html>"
+
+    class FakeSess:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return None
+        def get(self, url): return FakeResp()
+
+    with patch("aiohttp.ClientSession", return_value=FakeSess()):
+        stats = await awg_bypass.refresh_bypass(force=True)
+
+    assert stats["error"] is not None
+    assert "suspicious" in stats["error"].lower()
+    # bypass файл НЕ записан
+    assert not (tmp_path / awg_bypass.BYPASS_CACHE_FILE).exists()
+
+
 def test_rewrite_handles_extra_whitespace():
     """AllowedIPs с разным форматом — кейсы из реальных .conf."""
     conf_with_spaces = SAMPLE_AWG_CONF.replace(

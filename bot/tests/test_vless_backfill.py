@@ -168,6 +168,25 @@ async def test_expired_subs_excluded(fresh_db):
     assert await get_vless_slots_missing_from_server(s2) == []
 
 
+@pytest.mark.asyncio
+async def test_trial_subs_excluded(fresh_db):
+    """Trial-подписки (vpn_trial) исключены: длятся 3 дня, выдают 1 VLESS,
+    backfill на них = трата capacity (скоро истекут сами)."""
+    s1 = await _insert_server(fresh_db, name="amsterdam")
+    s2 = await _insert_server(fresh_db, name="frankfurt")
+
+    trial_sub = await _make_sub(user_id=100, plan="vpn_trial")
+    paid_sub  = await _make_sub(user_id=200, plan="vpn_base")
+    await _replicate_vless_slot(trial_sub, 100, "uuid-trial", [s1])
+    await _replicate_vless_slot(paid_sub,  200, "uuid-paid",  [s1])
+
+    missing = await get_vless_slots_missing_from_server(s2)
+    # Только платная sub → backfill, trial пропущена
+    assert len(missing) == 1
+    assert missing[0]["vless_uuid"] == "uuid-paid"
+    assert missing[0]["plan"] == "vpn_base"
+
+
 # ── config status / protocol filter ───────────────────────────────────────────
 
 @pytest.mark.asyncio

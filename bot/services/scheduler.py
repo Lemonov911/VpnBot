@@ -819,14 +819,17 @@ def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     return task
 
 
-async def _refresh_xray_rules():
+async def _refresh_xray_rules(bot: Bot | None = None):
     """Качает sing-box.zip от runetfreedom (для VLESS smart routing) +
-    обновляет AWG bypass AllowedIPs (RU CIDR от ipdeny.com).
+    обновляет AWG bypass AllowedIPs (RU CIDR от amnezia-vpn curated).
 
     Сначала VLESS (Happ) — он шире покрывает (geosite по доменам + geoip),
     потом AWG (только IP). Если одно упадёт — второе всё равно попытается.
+
+    Шлёт админу alert если файлы старее 48ч (GitHub / источник лежит >2д,
+    юзеры могут получить устаревший bypass на новые RU-сервисы).
     """
-    from services.xray_rules import fetch_rules
+    from services.xray_rules import fetch_rules, rule_file_age_sec, GEOIP_RU_FILE
     stats = await fetch_rules(force=False)
     if stats.get("error"):
         logger.warning("xray-rules refresh: %s", stats["error"])
@@ -838,7 +841,7 @@ async def _refresh_xray_rules():
             stats["downloaded_bytes"] // 1024, stats["extracted"], stats["took_ms"],
         )
 
-    from services.awg_bypass import refresh_bypass
+    from services.awg_bypass import refresh_bypass, RULES_DIR, BYPASS_CACHE_FILE
     awg_stats = await refresh_bypass(force=False)
     if awg_stats.get("error"):
         logger.warning("awg-bypass refresh: %s", awg_stats["error"])
@@ -850,6 +853,60 @@ async def _refresh_xray_rules():
             awg_stats["ru_cidrs"], awg_stats["bypass_cidrs"],
             awg_stats["bypass_size_kb"], awg_stats["took_ms"],
         )
+
+    # Stale-alert: если данные старее 48ч (4 проваленных cron'а подряд),
+    # шлём в TG один раз. Дальше дедуп — заметка в state-словаре.
+    if bot is None:
+        return
+    STALE_THRESHOLD = 48 * 3600
+    import os as _os
+    files_to_check = [
+        ("VLESS rules (.srs)", rule_file_age_sec(GEOIP_RU_FILE)),
+        ("AWG bypass list", _bypass_age_sec_from_path(RULES_DIR / BYPASS_CACHE_FILE)),
+    ]
+    stale = [(label, age) for label, age in files_to_check if age and age > STALE_THRESHOLD]
+    if stale and not _stale_alert_sent_recently():
+        from config import ADMIN_ID
+        if ADMIN_ID:
+            lines = "\n".join(f"• {label}: {int(age/3600)}ч" for label, age in stale)
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    "⚠️ <b>RU-bypass файлы устарели</b>\n\n"
+                    f"{lines}\n\n"
+                    "Источники (runetfreedom / amnezia-vpn) недоступны >48ч. "
+                    "Юзеры на старых данных — новые RU-сервисы (банк, госуслуги) "
+                    "могут не работать через bypass.",
+                    parse_mode="HTML",
+                )
+                _mark_stale_alert_sent()
+            except Exception as e:
+                logger.warning("stale-alert send failed: %s", e)
+
+
+_stale_alert_state: dict[str, float] = {"last_sent": 0.0}
+
+
+def _bypass_age_sec_from_path(p) -> float | None:
+    """Helper: возраст файла на диске в секундах, или None если файла нет."""
+    import os as _os
+    import time as _time
+    try:
+        return _time.time() - _os.stat(p).st_mtime
+    except OSError:
+        return None
+
+
+def _stale_alert_sent_recently() -> bool:
+    """Дедуп: не шлём stale-alert чаще раз в 12ч. Иначе при 48h+ простое
+    юзер получает 4 алерта в день (каждые 6 часов когда cron бежит)."""
+    import time as _time
+    return (_time.time() - _stale_alert_state["last_sent"]) < 12 * 3600
+
+
+def _mark_stale_alert_sent() -> None:
+    import time as _time
+    _stale_alert_state["last_sent"] = _time.time()
 
 
 async def _run_health_loop(bot: Bot | None = None):
@@ -932,7 +989,7 @@ async def run_scheduler(bot: Bot):
         # Первый тик после рестарта тоже тянет, чтобы свежие .srs появились
         # как можно раньше (если их нет — sub-URL уходит без routing-блока).
         if _TICK == 1 or _TICK % 6 == 0:
-            await _safe("xray_rules",   _refresh_xray_rules(),           timeout=90)
+            await _safe("xray_rules",   _refresh_xray_rules(bot),        timeout=90)
         # VACUUM раз в неделю (168 тиков). Без него БД растёт после
         # delete/update — SQLite не освобождает страницы автоматически.
         # incremental_vacuum дешевле full VACUUM (не блокирует БД целиком).

@@ -100,12 +100,28 @@ def _int_param(request: web.Request, name: str) -> int | None:
         return None
 
 
+def _client_ip(request: web.Request) -> str:
+    """Real client IP за nginx-прокси.
+
+    `request.remote` за nginx-proxy = `127.0.0.1` → все rate-limit'ы
+    ломаются в global gate (1 req / 6с на ВСЁ инстанс).  nginx во всех
+    наших location-блоках ставит `X-Real-IP` = реальный peer-IP.
+    Fallback на X-Forwarded-For (первый IP в списке), затем на remote.
+    """
+    return (
+        request.headers.get("X-Real-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote
+        or ""
+    )
+
+
 # ── VPN хендлеры ───────────────────────────────────────────────────────────────
 
 async def handle_vpn_invoice(request: web.Request) -> web.Response:
     # Rate-limit: 6s/IP. Telegram Stars createInvoiceLink имеет soft-лимиты
     # ~30 req/min, спам этого endpoint лочит всю продажу.
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_invoice_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     body = await request.json()
@@ -315,7 +331,7 @@ async def handle_public_status(request: web.Request) -> web.Response:
     now = _time.monotonic()
 
     # Rate limit: 1 req / 6s per IP (≈10 rpm) — с lazy eviction старых ключей.
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_status_rate, ip, now, window=6.0):
         return web.json_response({"error": "rate_limit"}, status=429)
 
@@ -433,7 +449,7 @@ async def handle_public_incidents(request: web.Request) -> web.Response:
     from services.health import all_incidents
 
     now = _time.monotonic()
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_incidents_rate, ip, now, window=6.0):
         return web.json_response({"error": "rate_limit"}, status=429)
 
@@ -632,7 +648,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     Создаёт инвойс через CryptoBot и возвращает { pay_url }.
     """
     # Rate-limit: CryptoBot createInvoice имеет ~50 req/час, спам блокирует всё.
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_crypto_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not CRYPTOBOT_TOKEN:
@@ -903,7 +919,7 @@ async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
     POST /api/vpn/invoice/cryptomus  { plan_key, currency: "RUB"|"USD" }
     Создаёт инвойс через Cryptomus и возвращает { pay_url }.
     """
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_cryptomus_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not CRYPTOMUS_ENABLED:
@@ -1177,7 +1193,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     Создаёт Lava-инвойс. Email обязателен — Lava им идентифицирует юзера.
     Возвращает { pay_url }.
     """
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_lavatop_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not LAVATOP_ENABLED:
@@ -1545,7 +1561,7 @@ async def handle_esim_packages(request: web.Request) -> web.Response:
 
 async def handle_esim_invoice(request: web.Request) -> web.Response:
     # Rate-limit: каждый eSIM invoice = вызов esimaccess API (rate-limited).
-    ip = request.remote or ""
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_invoice_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     body = await request.json()
@@ -2027,7 +2043,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     # (32+ chars entropy, но без лимита нельзя — лог-флуд + DDoS).
     # Happ/Streisand тянут URL раз в 12 часов (Profile-Update-Interval) →
     # 6 сек/IP rate-limit с запасом.
-    ip = request.remote or ""
+    ip = _client_ip(request)
     now = _time.monotonic()
     if not _rate_limit_check_evict(_sub_rate, ip, now, window=6.0):
         return web.Response(text="rate limited", status=429)

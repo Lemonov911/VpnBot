@@ -206,6 +206,24 @@ async def test_no_crash_when_send_message_fails(fresh_db):
 # ── method propagated to record_payment ───────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_atomic_renew_loses_race_to_scheduler(fresh_db):
+    """Race: scheduler перевёл sub в expired между check и renew →
+    UPDATE WHERE status='grace' не trogger'ит rowcount, helper returns False,
+    caller fallback'нется на create."""
+    from services.database import renew_subscription_from_grace
+
+    sub_id = await _make_sub(plan="vpn_base", status="grace")
+    # Имитируем race: scheduler перевёл sub в expired
+    await mark_subscription_expired(sub_id)
+
+    result = await renew_subscription_from_grace(sub_id, days=30)
+    assert result is None
+    # Sub осталась expired (scheduler сценарий выиграл)
+    updated = await get_subscription_by_id(sub_id)
+    assert updated["status"] == "expired"
+
+
+@pytest.mark.asyncio
 async def test_records_payment_with_method(fresh_db):
     """Метод (stars/crypto/cryptomus/lavatop) пишется в payments-log
     для admin /payments и LTV-аналитики."""

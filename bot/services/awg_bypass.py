@@ -149,22 +149,35 @@ async def refresh_bypass(force: bool = False) -> dict:
             stats["took_ms"] = int((time.monotonic() - t0) * 1000)
             return stats
 
+    # Sanity-check внутри loop'а: каждый URL проверяем на «> 10 валидных CIDR».
+    # GitHub maintenance/captcha → 200 OK с HTML → 0-2 строки → пробуем
+    # fallback. Иначе тихо кешировали бы мусор и юзеры получали full-tunnel.
     text: str | None = None
+    ru_lines: list[str] = []
     for url in [_PRIMARY_URL, *_FALLBACK_URLS]:
         try:
             text = await _fetch_text(url)
             stats["downloaded_bytes"] = len(text)
+            ru_lines = [l for l in text.splitlines()
+                        if l.strip() and not l.startswith("#")]
+            if len(ru_lines) < 10:
+                logger.warning(
+                    "awg-bypass: %s returned suspicious list (%d CIDRs)",
+                    url, len(ru_lines),
+                )
+                text = None
+                ru_lines = []
+                continue
             break
         except Exception as e:
             logger.warning("awg-bypass: %s failed: %s", url, e)
             continue
 
-    if text is None:
-        stats["error"] = "all sources failed"
+    if text is None or not ru_lines:
+        stats["error"] = "all sources failed or returned suspicious data"
         stats["took_ms"] = int((time.monotonic() - t0) * 1000)
         return stats
 
-    ru_lines = [l for l in text.splitlines() if l.strip() and not l.startswith("#")]
     stats["ru_cidrs"] = len(ru_lines)
 
     # CPU-bound — в executor, чтобы не блочить event loop. 11k CIDR ~ 50ms.
