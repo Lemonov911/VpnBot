@@ -250,12 +250,58 @@ async def handle_vpn_config_download(request: web.Request) -> web.Response:
         if bypass:
             body = rewrite_allowedips(body, bypass)
 
-    filename = f"{config['peer_name'] or f'vpn_config_{config_id}'}.conf"
+    # Human-friendly filename — `MAX VPN 🇳🇱 Amsterdam.conf` вместо
+    # `tg154923518_41.conf` (наш внутренний tg-id-based label).
+    # AmneziaWG / WireGuard на iOS берут tunnel name именно из filename.
+    filename = await _build_friendly_filename(config)
+    # RFC 5987: для UTF-8 эмодзи/кириллицы используем filename* (browser
+    # parses, AmneziaWG/WG-iOS parses). Параллельно даём ASCII fallback
+    # через `filename=`, иначе старые клиенты могут получить мусор.
+    from urllib.parse import quote
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or f"vpn_{config_id}.conf"
+    encoded = quote(filename, safe="")
     return web.Response(
         body=body.encode(),
         content_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition":
+                f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}",
+        },
     )
+
+
+async def _build_friendly_filename(config: dict) -> str:
+    """Build user-facing .conf filename: `MAX VPN {flag} {city/name}.conf`.
+
+    Берётся info о сервере (флаг + city/name). Если server-info нет —
+    fallback на peer_name (`tg<id>_N`).  Файл-имя содержит только разрешённые
+    в Windows/macOS/iOS символы (нет `/ \\ : * ? " < > |`).
+    """
+    server_id = config.get("server_id")
+    server_label = None
+    if server_id:
+        try:
+            from services.database import get_server_by_id
+            server = await get_server_by_id(server_id)
+            if server:
+                flag = (server.get("flag") or "").strip()
+                city = (server.get("city") or server.get("name") or "").strip()
+                if flag and city:
+                    server_label = f"{flag} {city}"
+                elif city:
+                    server_label = city
+                elif flag:
+                    server_label = flag
+        except Exception:
+            pass
+
+    base = f"MAX VPN {server_label}" if server_label else (
+        config.get("peer_name") or f"vpn_config_{config['id']}"
+    )
+    safe = base
+    for bad in "/\\:*?\"<>|":
+        safe = safe.replace(bad, " ")
+    return f"{safe}.conf"
 
 
 async def handle_vpn_config_qr(request: web.Request) -> web.Response:

@@ -36,8 +36,8 @@ RU_CIDRS_FILE = "ru-cidrs.txt"
 BYPASS_CACHE_FILE = "awg-bypass-allowedips.txt"
 
 # Amnezia VPN curated список «IP prefixes for sites accessible only TO Russia»
-# — банки, Yandex, Госуслуги, Mail.ru, Кинопоиск, СБП. ~150 CIDR, ровно то
-# что геоблочит не-RU IP. Maintained Amnezia командой (вендор того же AWG).
+# — банки, Госуслуги, Кинопоиск, СБП. ~150 CIDR, ровно то что геоблочит
+# не-RU IP. Maintained Amnezia командой (вендор того же AWG).
 _PRIMARY_URL = (
     "https://raw.githubusercontent.com/amnezia-vpn/unblock-lists-ru/master/to_ru.csv"
 )
@@ -46,6 +46,33 @@ _PRIMARY_URL = (
 # (11k → 21k bypass → 346 KB), но лучше чем ничего; iOS WG может лагать.
 _FALLBACK_URLS = [
     "https://www.ipdeny.com/ipblocks/data/countries/ru.zone",
+]
+
+# Дополнения к Amnezia curated списку — крупные RU-сервисы которые
+# геоблочат не-RU IP, но не попали в `to_ru.csv` (Amnezia фокус — банки).
+# Источник: BGPView для AS13238 (Yandex), AS47764 (VK/Mail.ru), etc.
+# Юзер сообщил 2026-05-17 что yandex.ru через AWG блочился — `77.88.*` не
+# было в Amnezia.  Augmentация решает 80% реальных «Y-сервис не работает».
+_EXTRA_RU_CIDRS = [
+    # Yandex AS13238 — yandex.ru, mail.yandex, kinopoisk, music, dzen, etc.
+    "5.45.192.0/18", "5.255.192.0/18", "37.9.64.0/18", "37.140.128.0/18",
+    "77.88.0.0/18", "77.88.32.0/19", "84.201.128.0/17", "87.250.224.0/19",
+    "93.158.128.0/17", "95.108.128.0/17", "100.43.64.0/19",
+    "130.193.32.0/19", "141.8.128.0/18", "178.154.128.0/17",
+    "199.21.96.0/22", "213.180.192.0/19", "213.180.220.0/22",
+    # VK / Mail.ru group AS47764 — vk.com, ok.ru, mail.ru, dzen.
+    "87.240.128.0/18", "95.213.0.0/16", "188.93.16.0/21",
+    "217.20.144.0/20", "5.61.232.0/21",
+    # Tinkoff/Т-Банк (AS205638) — на случай если не в Amnezia.
+    "91.218.132.0/22",
+    # Альфа-Банк (AS25513).
+    "194.190.246.0/24",
+    # Rostelecom mobile / Tele2 (AS41330 / AS39435).
+    "78.25.80.0/20", "85.118.182.0/24",
+    # МТС mobile (AS8359) — *.mts.ru + mobile geoblocking targets.
+    "83.149.0.0/16", "178.155.0.0/16", "213.87.0.0/16", "217.66.144.0/20",
+    # Госуслуги, ФНС, mos.ru дополнительно (AS43350/etc).
+    "188.254.0.0/16", "94.25.168.0/21",
 ]
 
 # Кешируем готовую строку в памяти процесса — она формируется ~3-5 KB
@@ -177,6 +204,11 @@ async def refresh_bypass(force: bool = False) -> dict:
         stats["error"] = "all sources failed or returned suspicious data"
         stats["took_ms"] = int((time.monotonic() - t0) * 1000)
         return stats
+
+    # Augmentация: добавляем hardcoded CIDR'ы для крупных RU-сервисов
+    # которые НЕ в Amnezia curated (Yandex, VK, Mail.ru, etc.).
+    # Юзер 17.05 поймал yandex.ru геоблок — фикс через расширение списка.
+    ru_lines = ru_lines + _EXTRA_RU_CIDRS
 
     stats["ru_cidrs"] = len(ru_lines)
 

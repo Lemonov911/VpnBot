@@ -176,6 +176,30 @@ def test_rewrite_no_op_when_bypass_empty():
     assert result == SAMPLE_AWG_CONF
 
 
+def test_extra_ru_cidrs_cover_major_services():
+    """Regression: юзер 17.05 поймал блок yandex.ru — Yandex IP не было в
+    Amnezia curated.  Hardcoded `_EXTRA_RU_CIDRS` должен их закрывать."""
+    from ipaddress import IPv4Address, IPv4Network
+    from services.awg_bypass import _EXTRA_RU_CIDRS
+
+    extra_nets = [IPv4Network(c) for c in _EXTRA_RU_CIDRS]
+
+    # Реальные IPs с production (resolved 17.05) — должны быть в RU-стороне,
+    # т.е. покрыты хотя бы одним из extra CIDR'ов.
+    must_cover = {
+        "Yandex (yandex.ru)":      "77.88.55.88",
+        "Yandex (5.x)":            "5.45.205.241",
+        "Yandex (213.x)":          "213.180.193.1",
+        "VK (vk.com)":             "87.240.137.158",
+        "Mail.ru":                 "95.213.0.5",
+        "МТС mobile":              "83.149.50.50",
+    }
+    for label, ip in must_cover.items():
+        addr = IPv4Address(ip)
+        match = next((n for n in extra_nets if addr in n), None)
+        assert match is not None, f"{label} ({ip}) — not covered by _EXTRA_RU_CIDRS"
+
+
 @pytest.mark.asyncio
 async def test_fetch_rejects_suspiciously_short_response(tmp_path, monkeypatch):
     """GitHub maintenance page / captcha / broken redirect → ответ 200 OK с
