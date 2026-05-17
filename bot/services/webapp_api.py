@@ -238,22 +238,11 @@ async def handle_vpn_config_download(request: web.Request) -> web.Response:
     if not config.get("config_data"):
         return web.json_response({"error": "Config not ready yet"}, status=404)
 
+    # Full-tunnel .conf без правок. Smart bypass убран после
+    # тестов 17.05 — iOS WG split tunneling фундаментально кривой
+    # (Apple `excludedRoutes` bug + WireGuardKit ограничения).
+    # Юзеры для Сбер/Yandex отключают VPN на 1 минуту.
     body = config["config_data"]
-    protocol = (config.get("protocol") or "").lower()
-    mode = (request.query.get("mode") or "smart").lower()
-
-    # AWG/WG: подменяем AllowedIPs на bypass-список + DNS на RU-резолвер.
-    # VLESS не трогаем — его smart routing живёт в xray sub-URL.
-    if protocol in ("awg", "wg") and mode == "smart":
-        from services.awg_bypass import (
-            get_bypass_allowedips, rewrite_allowedips, rewrite_dns_for_smart,
-        )
-        bypass = get_bypass_allowedips()
-        if bypass:
-            body = rewrite_allowedips(body, bypass)
-            # DNS = 77.88.8.8 (Yandex) — иначе DNS-запросы идут на Google/CF
-            # через VPN → RU-сервисы видят Amsterdam-резолв и отдают CDN.
-            body = rewrite_dns_for_smart(body)
 
     # Human-friendly filename — `MAX VPN 🇳🇱 Amsterdam.conf` вместо
     # `tg154923518_41.conf` (наш внутренний tg-id-based label).
@@ -2110,13 +2099,12 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     configs = await get_active_vless_configs_for_user(user["id"])
     urls = [c["config_data"] for c in configs if c.get("config_data")]
 
-    # Default: sing-box JSON со встроенным RU split-tunneling (Сбер/Кинопоиск
-    # бегут direct через RU-локальный интернет юзера, остальное — в VPN).
-    # `?mode=full` → plain base64 vless список, как раньше (escape hatch для
-    # клиентов которые sing-box не понимают, и для параноиков «всё через VPN»).
-    mode = (request.query.get("mode") or "smart").lower()
-    smart = (mode == "smart") and urls
-
+    # Plain base64-encoded vless:// list. Universal формат поддерживаемый
+    # всеми VLESS-клиентами (Happ, Streisand, V2Box, sing-box).
+    # Smart routing был snatched: iOS архитектура не даёт реально обходить
+    # VPN-туннель для отдельных сайтов из стандартных клиентов (NetworkExt
+    # sandbox + WireGuardKit limitations). Full tunnel = universally
+    # работает. Для Сбер/Yandex юзер выключает VPN на 1 минуту.
     body_text = "\n".join(urls)
     encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
 
@@ -2207,29 +2195,6 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
         "Profile-Web-Page-Url": "https://t.me/maxvpnesim_bot",
         "Support-Url": "https://t.me/maxvpnesim_bot",
     }
-
-    if smart:
-        # Happ принимает HTTP-header `exclude-routes` → мапится в iOS kernel
-        # NEIPv4Settings.excludedRoutes → RU CIDR'ы реально идут direct,
-        # минуя VPN-туннель на уровне ОС.  Это ЕДИНСТВЕННЫЙ способ split
-        # tunneling на iOS (xray routing.rules → direct не работает — iOS
-        # sandbox роутит даже direct-сокеты через utun обратно в туннель).
-        # См. https://www.happ.su/main/dev-docs/routing
-        from services.awg_bypass import _EXTRA_RU_CIDRS
-        headers["exclude-routes-set"] = ", ".join(_EXTRA_RU_CIDRS)
-
-        # Happ-compatible xray-core JSON-array со встроенным RU bypass routing.
-        # routing.rules с direct outbound — НЕ работают на iOS, но
-        # работают на Android/Desktop xray-клиентах. Оставляем как
-        # second-layer fallback для non-iOS платформ.
-        from services.happ_sub import build_happ_subscription, serialize
-        configs = build_happ_subscription(urls, profile_title=plan_name)
-        if configs:
-            json_body = serialize(configs)
-            headers["Content-Type"] = "application/json; charset=utf-8"
-            return web.Response(text=json_body, headers=headers)
-        # fallthrough на plain base64 если все URL'ы битые
-
     return web.Response(text=encoded, headers=headers)
 
 
@@ -2727,35 +2692,6 @@ async def handle_admin_user_unban(request: web.Request) -> web.Response:
 
 # ── Фабрика приложения ─────────────────────────────────────────────────────────
 
-async def handle_xray_rule_file(request: web.Request) -> web.Response:
-    """GET /static/xray-rules/{name} — раздаёт `.srs` файлы (geoip-ru,
-    geosite-ru-available-only-inside) которые sing-box внутри Happ-клиента
-    подтягивает по rule_set remote URLs. Cron `_refresh_xray_rules` качает их
-    каждые 6ч с runetfreedom GitHub Releases.
-
-    No auth — публичные «географические» данные, в каждом v2ray-клиенте уже
-    лежит похожий geoip.dat (просто наш — заточен под RU bypass).
-    """
-    from services.xray_rules import rule_file_path, rule_file_sha256
-    name = request.match_info.get("name", "")
-    p = rule_file_path(name)
-    if p is None:
-        return web.Response(text="not found", status=404)
-    etag = rule_file_sha256(name)
-    inm = request.headers.get("If-None-Match", "")
-    if etag and inm and inm == f'"{etag}"':
-        return web.Response(status=304)
-    headers = {
-        "Content-Type": "application/octet-stream",
-        # 1 час кеш + revalidate; sing-box внутри Happ всё равно делает свой
-        # update_interval из rule_set definition (мы там ставим 24h).
-        "Cache-Control": "public, max-age=3600",
-    }
-    if etag:
-        headers["ETag"] = f'"{etag}"'
-    return web.FileResponse(p, headers=headers)
-
-
 async def handle_health(request: web.Request) -> web.Response:
     """Public health-check + версия. Используется monitoring'ом и manual debug
     «какая версия катится сейчас». No auth — для внешних probes."""
@@ -2810,9 +2746,6 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/vpn/trial/claim",            handle_vpn_trial_claim)
     # Subscription URL для VPN-клиентов (Happ/Streisand): один URL — все его vless-конфиги
     app.router.add_get ("/sub/{token}",                    handle_user_subscription)
-    # RU split-tunneling: sing-box rule-set файлы (geoip-ru.srs +
-    # geosite-ru-available-only-inside.srs), обновляются cron-таском раз в 6ч.
-    app.router.add_get ("/static/xray-rules/{name}",       handle_xray_rule_file)
 
     # CryptoBot webhook
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)
