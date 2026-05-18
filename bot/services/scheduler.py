@@ -47,6 +47,8 @@ from services.database import (
     update_config_data,
     get_esim_profiles_for_usage_sync,
     update_esim_usage,
+    get_winback_candidates,
+    mark_winback_sent,
 )
 import services.esim_api as esim_api
 from services.vpnctl_client import client_for_server, VpnctlError
@@ -840,6 +842,39 @@ async def _send_renewal_reminders(bot: Bot):
             await mark_renewal_reminded(sub["id"])
 
 
+async def _winback_campaign(bot: Bot):
+    """Win-back: через 7-14 дней после истечения шлём реактивационное письмо.
+
+    Цель — вернуть ушедших пользователей пока они ещё помнят про VPN.
+    7 дней: успели почувствовать что VPN нет, но ещё не забыли про нас.
+    14 дней: крайний срок, дальше CTR резко падает.
+
+    Один раз на подписку (winback_sent=1) — не спамим.
+    Пользователь с active/grace подпиской исключается (уже вернулся).
+    """
+    candidates = await get_winback_candidates(days_min=7, days_max=14)
+    if not candidates:
+        return
+    logger.info("win-back: %d кандидатов", len(candidates))
+    for sub in candidates:
+        user_id = sub["user_id"]
+        sub_id  = sub["id"]
+        text = (
+            "👋 <b>Скучаем без тебя!</b>\n\n"
+            "Прошла неделя, а VPN всё ещё выключен.\n\n"
+            "Возможно, что-то не устроило — напиши нам в поддержку, "
+            "разберёмся. Или просто продли — тарифы с 200 ₽/мес, "
+            "без контракта, первый раз 3 дня в подарок при оплате на месяц.\n\n"
+            "Будем рады видеть тебя снова 🙂"
+        )
+        sent = await _send_throttled(
+            bot, user_id, text, parse_mode="HTML",
+            reply_markup=_renew_kb(),
+        )
+        if sent:
+            await mark_winback_sent(sub_id)
+
+
 async def _sync_esim_usage():
     """Раз в 3 часа батчем тянет /esim/usage/query для активных eSIM-профилей.
     Лимит API: 10 esimTranNo за один запрос; rate limit 8 req/sec.
@@ -987,3 +1022,7 @@ async def run_scheduler(bot: Bot):
             n = await cleanup_stuck_activating_slots()
             if n:
                 logger.info("cleanup_stuck_activating: сброшено %d слотов", n)
+        # Win-back кампания — раз в сутки. Шлём реактивационное сообщение
+        # пользователям у которых sub истёк 7-14 дней назад и они не вернулись.
+        if _TICK % 24 == 0:
+            await _safe("winback",      _winback_campaign(bot),          timeout=120)

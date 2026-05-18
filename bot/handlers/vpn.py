@@ -11,6 +11,7 @@ VPN purchase flow + eSIM delivery.
 """
 
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -24,6 +25,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     BufferedInputFile,
     PreCheckoutQuery,
+    WebAppInfo,
 )
 
 from services.database import (
@@ -642,6 +644,23 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         if sub_url else ""
     )
 
+    # Inline-кнопки после оплаты: «Мои конфиги» + «Инструкция».
+    # Снижает friction первого подключения — новый юзер не ищет команды.
+    _webapp_url = os.getenv("WEBAPP_URL", "")
+    kb_rows = []
+    if _webapp_url:
+        kb_rows.append([
+            InlineKeyboardButton(
+                text="📁 Мои конфиги",
+                web_app=WebAppInfo(url=f"{_webapp_url}/configs"),
+            ),
+            InlineKeyboardButton(
+                text="📖 Инструкция",
+                web_app=WebAppInfo(url=f"{_webapp_url}/instructions"),
+            ),
+        ])
+    reply_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
+
     await message.answer(
         f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
         f"📅 Действует до: <b>{expiry_str}</b>\n"
@@ -649,6 +668,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         f"{note}"
         f"{sub_block}",
         parse_mode="HTML",
+        reply_markup=reply_kb,
     )
 
     # Реферальный бонус (Stars-flow). Общий helper используется и в Cryptobot/

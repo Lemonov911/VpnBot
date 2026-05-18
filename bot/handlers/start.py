@@ -56,7 +56,7 @@ def _derive_source(start_param: str) -> str:
     return f"other:{safe}"
 
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")
-REFERRAL_BONUS_DAYS = 7  # дней бонуса рефереру за первую покупку реферала
+REFERRAL_BONUS_DAYS = 14  # дней бонуса рефереру за первую покупку реферала
 
 
 def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKeyboardMarkup:

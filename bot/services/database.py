@@ -446,6 +446,12 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN reminded_renewal_3d INTEGER NOT NULL DEFAULT 0"
         )
+    # winback_sent — флаг что win-back сообщение уже отправлено. Один раз на
+    # истёкшую подписку чтобы не спамить. 0 = не отправлено, 1 = отправлено.
+    if "winback_sent" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN winback_sent INTEGER NOT NULL DEFAULT 0"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -2229,5 +2235,44 @@ async def update_esim_usage(esim_tran_no: str, used_bytes: int):
                SET used_volume=?, last_sync_at=CURRENT_TIMESTAMP
                WHERE esim_tran_no=?""",
             (used_bytes, esim_tran_no),
+        )
+        await db.commit()
+
+
+async def get_winback_candidates(days_min: int = 7, days_max: int = 14) -> list[dict]:
+    """Возвращает подписки, чей статус стал 'expired' от days_min до days_max дней назад,
+    winback_sent=0, пользователь не купил новую active/grace подписку после истечения.
+
+    Семантика: ищем пользователей, которые ушли и не вернулись в окне [7, 14] дней.
+    За пределами 14 дней слать уже бессмысленно (холодный контакт).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT s.id, s.user_id, s.plan
+            FROM subscriptions s
+            WHERE s.status = 'expired'
+              AND s.winback_sent = 0
+              AND s.plan != 'vpn_trial'
+              AND datetime(s.updated_at) <= datetime('now', ?||' days')
+              AND datetime(s.updated_at) >= datetime('now', ?||' days')
+              AND NOT EXISTS (
+                  SELECT 1 FROM subscriptions s2
+                  WHERE s2.user_id = s.user_id
+                    AND s2.status IN ('active', 'grace')
+              )
+            """,
+            (f"-{days_min}", f"-{days_max}"),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_winback_sent(sub_id: int):
+    """Помечает подписку как получившую win-back сообщение."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET winback_sent=1 WHERE id=?",
+            (sub_id,),
         )
         await db.commit()
