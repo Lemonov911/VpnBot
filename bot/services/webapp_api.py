@@ -155,7 +155,7 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
 
     invoice_kwargs: dict = dict(
         title=f"VPN {plan['name']}",
-        description=f"Доступ к VPN на {plan['duration_days']} дней. VLESS-Reality.",
+        description=f"Доступ к VPN на {plan['duration_days']} дней. VLESS-Reality. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
         payload=body["plan_key"],
         currency="XTR",
         prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
@@ -1667,7 +1667,7 @@ async def handle_esim_invoice(request: web.Request) -> web.Response:
     payload = f"esim:{pkg_code}:{price}"
     url = await bot.create_invoice_link(
         title=name,
-        description=f"eSIM: {name}. Активация при первом подключении.",
+        description=f"eSIM: {name}. Активация при первом подключении. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
         payload=payload,
         currency="XTR",
         prices=[LabeledPrice(label=name, amount=stars)],

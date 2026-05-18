@@ -187,7 +187,8 @@ async def initiate_purchase(callback: CallbackQuery, bot: Bot):
             title=f"VPN {plan['name']}",
             description=(
                 f"Доступ к VPN на {plan['duration_days']} дней. "
-                "Протокол VLESS-Reality. Маскируется под обычный сайт."
+                "Протокол VLESS-Reality. "
+                "Оплачивая, принимаете условия: maxvpnesim.com/oferta"
             ),
             payload=plan_key,
             stars=plan["stars"],
