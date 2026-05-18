@@ -7,6 +7,7 @@ import {
   type Subscription, type UserStats, type TrialStatus,
 } from '../api'
 import { useT, usePlural, useLang } from '../i18n'
+import TrialSuccessSheet from '../components/TrialSuccessSheet'
 
 // "2026-05-30 21:00:58" / "2026-05-30T21:00:58.123" → "30 мая" / "May 30"
 function formatNiceDate(iso: string, lang: 'ru' | 'en'): string {
@@ -35,6 +36,7 @@ export default function Home() {
   const [claiming,  setClaiming]  = useState(false)
   const [trialErr,  setTrialErr]  = useState('')
   const [trialDone, setTrialDone] = useState(false)
+  const [trialSheet, setTrialSheet] = useState(false)
 
   useEffect(() => {
     getActiveSubscription().catch(() => null).then(setSub)
@@ -50,6 +52,7 @@ export default function Home() {
       await claimTrial()
       WebApp.HapticFeedback.notificationOccurred('success')
       setTrialDone(true)
+      setTrialSheet(true)
       // refresh subscription card — теперь юзер с активным trial
       getActiveSubscription().catch(() => null).then(setSub)
       setTrial({ eligible: false, duration_days: trial?.duration_days ?? 3 })
@@ -154,33 +157,12 @@ export default function Home() {
           <div className="fade-in rounded-[20px] p-4 bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)]">
             <div className="text-base font-bold mb-1 text-[var(--tg-theme-text-color)]">{t('trial_success_title')}</div>
             <div className="text-[12px] text-[var(--tg-theme-hint-color)] leading-snug mb-3">{t('trial_success_sub')}</div>
-            {/* Перепорядок 15.05 (UX audit P0): сначала Configs (главный шаг —
-                там оба конфига: AWG-файл + VLESS sub-URL), потом установка Happ
-                как compact-chips, потом upgrade как tertiary. Раньше Happ-кнопки
-                были громче чем Configs — юзер ставил Happ, не понимал что
-                импортировать, выходил. */}
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/configs') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setTrialSheet(true) }}
               className="w-full py-[10px] rounded-[10px] border-none bg-primary text-white text-[13px] font-bold cursor-pointer mb-2"
             >
               📥 {t('trial_open_configs')}
             </button>
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              <button
-                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
-                className="min-h-[44px] py-2.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[12px] font-medium cursor-pointer"
-                style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
-              >
-                🍎 {t('trial_install_ios')}
-              </button>
-              <button
-                onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
-                className="min-h-[44px] py-2.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[12px] font-medium cursor-pointer"
-                style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
-              >
-                🤖 {t('trial_install_android')}
-              </button>
-            </div>
             <button
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/plans') }}
               className="w-full min-h-[44px] py-2.5 rounded-[10px] border-none bg-primary/[0.13] text-primary text-[12px] font-medium cursor-pointer"
@@ -440,6 +422,13 @@ export default function Home() {
         )}
 
       </div>
+
+      {trialSheet && (
+        <TrialSuccessSheet
+          days={trial?.duration_days}
+          onClose={() => setTrialSheet(false)}
+        />
+      )}
     </>
   )
 }
