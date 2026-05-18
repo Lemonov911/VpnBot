@@ -1983,6 +1983,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
         expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
         has_awg = bool(result.get("awg_config"))
 
+        win_note = "💻 <b>Windows</b>: качай <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a>, не WireGuard.exe"
         if has_awg:
             msg = (
                 f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
@@ -1990,9 +1991,10 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
                 f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
                 f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
                 f"   Открой Configs (📁 в Mini App) → скачай AWG-конфиг\n\n"
-                f"<b>2) VLESS Subscription URL</b> (для Happ / V2Box):\n"
+                f"<b>2) VLESS Subscription URL</b> (для Happ / Amnezia VPN):\n"
                 f"<code>{result['sub_url']}</code>\n\n"
-                f"📖 Инструкция: /howto\n"
+                f"{win_note}\n"
+                f"📖 Полная инструкция: /howto\n"
                 f"💎 После trial — выбери постоянный тариф в /start"
             )
         else:
@@ -2000,12 +2002,13 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
                 f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
                 f"📅 До: <b>{expires_str}</b>\n"
                 f"🚀 Скорость: 60 Mbps\n\n"
-                f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
+                f"<b>Subscription URL</b> (импортируй в Happ / Amnezia VPN один раз):\n"
                 f"<code>{result['sub_url']}</code>\n\n"
-                f"📖 Инструкция: /howto\n"
+                f"{win_note}\n"
+                f"📖 Полная инструкция: /howto\n"
                 f"💎 После trial — выбери постоянный тариф в /start"
             )
-        await bot.send_message(user["id"], msg, parse_mode="HTML")
+        await bot.send_message(user["id"], msg, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         logger.warning("trial notify failed for user=%d: %s", user["id"], e, exc_info=True)
 

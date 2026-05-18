@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 
 from aiogram import Router, F, Bot
+from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
     Message,
@@ -64,16 +65,18 @@ PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
 
 HOWTO_TEXT = (
     "📖 <b>Как настроить VPN — 3 шага</b>\n\n"
-    "<b>1. Скачай Happ</b>:\n"
-    "   • <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">iOS</a>\n"
-    "   • <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Android</a>\n"
-    "   • <a href=\"https://happ.su\">Mac / Windows</a>\n\n"
+    "<b>1. Скачай приложение</b>:\n"
+    "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
+    "(или <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
+    "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
+    "(не WireGuard.exe — тот даёт 1-2 Мбит/с вместо 120)\n\n"
     "<b>2. После оплаты</b> я пришлю <b>Subscription URL</b> — это твоя постоянная "
     "ссылка. Импортируешь её в Happ <b>один раз</b> — дальше Happ сам подтягивает "
     "обновления и переключает между серверами.\n\n"
-    "<b>3. В Happ</b>: «+» → <b>«Подписка»</b> → вставь URL → жми переключатель.\n\n"
-    "💡 Если получишь ещё и одиночный <code>vless://</code>-конфиг — это запасной. "
-    "Subscription URL надёжнее: обновляется сам.\n\n"
+    "<b>3. В Happ / Amnezia VPN</b>: «+» → <b>«Подписка»</b> → вставь URL → жми переключатель.\n\n"
+    "💡 Если получишь ещё и AWG-конфиг — импортируй его в "
+    "<a href=\"https://apps.apple.com/app/amneziawg/id6478942365\">AmneziaWG</a> "
+    "для обхода МТС DPI.\n\n"
     "💡 Если какой-то российский сайт не открывается (Сбер, Госуслуги) — "
     "напиши в поддержку, добавим в исключения."
 )
@@ -111,6 +114,11 @@ async def show_howto(callback: CallbackQuery):
         disable_web_page_preview=True,
     )
     await callback.answer()
+
+
+@router.message(Command("howto"))
+async def cmd_howto(message: Message):
+    await message.answer(HOWTO_TEXT, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @router.callback_query(F.data == "menu:start")
