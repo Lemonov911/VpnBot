@@ -20,7 +20,7 @@ const T = {
     // буквальный список = улика для подачи на блокировку Mini App.
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
       ? 'Свободный интернет на телефоне и ноутбуке\nБез оплаты, без карты'
-      : 'Свободный доступ к интернету\nбез цензуры и ограничений',
+      : 'Надёжный VPN с шифрованием\nдля телефона и ноутбука',
     home_card_pitch_no_sub: 'Безопасный интернет от 200 ₽ в месяц',
     home_sub_active: '● Подписка активна',
     home_sub_none:   'Нет активной подписки',
@@ -36,7 +36,7 @@ const T = {
     feat_speed:    'До 120 Мбит/с',
     feat_speed_s:  'Без ограничений на устройство',
     feat_proto:    'VLESS · Reality',
-    feat_proto_s:  'Маскируется под обычный сайт',
+    feat_proto_s:  'Шифрует трафик, работает везде',
     feat_servers:  '🇩🇪 Frankfurt',
     feat_servers_s:'Скоро добавим Helsinki',
 

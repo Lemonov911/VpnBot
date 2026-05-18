@@ -56,7 +56,7 @@ const PROTO_LABEL: Record<string, string> = {
 }
 
 const PROTO_HINT: Record<string, string> = {
-  vless: 'Любое устройство · маскируется под сайт',
+  vless: 'Любое устройство · шифрует трафик',
   wg:    'WireGuard · Роутер · OpenWrt',
   awg:   'AmneziaWG · iOS · Android · Mac',
 }

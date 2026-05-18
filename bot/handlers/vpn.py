@@ -77,7 +77,7 @@ HOWTO_TEXT = (
     "   <b>В Amnezia VPN (Windows)</b>: Файл → Импортировать → вставь URL.\n\n"
     "💡 Если получишь ещё и AWG-конфиг — импортируй его в "
     "<a href=\"https://apps.apple.com/app/amneziawg/id6478942365\">AmneziaWG</a> "
-    "для обхода МТС DPI.\n\n"
+    "для усиленного шифрования трафика.\n\n"
     "💡 Если какой-то российский сайт не открывается (Сбер, Госуслуги) — "
     "напиши в поддержку, добавим в исключения."
 )
@@ -91,9 +91,8 @@ HOWTO_TEXT = (
 @router.callback_query(F.data == "menu:vpn")
 async def show_vpn_menu(callback: CallbackQuery):
     await callback.message.edit_text(
-        "🌐 <b>VPN — обход блокировок и приватность</b>\n\n"
-        "Протокол: <b>VLESS + Reality</b> — маскируется под обычный сайт, "
-        "не палится DPI и ТСПУ\n"
+        "🌐 <b>VPN — приватность и защищённое соединение</b>\n\n"
+        "Протокол: <b>VLESS + Reality</b> — шифрует трафик, работает в любых сетях\n"
         "Локация: 🇩🇪 Frankfurt\n"
         "Soft-лимит трафика, после — медленнее, но не отключение\n\n"
         "<b>Тарифы:</b>\n"
