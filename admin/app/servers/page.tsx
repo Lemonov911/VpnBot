@@ -108,6 +108,31 @@ export default function ServersPage() {
   }
 
   const [backfilling, setBackfilling] = useState<number | null>(null)
+  const [confirmMigrate, setConfirmMigrate] = useState<number | null>(null)
+  const [migrating, setMigrating] = useState<number | null>(null)
+
+  async function migrateConfigs(id: number, name: string) {
+    if (confirmMigrate !== id) {
+      setConfirmMigrate(id)
+      setTimeout(() => setConfirmMigrate(c => c === id ? null : c), 5000)
+      return
+    }
+    setConfirmMigrate(null)
+    setMigrating(id)
+    try {
+      const r = await fetch(`/admin/api/servers/${id}/migrate`, { method: 'POST' })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) { alert(`Ошибка: ${data.error || r.statusText}`); return }
+      const failTail = data.failed > 0 ? `\nОшибок: ${data.failed}` : ''
+      const vlessTail = data.reset_vless > 0 ? `\nVLESS сброшено: ${data.reset_vless}` : ''
+      alert(
+        `Готово.\nAWG мигрировано: ${data.migrated}${vlessTail}${failTail}`,
+      )
+      load()
+    } finally {
+      setMigrating(null)
+    }
+  }
 
   async function backfillVless(id: number, name: string) {
     if (!confirm(
@@ -255,6 +280,18 @@ export default function ServersPage() {
                     <button onClick={() => enableServer(s.id)}
                       className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors shrink-0">
                       Включить
+                    </button>
+                    {/* Migrate: re-provision AWG конфиги с мёртвого сервера. Двойной тап. */}
+                    <button
+                      onClick={() => migrateConfigs(s.id, s.name)}
+                      disabled={migrating !== null}
+                      className={`text-xs transition-colors shrink-0 disabled:opacity-50 ${
+                        confirmMigrate === s.id
+                          ? 'text-yellow-400 font-semibold animate-pulse'
+                          : 'text-neutral-500 hover:text-yellow-400'
+                      }`}
+                      title="Мигрировать конфиги с этого сервера на доступные">
+                      {migrating === s.id ? '...' : confirmMigrate === s.id ? 'Точно?' : 'Мигрировать'}
                     </button>
                     {/* Hard-delete только для drained servers. Двойной тап.
                         Backend дополнительно блочит если есть active configs. */}

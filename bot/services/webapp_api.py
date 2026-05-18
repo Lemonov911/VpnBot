@@ -2810,6 +2810,124 @@ async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
     })
 
 
+async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
+    """POST /api/admin/servers/{id}/migrate-configs
+    AWG/WG: re-provision на лучшем доступном сервере + уведомление юзеру скачать конфиг.
+    VLESS: сбрасывает dead-server записи (multi-location копии на других серверах живы).
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    server_id = _parse_path_int(request, "id")
+    if server_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    from services.database import (
+        get_server_by_id, get_active_configs_for_migration,
+        get_best_server, activate_config_slot, reset_config_slot,
+        update_server_peer_count, audit_log_record,
+    )
+    from services.vpnctl_client import provision_peer, revoke_peer, VpnctlError
+
+    dead_server = await get_server_by_id(server_id)
+    if not dead_server:
+        return web.json_response({"error": "server not found"}, status=404)
+    if dead_server.get("is_active"):
+        return web.json_response({"error": "drain server first (is_active=1)"}, status=400)
+
+    configs = await get_active_configs_for_migration(server_id)
+    bot: Bot = request.app["bot"]
+
+    migrated = 0
+    reset_vless = 0
+    failed = 0
+    failures: list[dict] = []
+    notified: set[int] = set()
+
+    for cfg in configs:
+        config_id = cfg["id"]
+        user_id   = cfg["user_id"]
+        protocol  = cfg["protocol"]
+
+        try:
+            if protocol == "vless":
+                # Multi-location: drop this dead-server record; other-server copies are intact.
+                await reset_config_slot(config_id)
+                await update_server_peer_count(server_id, -1)
+                reset_vless += 1
+                continue
+
+            # AWG / plain WG — single-server, must migrate
+            target = await get_best_server(protocol)
+            if not target or target["id"] == server_id:
+                failures.append({"config_id": config_id, "error": "no available server"})
+                failed += 1
+                continue
+
+            label = f"user_{user_id}_{protocol}_{config_id}"
+            peer  = await provision_peer(target, label, protocol)
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+
+            # Best-effort: remove old peer from dead server
+            old_peer_id = cfg.get("wg_pubkey") or ""
+            if old_peer_id:
+                await revoke_peer(dead_server, old_peer_id, protocol)
+
+            await activate_config_slot(
+                config_id, label, peer.config,
+                server_id=target["id"],
+                wg_pubkey=peer.id,
+                assigned_ip=peer_ip,
+            )
+            await update_server_peer_count(target["id"], +1)
+            await update_server_peer_count(server_id, -1)
+            migrated += 1
+
+            if user_id not in notified:
+                notified.add(user_id)
+                srv_name = " ".join(filter(None, [
+                    (target.get("flag") or "").strip(),
+                    (target.get("name") or "").strip(),
+                ])) or f"Server {target['id']}"
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"🔄 <b>Ваш VPN перенесён</b>\n\n"
+                        f"Сервер заменён на {srv_name}.\n"
+                        f"Скачайте обновлённый конфиг в "
+                        f"<a href=\"{WEBAPP_URL}\">приложении</a>.",
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception as notify_err:
+                    logger.warning("migrate notify user=%d: %s", user_id, notify_err)
+
+        except VpnctlError as e:
+            logger.warning("migrate config=%d: %s", config_id, e)
+            failed += 1
+            if len(failures) < 10:
+                failures.append({"config_id": config_id, "error": str(e)[:200]})
+        except Exception as e:
+            logger.error("migrate config=%d: %s", config_id, e, exc_info=True)
+            failed += 1
+            if len(failures) < 10:
+                failures.append({"config_id": config_id, "error": str(e)[:200]})
+
+    await audit_log_record(
+        admin_id=0, action="server_migrate",
+        target=f"server:{server_id}",
+        details=f"migrated={migrated} reset_vless={reset_vless} failed={failed}",
+    )
+
+    return web.json_response({
+        "ok": True,
+        "migrated": migrated,
+        "reset_vless": reset_vless,
+        "failed": failed,
+        "failures": failures,
+    })
+
+
 async def handle_admin_user_unban(request: web.Request) -> web.Response:
     """POST /api/admin/user/{id}/unban — снимает бан."""
     if not _check_admin_secret(request):
@@ -2876,7 +2994,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/admin/sub/{id}/refund",      handle_admin_sub_refund)
     app.router.add_post("/api/admin/user/{id}/ban",        handle_admin_user_ban)
     app.router.add_post("/api/admin/user/{id}/unban",      handle_admin_user_unban)
-    app.router.add_post("/api/admin/servers/{id}/backfill-vless", handle_admin_vless_backfill)
+    app.router.add_post("/api/admin/servers/{id}/backfill-vless",   handle_admin_vless_backfill)
+    app.router.add_post("/api/admin/servers/{id}/migrate-configs",  handle_admin_migrate_configs)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)
     app.router.add_get ("/api/vpn/config/{id}/qr",        handle_vpn_config_qr)
     app.router.add_post("/api/vpn/config/{id}/activate",   handle_vpn_config_activate)

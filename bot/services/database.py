@@ -1771,6 +1771,19 @@ async def get_configs_by_server(server_id: int) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_active_configs_for_migration(server_id: int) -> list[dict]:
+    """Активные конфиги на сервере с полными полями для миграции."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT c.id, c.wg_pubkey, c.vless_uuid, c.protocol,
+                   c.subscription_id, c.user_id, c.peer_name, c.assigned_ip
+            FROM configs c
+            WHERE c.server_id=? AND c.status='active'
+        """, (server_id,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def add_referral_bonus(referrer_id: int, days: int):
     """Начисляет дни бонуса рефереру и продлевает активную подписку."""
     async with _connect() as db:
