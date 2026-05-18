@@ -432,11 +432,11 @@ const GOAL = 1000
 
 export function payingUsersGrowth() {
   const d = db()
-  // Monthly new paid subs (no trials, no legacy names that start with vpn_ but contain trial)
+  const excl = excludeAdminsClause('user_id')
   const rows = d.prepare(`
     SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as new_paid
     FROM subscriptions
-    WHERE plan NOT IN ('vpn_trial') AND (stars_paid > 0 OR amount_rub > 0)
+    WHERE plan NOT IN ('vpn_trial') AND (stars_paid > 0 OR amount_rub > 0) ${excl}
     GROUP BY month
     ORDER BY month
   `).all() as Array<{ month: string; new_paid: number }>
@@ -468,10 +468,11 @@ export function payingUsersGrowth() {
 
 export function activePayingCount() {
   const d = db()
+  const excl = excludeAdminsClause('user_id')
   const row = d.prepare(`
     SELECT COUNT(DISTINCT user_id) as n FROM subscriptions
     WHERE status IN ('active', 'grace') AND plan != 'vpn_trial'
-      AND (stars_paid > 0 OR amount_rub > 0)
+      AND (stars_paid > 0 OR amount_rub > 0) ${excl}
   `).get() as { n: number }
   return row.n
 }
