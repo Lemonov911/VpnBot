@@ -388,6 +388,36 @@ async def _migrate(db: aiosqlite.Connection):
     # NULL пока юзер не платил через Lava. Используем для recurring сверки.
     if "email" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    # traffic_source — first-touch attribution: utm:<code>, referral:<id>, direct.
+    # Заполняется один раз на первый /start, дальше не перезаписывается. Источник
+    # правды для метрик «откуда платящий пришёл» в админке /attribution.
+    # Формат хранения с двоеточием (utm:tg_pythonist_jul) — namespace + payload,
+    # позволяет различать каналы без отдельной колонки и сортировать по type.
+    if "traffic_source" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN traffic_source TEXT")
+    if "traffic_source_at" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN traffic_source_at TIMESTAMP")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_users_traffic_source ON users(traffic_source)"
+    )
+    # One-time backfill: ставим traffic_source='referral:<referrer_id>' для уже
+    # зарегистрированных юзеров с referred_by IS NOT NULL — это retroactive
+    # first-touch (раньше source не записывался, но факт что юзер пришёл по
+    # реф-ссылке мы знаем из referred_by). Без этого первые недели после
+    # деплоя весь старый трафик в админке отметится как 'direct' что искажает
+    # картину "реф vs реклама".
+    try:
+        await db.execute(
+            "INSERT INTO schema_state (key) VALUES ('traffic_source_backfill_v1')"
+        )
+        await db.execute(
+            "UPDATE users SET traffic_source = 'referral:' || referred_by, "
+            "                  traffic_source_at = created_at "
+            "WHERE referred_by IS NOT NULL AND traffic_source IS NULL"
+        )
+        logger.info("traffic_source backfilled for users with referred_by (one-time)")
+    except _sqlite.IntegrityError:
+        pass  # уже backfilled раньше
 
     # subscriptions — recurring tracking для Lava.top
     async with db.execute("PRAGMA table_info(subscriptions)") as cur:
@@ -468,12 +498,31 @@ async def _seed_default_server():
 
 # ── users ──────────────────────────────────────────────────────────────────────
 
-async def upsert_user(user_id: int, username: str | None, first_name: str):
+async def upsert_user(
+    user_id: int,
+    username: str | None,
+    first_name: str,
+    traffic_source: str | None = None,
+):
+    """Создаёт user-row или no-op если уже есть.
+
+    `traffic_source` (first-touch attribution): сохраняется ТОЛЬКО при первом
+    INSERT. Повторный /start с другим utm-кодом не перезатрёт исходный
+    источник — иначе реклама бы крала зачёт у другого канала при повторном
+    клике юзера.
+    """
     async with _connect() as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO users (id, username, first_name) VALUES (?, ?, ?)",
-            (user_id, username, first_name),
-        )
+        if traffic_source is not None:
+            await db.execute(
+                "INSERT OR IGNORE INTO users (id, username, first_name, "
+                "traffic_source, traffic_source_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                (user_id, username, first_name, traffic_source),
+            )
+        else:
+            await db.execute(
+                "INSERT OR IGNORE INTO users (id, username, first_name) VALUES (?, ?, ?)",
+                (user_id, username, first_name),
+            )
         await db.commit()
 
 

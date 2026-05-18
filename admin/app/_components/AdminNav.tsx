@@ -12,13 +12,14 @@ import { usePathname } from 'next/navigation'
  *   <AdminNav username="…" />
  */
 const NAV_ITEMS = [
-  { href: '/',           label: 'Дашборд'   },
-  { href: '/analytics',  label: 'Аналитика' },
-  { href: '/clients',    label: 'Клиенты'   },
-  { href: '/payments',   label: 'Платежи'   },
-  { href: '/monitoring', label: 'Мониторинг' },
-  { href: '/tickets',    label: 'Обращения' },
-  { href: '/servers',    label: 'Серверы'   },
+  { href: '/',            label: 'Дашборд'    },
+  { href: '/analytics',   label: 'Аналитика'  },
+  { href: '/attribution', label: 'Трафик'     },
+  { href: '/clients',     label: 'Клиенты'    },
+  { href: '/payments',    label: 'Платежи'    },
+  { href: '/monitoring',  label: 'Мониторинг' },
+  { href: '/tickets',     label: 'Обращения'  },
+  { href: '/servers',     label: 'Серверы'    },
 ]
 
 export default function AdminNav({ username }: { username?: string }) {

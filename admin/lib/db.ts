@@ -478,3 +478,105 @@ export function topReferrers(limit = 10) {
     LIMIT ?
   `).all(limit) as Array<{ id: number; username: string | null; first_name: string | null; invited: number; invited_paid: number }>
 }
+
+// ── Attribution / UTM tracking ────────────────────────────────────────────────
+
+export type AttributionRow = {
+  source: string         // 'utm:tg_pythonist_jul' | 'referral:123' | 'direct' | ...
+  starts: number         // регистраций (users.created_at попало в окно)
+  trial_users: number    // взяли триал
+  paying_users: number   // купили платный план хотя бы раз
+  revenue_stars: number  // суммарно ⭐ за период
+  revenue_rub: number    // суммарно ₽ (CryptoBot/Lava/Cryptomus)
+}
+
+/**
+ * Группировка new юзеров по traffic_source с метриками воронки и выручки.
+ *
+ * Окно: фильтр по `users.created_at`. Это first-touch — юзер считается «принёс
+ * X» только если зарегистрирован в окне (его исходный источник). Если пришёл
+ * по другой ссылке позже — source НЕ перетирается (иначе реклама бы крала
+ * зачёт у канала, который привёл оригинал).
+ *
+ * Выручка считается по всем платным подпискам этих юзеров за всё время —
+ * чтоб LTV-картинка по источнику росла с возрастом когорты.
+ *
+ * `days`:  null → всё время, иначе последние N дней по users.created_at.
+ */
+export function attributionByPeriod(days: number | null = 30): AttributionRow[] {
+  const d = db()
+  const exclU = excludeAdminsClause('u.id')
+
+  let dateWhere = ''
+  if (days !== null) {
+    const n = Math.max(1, Math.min(3650, Math.floor(days)))
+    dateWhere = `AND u.created_at > datetime('now','-${n} days')`
+  }
+
+  // Inner subquery: на каждого юзера в окне считаем флаги и суммы. Внешний
+  // SELECT агрегирует по source. Один SQL — один full-scan users в окне.
+  // На admin'ах: фильтруем во внешнем WHERE (u.id NOT IN admins) — этого
+  // достаточно, в subscriptions ходим уже за non-admin user_id.
+  return d.prepare(`
+    SELECT
+      source,
+      COUNT(*)                              as starts,
+      SUM(had_trial)                        as trial_users,
+      SUM(had_paid)                         as paying_users,
+      SUM(stars_total)                      as revenue_stars,
+      SUM(rub_total)                        as revenue_rub
+    FROM (
+      SELECT
+        COALESCE(u.traffic_source, 'direct') as source,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM subscriptions s
+          WHERE s.user_id = u.id AND s.plan = 'vpn_trial'
+        ) THEN 1 ELSE 0 END                  as had_trial,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM subscriptions s
+          WHERE s.user_id = u.id
+            AND s.plan != 'vpn_trial'
+            AND (s.stars_paid > 0 OR s.amount_rub > 0)
+        ) THEN 1 ELSE 0 END                  as had_paid,
+        COALESCE((
+          SELECT SUM(s.stars_paid) FROM subscriptions s
+          WHERE s.user_id = u.id AND s.plan != 'vpn_trial'
+        ), 0)                                 as stars_total,
+        COALESCE((
+          SELECT SUM(s.amount_rub) FROM subscriptions s
+          WHERE s.user_id = u.id AND s.plan != 'vpn_trial'
+        ), 0)                                 as rub_total
+      FROM users u
+      WHERE 1=1 ${dateWhere} ${exclU}
+    ) per_user
+    GROUP BY source
+    ORDER BY paying_users DESC, starts DESC
+  `).all() as AttributionRow[]
+}
+
+/**
+ * Последние использованные UTM-коды (только префикс utm:) — для блока
+ * «Недавние кампании» в админке. Сортировка по числу платящих.
+ *
+ * Без time-фильтра: помогает помнить «как я называл эту кампанию полгода назад».
+ */
+export function recentUtmCodes(limit = 20): Array<{ code: string; paying: number; starts: number }> {
+  const d = db()
+  const excl = excludeAdminsClause('u.id')
+  return d.prepare(`
+    SELECT
+      substr(u.traffic_source, 5) as code,
+      COUNT(*)                     as starts,
+      SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM subscriptions s
+        WHERE s.user_id = u.id
+          AND s.plan != 'vpn_trial'
+          AND (s.stars_paid > 0 OR s.amount_rub > 0)
+      ) THEN 1 ELSE 0 END)         as paying
+    FROM users u
+    WHERE u.traffic_source LIKE 'utm:%' ${excl}
+    GROUP BY code
+    ORDER BY paying DESC, starts DESC
+    LIMIT ?
+  `).all(limit) as Array<{ code: string; paying: number; starts: number }>
+}

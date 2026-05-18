@@ -1,4 +1,5 @@
 import os
+import re
 from aiogram import Router
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -16,6 +17,43 @@ from services.database import (
 from services.trial import can_claim_trial, TRIAL_DAYS
 
 router = Router()
+
+# UTM-payload разрешает только [a-z0-9_-], lowercase. Telegram сам ограничивает
+# start-param ровно этим алфавитом (+ длина <=64), но мы дополнительно
+# валидируем чтоб мусор не записался в БД при ручных подменах.
+_UTM_RE = re.compile(r"^[a-z0-9_\-]{1,60}$")
+
+
+def _derive_source(start_param: str) -> str:
+    """First-touch attribution из `/start <param>`.
+
+    Возвращает namespace-prefixed строку для users.traffic_source:
+      utm_<code>   → "utm:<code>"   — рекламные ссылки
+      ref_<id>     → "referral:<id>" — приглашение от другого юзера
+      plan_<...>   → "deeplink:plan" — пришёл по продуктовому deep-link (низкий
+                     приоритет — это уже re-engaged юзер, не «новый источник»),
+                     но всё-таки фиксируем чтобы понимать долю
+      "" (пусто)   → "direct" — открыл бота напрямую (без ссылки)
+      прочее       → "other:<param>" — кто-то прислал странный start
+    """
+    p = start_param.strip()
+    if not p:
+        return "direct"
+    if p.startswith("utm_"):
+        code = p[4:]
+        if _UTM_RE.match(code):
+            return f"utm:{code}"
+        return "utm:invalid"
+    if p.startswith("ref_"):
+        rest = p[4:]
+        if rest.isdigit():
+            return f"referral:{rest}"
+        return "referral:invalid"
+    if p.startswith("plan_") or p in ("esim", "support"):
+        return "deeplink"
+    # Любая другая полезная нагрузка — сохраняем как есть для будущей разборки
+    safe = p[:60] if _UTM_RE.match(p[:60]) else "unknown"
+    return f"other:{safe}"
 
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 REFERRAL_BONUS_DAYS = 7  # дней бонуса рефереру за первую покупку реферала
@@ -65,7 +103,19 @@ async def cmd_start(message: Message):
     username   = message.from_user.username
     first_name = message.from_user.first_name
 
-    await upsert_user(user_id=user_id, username=username, first_name=first_name)
+    # Парсим start param ДО upsert — нужен для first-touch attribution.
+    # /start ref_123456789, /start plan_vpn_popular, /start utm_tg_pythonist_jul
+    args = message.text.split(maxsplit=1)
+    start_param = args[1].strip() if len(args) > 1 else ""
+
+    # First-touch attribution: запишется только при первом INSERT, у уже
+    # существующего юзера НЕ перетрётся.
+    await upsert_user(
+        user_id=user_id,
+        username=username,
+        first_name=first_name,
+        traffic_source=_derive_source(start_param),
+    )
 
     # Ban-гейт: silent-ish reject.  Юзер не видит меню/триал/реф-ссылки,
     # но получает один читаемый текст чтобы понимал что произошло.
@@ -76,10 +126,6 @@ async def cmd_start(message: Message):
             "Если считаешь это ошибкой — напиши на support@maxvpnesim.com",
         )
         return
-
-    # Парсим start param: /start ref_123456789  или  /start plan_vpn_popular
-    args = message.text.split(maxsplit=1)
-    start_param = args[1].strip() if len(args) > 1 else ""
 
     # Реферальный код. Логика:
     # 1. Self-referral — silently игнорируем
