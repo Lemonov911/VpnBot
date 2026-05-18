@@ -436,7 +436,7 @@ export function payingUsersGrowth() {
   const rows = d.prepare(`
     SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as new_paid
     FROM subscriptions
-    WHERE plan NOT IN ('vpn_trial')
+    WHERE plan NOT IN ('vpn_trial') AND (stars_paid > 0 OR amount_rub > 0)
     GROUP BY month
     ORDER BY month
   `).all() as Array<{ month: string; new_paid: number }>
@@ -471,6 +471,7 @@ export function activePayingCount() {
   const row = d.prepare(`
     SELECT COUNT(DISTINCT user_id) as n FROM subscriptions
     WHERE status IN ('active', 'grace') AND plan != 'vpn_trial'
+      AND (stars_paid > 0 OR amount_rub > 0)
   `).get() as { n: number }
   return row.n
 }
