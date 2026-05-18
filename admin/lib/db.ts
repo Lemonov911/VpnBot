@@ -426,6 +426,55 @@ export function monitoringSnapshot() {
   }
 }
 
+// ── Goal progress ─────────────────────────────────────────────────────────────
+
+const GOAL = 1000
+
+export function payingUsersGrowth() {
+  const d = db()
+  // Monthly new paid subs (no trials, no legacy names that start with vpn_ but contain trial)
+  const rows = d.prepare(`
+    SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as new_paid
+    FROM subscriptions
+    WHERE plan NOT IN ('vpn_trial')
+    GROUP BY month
+    ORDER BY month
+  `).all() as Array<{ month: string; new_paid: number }>
+
+  // Running cumulative + project forward
+  let cum = 0
+  const actual = rows.map(r => {
+    cum += r.new_paid
+    return { month: r.month, new_paid: r.new_paid, cumulative: cum, projected: false }
+  })
+
+  // Project forward from avg of last 2 real months
+  const last2 = rows.slice(-2)
+  const avgNew = last2.length > 0 ? last2.reduce((a, b) => a + b.new_paid, 0) / last2.length : 5
+  const projMonths: typeof actual = []
+  let projCum = cum
+  let lastMonth = actual.at(-1)?.month ?? new Date().toISOString().slice(0, 7)
+
+  while (projCum < GOAL && projMonths.length < 24) {
+    const [y, m] = lastMonth.split('-').map(Number)
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`
+    projCum = Math.round(projCum + avgNew)
+    projMonths.push({ month: next, new_paid: 0, cumulative: projCum, projected: true })
+    lastMonth = next
+  }
+
+  return { points: [...actual, ...projMonths], goal: GOAL, currentCum: cum, avgNewPerMonth: Math.round(avgNew) }
+}
+
+export function activePayingCount() {
+  const d = db()
+  const row = d.prepare(`
+    SELECT COUNT(DISTINCT user_id) as n FROM subscriptions
+    WHERE status IN ('active', 'grace') AND plan != 'vpn_trial'
+  `).get() as { n: number }
+  return row.n
+}
+
 // ── Monitoring charts ─────────────────────────────────────────────────────────
 
 export function newSubsPerDay(days = 14) {

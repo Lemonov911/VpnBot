@@ -5,10 +5,13 @@ import {
   planMix30d,
   trialFunnel30d,
   topReferrers,
+  payingUsersGrowth,
+  activePayingCount,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
 import { RevenueArea } from '../_components/RevenueChart'
+import { GoalChart } from '../_components/GoalChart'
 
 function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -37,11 +40,13 @@ export default async function Analytics() {
   const session = await requireSession()
   if (!session) redirect('/login')
 
-  const s      = analyticsSummary()
-  const daily  = dailyRevenueLast30()
-  const mix    = planMix30d()
-  const funnel = trialFunnel30d()
-  const refs   = topReferrers(10)
+  const s           = analyticsSummary()
+  const daily       = dailyRevenueLast30()
+  const mix         = planMix30d()
+  const funnel      = trialFunnel30d()
+  const refs        = topReferrers(10)
+  const growth      = payingUsersGrowth()
+  const activePaying = activePayingCount()
 
   const totalMixCount = mix.reduce((a, b) => a + b.count, 0) || 1
 
@@ -53,6 +58,14 @@ export default async function Analytics() {
         <div className="text-xl font-extrabold tracking-tight">Аналитика</div>
         <div className="text-xs text-neutral-500 mt-0.5">За последние 30 дней</div>
       </div>
+
+      {/* Goal progress */}
+      <GoalChart
+        points={growth.points}
+        goal={growth.goal}
+        currentActive={activePaying}
+        avgNew={growth.avgNewPerMonth}
+      />
 
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
