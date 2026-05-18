@@ -92,7 +92,16 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
             <div className="text-xl font-extrabold flex items-center gap-2">
               <span>
                 {user.first_name || 'unknown'}
-                {user.username && <span className="text-neutral-500 font-normal"> @{user.username}</span>}
+                {user.username && (
+                  <a
+                    href={`https://t.me/${user.username}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-neutral-500 font-normal text-base hover:text-sky-400 transition-colors"
+                  >
+                    {' '}@{user.username}
+                  </a>
+                )}
               </span>
               {user.is_banned ? (
                 <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40">BANNED</span>

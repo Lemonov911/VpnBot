@@ -86,10 +86,19 @@ export default async function Clients() {
                       <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
                         <div className="font-medium truncate max-w-[200px]">
                           {c.first_name || 'unknown'}
-                          {c.username && <span className="text-neutral-500"> @{c.username}</span>}
                         </div>
                         <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
                       </Link>
+                      {c.username && (
+                        <a
+                          href={`https://t.me/${c.username}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-sky-500 hover:text-sky-300"
+                        >
+                          @{c.username}
+                        </a>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-right font-semibold text-yellow-400">⭐ {c.total_stars}</td>
                     <td className="px-4 py-2 text-right">

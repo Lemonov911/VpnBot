@@ -189,13 +189,22 @@ export default async function Payments({
                   <tr key={r.id} className={`hover:bg-neutral-800/30 ${r.refunded_at ? 'opacity-60' : ''}`}>
                     <td className="px-4 py-2 text-neutral-400 text-xs whitespace-nowrap">{fmtDate(r.created_at)}</td>
                     <td className="px-4 py-2">
-                      <Link href={`/clients/${r.user_id}`} className="hover:text-sky-400">
+                      <Link href={`/clients/${r.user_id}`} className="block hover:text-sky-400">
                         <div className="font-medium truncate max-w-[200px]">
                           {r.first_name || 'unknown'}
-                          {r.username && <span className="text-neutral-500"> @{r.username}</span>}
                         </div>
                         <div className="text-[10px] text-neutral-600 font-mono">id {r.user_id}</div>
                       </Link>
+                      {r.username && (
+                        <a
+                          href={`https://t.me/${r.username}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-sky-500 hover:text-sky-300"
+                        >
+                          @{r.username}
+                        </a>
+                      )}
                     </td>
                     <td className="px-4 py-2">{PLAN_NAMES[r.plan] || r.plan}</td>
                     <td className="px-4 py-2 text-xs"><MethodPill method={r.method} refunded={!!r.refunded_at} /></td>
