@@ -426,6 +426,64 @@ export function monitoringSnapshot() {
   }
 }
 
+// ── Monitoring charts ─────────────────────────────────────────────────────────
+
+export function newSubsPerDay(days = 14) {
+  const d = db()
+  return d.prepare(`
+    SELECT date(created_at) as day,
+      SUM(CASE WHEN plan = 'vpn_trial' THEN 1 ELSE 0 END) as trials,
+      SUM(CASE WHEN plan != 'vpn_trial' THEN 1 ELSE 0 END) as paid
+    FROM subscriptions
+    WHERE created_at > datetime('now', '-${days} days')
+    GROUP BY day
+    ORDER BY day
+  `).all() as Array<{ day: string; trials: number; paid: number }>
+}
+
+export function latencyHistory24h() {
+  const d = db()
+  return d.prepare(`
+    SELECT s.id as server_id, s.name, s.flag,
+      strftime('%Y-%m-%dT%H:00:00', h.checked_at) as ts,
+      CAST(ROUND(AVG(CASE WHEN h.status='up' THEN h.latency_ms END)) AS INTEGER) as avg_ms,
+      CAST(100.0 * SUM(CASE WHEN h.status='up' THEN 1 ELSE 0 END) / COUNT(*) AS INTEGER) as uptime_pct
+    FROM servers s
+    JOIN server_health_log h ON h.server_id = s.id
+    WHERE h.checked_at > datetime('now', '-24 hours')
+    GROUP BY s.id, strftime('%Y-%m-%dT%H', h.checked_at)
+    ORDER BY s.id, h.checked_at
+  `).all() as Array<{
+    server_id: number; name: string; flag: string | null;
+    ts: string; avg_ms: number | null; uptime_pct: number
+  }>
+}
+
+export function uptimeStrip24h() {
+  const d = db()
+  return d.prepare(`
+    SELECT server_id,
+      CAST((julianday(checked_at) - julianday(datetime('now', '-24 hours'))) * 48 AS INTEGER) as bucket,
+      SUM(CASE WHEN status='up' THEN 1 ELSE 0 END) as up_n,
+      COUNT(*) as total_n
+    FROM server_health_log
+    WHERE checked_at > datetime('now', '-24 hours')
+    GROUP BY server_id, bucket
+    ORDER BY server_id, bucket
+  `).all() as Array<{ server_id: number; bucket: number; up_n: number; total_n: number }>
+}
+
+export function activeSubsByPlan() {
+  const d = db()
+  return d.prepare(`
+    SELECT plan, COUNT(*) as n
+    FROM subscriptions
+    WHERE status IN ('active', 'grace')
+    GROUP BY plan
+    ORDER BY n DESC
+  `).all() as Array<{ plan: string; n: number }>
+}
+
 // ── Tickets page ──────────────────────────────────────────────────────────────
 
 export function allTicketsWithUser(limit = 100, statusFilter?: string) {
