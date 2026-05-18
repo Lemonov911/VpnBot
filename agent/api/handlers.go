@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -193,6 +194,10 @@ func (s *Server) handleServiceThrottlePeer(iface string) http.HandlerFunc {
 			return
 		}
 		peerIP := strings.Split(req.IP, "/")[0] // strip /32 if present
+		if net.ParseIP(peerIP) == nil {
+			jsonError(w, "bad request: invalid ip", http.StatusBadRequest)
+			return
+		}
 		// classid 3:X — derived from last octet of peer IP. Default class = 3:1
 		// (зарезервировано, реальный peer не может получить IP с октетом .1
 		// — это gateway). Раньше был 3:30 и пир c .30 ломал full-speed класс.
@@ -234,6 +239,10 @@ func (s *Server) handleServiceUnthrottlePeer(iface string) http.HandlerFunc {
 			return
 		}
 		peerIP := strings.Split(req.IP, "/")[0]
+		if net.ParseIP(peerIP) == nil {
+			jsonError(w, "bad request: invalid ip", http.StatusBadRequest)
+			return
+		}
 		parts := strings.Split(peerIP, ".")
 		octet := parts[len(parts)-1]
 		classid := "3:" + octet

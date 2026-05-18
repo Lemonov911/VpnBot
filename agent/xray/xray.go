@@ -228,10 +228,28 @@ func (m *Manager) addUserAPI(uuidStr, email string) error {
 	if m.apiAddr == "" {
 		return nil // API disabled — config-only mode
 	}
-	inboundJSON := fmt.Sprintf(
-		`{"inbounds":[{"tag":"%s","port":%d,"listen":"0.0.0.0","protocol":"vless","settings":{"clients":[{"id":"%s","flow":"%s","level":0,"email":"%s"}],"decryption":"none"}}]}`,
-		m.inboundTag, m.inboundPort, uuidStr, m.flow, email,
-	)
+	payload := map[string]any{
+		"inbounds": []any{map[string]any{
+			"tag":      m.inboundTag,
+			"port":     m.inboundPort,
+			"listen":   "0.0.0.0",
+			"protocol": "vless",
+			"settings": map[string]any{
+				"clients": []any{map[string]any{
+					"id":    uuidStr,
+					"flow":  m.flow,
+					"level": 0,
+					"email": email,
+				}},
+				"decryption": "none",
+			},
+		}},
+	}
+	inboundBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	inboundJSON := string(inboundBytes)
 
 	f, err := os.CreateTemp("", "xray-adu-*.json")
 	if err != nil {

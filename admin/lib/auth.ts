@@ -1,4 +1,4 @@
-import { createHmac } from 'crypto'
+import { createHash, createHmac, timingSafeEqual } from 'crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
@@ -28,11 +28,13 @@ export function verifyTelegramAuth(data: Record<string, string>): boolean {
     .map(([k, v]) => `${k}=${v}`)
     .join('\n')
 
-  // Ключ = SHA256(bot_token)
-  const secret = createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest()
-  const hmac   = createHmac('sha256', secret).update(checkString).digest('hex')
+  // Telegram Login Widget: secret = SHA256(bot_token), не HMAC("WebAppData", ...)
+  // Mini App использует другой алгоритм — здесь именно Widget.
+  const secret = createHash('sha256').update(BOT_TOKEN).digest()
+  const hmac   = createHmac('sha256', secret).update(checkString).digest()
 
-  if (hmac !== hash) return false
+  // timing-safe сравнение чтобы не течь через timing side-channel
+  if (!timingSafeEqual(hmac, Buffer.from(hash, 'hex'))) return false
 
   // Не старше 5 минут
   const authDate = parseInt(rest.auth_date ?? '0')

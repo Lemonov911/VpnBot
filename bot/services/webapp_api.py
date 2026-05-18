@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import time as _time
+from html import escape as html_escape
 
 from aiohttp import web
 from aiogram import Bot
@@ -2416,7 +2417,7 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
         f"🎫 <b>Тикет #{ticket_id}</b>\n"
         f"👤 {name} ({username})\n"
         f"📂 {cat_label}\n\n"
-        f"{message}"
+        f"{html_escape(message)}"
     )
     try:
         sent = await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
