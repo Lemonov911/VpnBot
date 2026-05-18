@@ -158,7 +158,8 @@ async def cmd_start(message: Message):
             f"🎁 <b>Первые {TRIAL_DAYS} дня бесплатно</b> — без карты, без подписки. "
             "Просто нажми кнопку «Попробуй бесплатно» ниже, и через 30 секунд у тебя "
             "будет личный VPN.\n\n"
-            "Дальше — тарифы от 200 ₽/мес."
+            "Дальше — тарифы от 200 ₽/мес.\n\n"
+            '<a href="https://maxvpnesim.com/privacy.html">Политика конфиденциальности</a>'
         )
     elif WEBAPP_URL:
         # Текст подстраивается под feature flag — если eSIM скрыт, не упоминаем
@@ -208,6 +209,17 @@ async def cmd_referral(message: Message):
         f"💳 Купили: <b>{stats['converted']}</b>\n"
         f"🎁 Бонусных дней получено: <b>{stats['bonus_days']}</b>",
         parse_mode="HTML",
+    )
+
+
+@router.message(lambda m: m.text and m.text.strip() == "/privacy")
+async def cmd_privacy(message: Message):
+    await message.answer(
+        "🔒 <b>Политика конфиденциальности</b>\n\n"
+        "Мы не логируем трафик и не знаем какие сайты ты посещаешь.\n\n"
+        'Подробнее: <a href="https://maxvpnesim.com/privacy.html">maxvpnesim.com/privacy.html</a>',
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
