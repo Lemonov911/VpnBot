@@ -97,9 +97,9 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
                     href={`https://t.me/${user.username}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-neutral-500 font-normal text-base hover:text-sky-400 transition-colors"
+                    className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-xs font-normal bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
                   >
-                    {' '}@{user.username}
+                    ↗ @{user.username}
                   </a>
                 )}
               </span>

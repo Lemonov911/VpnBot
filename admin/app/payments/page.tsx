@@ -200,9 +200,9 @@ export default async function Payments({
                           href={`https://t.me/${r.username}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[11px] text-sky-500 hover:text-sky-300"
+                          className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
                         >
-                          @{r.username}
+                          ↗ @{r.username}
                         </a>
                       )}
                     </td>
