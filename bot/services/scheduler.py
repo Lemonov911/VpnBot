@@ -61,11 +61,10 @@ logger = logging.getLogger(__name__)
 GRACE_DAYS = 14
 
 GRACE_NOTICE = (
-    "🐢 <b>Подписка истекла — включён режим медленного VPN</b>\n\n"
-    "В течение <b>14 дней</b> VPN продолжает работать на скорости "
-    "256 кбит/с — хватит для Telegram, почты и лёгкого веб-сёрфинга.\n\n"
-    "Чтобы восстановить полную скорость — продли подписку:\n"
-    "/start — открыть меню"
+    "🐢 <b>Подписка истекла</b>\n\n"
+    "VPN работает ещё <b>14 дней</b> на скорости 256 кбит/с — "
+    "специально чтобы Telegram оставался доступным и ты мог продлить.\n\n"
+    "Видео и тяжёлые сайты тормозят. Продли сейчас — полная скорость вернётся сразу."
 )
 
 EXPIRY_NOTICE = (
@@ -88,23 +87,23 @@ def _bot_version() -> str:
 
 
 async def _weekly_vacuum():
-    """SQLite VACUUM — освобождает пустые страницы после delete/update.
+    """SQLite incremental_vacuum — освобождает пустые страницы порциями.
     Без этого bot.db растёт на 5-10% в месяц (fragmentation).
-    VACUUM требует exclusive lock — будет ждать пока все writers закроют
-    connections. Делаем в run_in_executor чтобы не блокировать loop.
+    incremental_vacuum(N) освобождает не более N страниц за вызов — не
+    требует exclusive lock на всю БД в отличие от полного VACUUM.
     """
     import sqlite3 as _sqlite
     from services.database import DB_PATH
     def _vacuum_sync():
         conn = _sqlite.connect(str(DB_PATH))
         try:
-            conn.execute("VACUUM")
+            conn.execute("PRAGMA incremental_vacuum(1000)")
             conn.commit()
         finally:
             conn.close()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _vacuum_sync)
-    logger.info("weekly VACUUM completed")
+    logger.info("weekly incremental_vacuum completed")
 
 # Inline-кнопка «Продлить» во всех retention-уведомлениях. Открывает Plans
 # внутри Mini App одним кликом — это разница между «продлил из дивана» и
@@ -300,6 +299,18 @@ async def _process_expired_subscriptions(bot: Bot):
                                             "VLESS cfg #%d: compensating remove FAILED — пир в двух inbound, нужен ручной фикс: %s",
                                             cfg_id, cleanup_err, exc_info=True,
                                         )
+                                        try:
+                                            from config import ADMIN_ID
+                                            await bot.send_message(
+                                                ADMIN_ID,
+                                                f"⚠️ <b>VLESS split-brain</b>\n\n"
+                                                f"Cfg #{cfg_id}: пир одновременно в двух inbound.\n"
+                                                f"Нужен ручной фикс на сервере.\n\n"
+                                                f"<code>{cleanup_err}</code>",
+                                                parse_mode="HTML",
+                                            )
+                                        except Exception:
+                                            pass
 
             except Exception as e:
                 logger.warning("grace throttle error cfg #%d: %s", cfg_id, e, exc_info=True)
@@ -740,8 +751,7 @@ async def _send_expiry_reminders(bot: Bot):
                     "⏳ <b>Пробный период заканчивается через 24 часа</b>\n\n"
                     "Понравилось? Выбери постоянный тариф — "
                     "от 200 ₽/мес, та же скорость, без перерыва.\n\n"
-                    "Если не продлишь — VPN продолжит работать ещё 14 дней "
-                    "на низкой скорости (Telegram, почта), потом отключится."
+                    "Продли сейчас — VPN продолжит работать без остановки."
                 )
             elif days == 3:
                 text = (
@@ -969,3 +979,11 @@ async def run_scheduler(bot: Bot):
         # incremental_vacuum дешевле full VACUUM (не блокирует БД целиком).
         if _TICK % (24 * 7) == 0:
             await _safe("db_vacuum",    _weekly_vacuum(),                timeout=300)
+        # Stuck activating slots — каждые 4 часа. Слоты зависают в
+        # 'activating' если provision упал (агент недоступен, таймаут).
+        # Без этого юзер видит "слот занят" бесконечно до рестарта бота.
+        if _TICK % 4 == 0:
+            from services.database import cleanup_stuck_activating_slots
+            n = await cleanup_stuck_activating_slots()
+            if n:
+                logger.info("cleanup_stuck_activating: сброшено %d слотов", n)

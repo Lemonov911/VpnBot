@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, WebAppInfo
 
 from config import ADMIN_ID, ADMIN_IDS, BOT_TOKEN, WEBAPP_URL
 from services.database import (
@@ -181,7 +181,15 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
             f"📖 Инструкция: /howto\n"
             f"💎 После trial — выбери постоянный тариф в /start"
         )
-    return (text, {"parse_mode": "HTML"})
+    kb = None
+    if WEBAPP_URL:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="📁 Открыть конфиги",
+                web_app=WebAppInfo(url=f"{WEBAPP_URL}/configs"),
+            )
+        ]])
+    return (text, {"parse_mode": "HTML", **({"reply_markup": kb} if kb else {})})
 
 
 @router.message(Command("trial"))
