@@ -26,6 +26,24 @@ function StatCard({ label, value, hint }: { label: string; value: string | numbe
   )
 }
 
+const AVATAR_COLORS = [
+  'bg-blue-800 text-blue-200',
+  'bg-violet-800 text-violet-200',
+  'bg-emerald-800 text-emerald-200',
+  'bg-orange-800 text-orange-200',
+  'bg-sky-800 text-sky-200',
+  'bg-rose-800 text-rose-200',
+]
+function Avatar({ name, id }: { name: string; id: number }) {
+  const letter = (name || '?')[0].toUpperCase()
+  const cls = AVATAR_COLORS[id % AVATAR_COLORS.length]
+  return (
+    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 ${cls}`}>
+      {letter}
+    </div>
+  )
+}
+
 export default async function Clients() {
   const session = await requireSession()
   if (!session) redirect('/login')
@@ -81,24 +99,29 @@ export default async function Clients() {
               <tbody className="divide-y divide-neutral-800">
                 {clients.map((c, i) => (
                   <tr key={c.id} className="hover:bg-neutral-800/30 transition-colors">
-                    <td className="px-4 py-2 text-neutral-500 font-mono">{i + 1}</td>
-                    <td className="px-4 py-2">
-                      <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
-                        <div className="font-medium truncate max-w-[200px]">
-                          {c.first_name || 'unknown'}
+                    <td className="px-4 py-3 text-neutral-600 font-mono text-xs">{i + 1}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-start gap-2.5">
+                        <Avatar name={c.first_name || '?'} id={c.id} />
+                        <div>
+                          <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
+                            <div className="font-medium truncate max-w-[180px]">
+                              {c.first_name || 'unknown'}
+                            </div>
+                            <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
+                          </Link>
+                          {c.username && (
+                            <a
+                              href={`https://t.me/${c.username}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
+                            >
+                              ↗ @{c.username}
+                            </a>
+                          )}
                         </div>
-                        <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
-                      </Link>
-                      {c.username && (
-                        <a
-                          href={`https://t.me/${c.username}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
-                        >
-                          ↗ @{c.username}
-                        </a>
-                      )}
+                      </div>
                     </td>
                     <td className="px-4 py-2 text-right font-semibold text-yellow-400">⭐ {c.total_stars}</td>
                     <td className="px-4 py-2 text-right">

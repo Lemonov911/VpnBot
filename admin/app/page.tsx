@@ -10,7 +10,9 @@ const STARS_TO_RUB = 1.4
 
 function StatCard({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
   return (
-    <div className={`bg-neutral-900 border rounded-2xl p-5 ${warn ? 'border-yellow-500/30' : 'border-neutral-800'}`}>
+    <div className={`bg-neutral-900 border rounded-2xl p-5 ${
+      warn ? 'border-yellow-500/30 border-l-2 border-l-yellow-500 pl-4' : 'border-neutral-800'
+    }`}>
       <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
       <div className={`text-3xl font-bold ${warn ? 'text-yellow-400' : 'text-white'}`}>{value}</div>
     </div>
@@ -77,7 +79,7 @@ export default async function Dashboard() {
 
       {/* Деньги — totals + временные окна */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-3">💰 Выручка</div>
+        <div className="text-sm font-semibold text-white mb-3">💰 Выручка</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <MoneyCell label="Всего"        stars={money.total_revenue_stars} rub={money.total_revenue_rub} highlight />
           <MoneyCell label="За 7 дней"    stars={money.revenue_7d}  rub={money.revenue_rub_7d} />
@@ -114,7 +116,7 @@ export default async function Dashboard() {
           </div>
           <div className="divide-y divide-neutral-800">
             {payments.map((p) => (
-              <div key={p.id} className="px-5 py-3 flex items-center gap-3">
+              <div key={p.id} className="px-5 py-3 flex items-center gap-3 hover:bg-neutral-800/30 transition-colors">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">
                     {p.first_name}{p.username ? ` @${p.username}` : ''}
