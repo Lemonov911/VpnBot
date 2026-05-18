@@ -54,6 +54,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
+  // SSRF-защита: принимаем только http/https схемы.
+  // Без этого авторизованный admin мог передать file:// или http://169.254.169.254/...
+  try {
+    const parsed = new URL(agent_url)
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return NextResponse.json({ error: 'Invalid agent_url: only http/https allowed' }, { status: 400 })
+    }
+  } catch {
+    return NextResponse.json({ error: 'Invalid agent_url: not a valid URL' }, { status: 400 })
+  }
+
   // Verify agent is reachable. /health не требует auth, но всё равно подписываем —
   // если кто-то выставит /health за auth-wall, не сломаемся.
   let wg_pubkey = ''

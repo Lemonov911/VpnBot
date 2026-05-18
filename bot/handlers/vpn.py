@@ -155,7 +155,7 @@ async def esim_menu(callback: CallbackQuery):
         "Покупаешь, сканируешь QR — и через 30 сек у тебя интернет в Турции, "
         "Грузии, ОАЭ, Таиланде, Вьетнаме или по всей Европе.\n\n"
         "🇷🇺 Есть отдельный тариф для России — с зарубежным IP "
-        "(работает как VPN: открывает заблокированные сайты).\n\n"
+        "(удобно для международных сервисов и командировок).\n\n"
         "Оплата ⭐ или картой через Telegram.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML",
@@ -683,22 +683,29 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
 # scheduler видит expires_at < now → запускает grace transition → пиры
 # удаляются из vless-base но добавляются в vless-grace в гонке.
 import asyncio as _asyncio
-_trial_close_locks: dict[int, _asyncio.Lock] = {}
+import weakref as _weakref
+# WeakValueDictionary: Lock удаляется автоматически когда нет активных
+# `async with` — исключает утечку памяти при тысячах уникальных user/sub id.
+_trial_close_locks: _weakref.WeakValueDictionary[int, _asyncio.Lock] = _weakref.WeakValueDictionary()
 # Per-sub lock — защита от race upgrade-from-grace со scheduler'ом который
 # параллельно может grace_until истечь и удалить пиры пока идёт upgrade.
-_sub_lifecycle_locks: dict[int, _asyncio.Lock] = {}
+_sub_lifecycle_locks: _weakref.WeakValueDictionary[int, _asyncio.Lock] = _weakref.WeakValueDictionary()
 
 
 def _trial_close_lock(user_id: int) -> _asyncio.Lock:
-    if user_id not in _trial_close_locks:
-        _trial_close_locks[user_id] = _asyncio.Lock()
-    return _trial_close_locks[user_id]
+    lock = _trial_close_locks.get(user_id)
+    if lock is None:
+        lock = _asyncio.Lock()
+        _trial_close_locks[user_id] = lock
+    return lock
 
 
 def _sub_lifecycle_lock(sub_id: int) -> _asyncio.Lock:
-    if sub_id not in _sub_lifecycle_locks:
-        _sub_lifecycle_locks[sub_id] = _asyncio.Lock()
-    return _sub_lifecycle_locks[sub_id]
+    lock = _sub_lifecycle_locks.get(sub_id)
+    if lock is None:
+        lock = _asyncio.Lock()
+        _sub_lifecycle_locks[sub_id] = lock
+    return lock
 
 
 async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):

@@ -94,6 +94,17 @@ async def main():
     try:
         await dp.start_polling(bot)
     finally:
+        # Graceful shutdown: отменяем фоновые таски и закрываем aiohttp-сессию.
+        # Без этого asyncio логирует "Unclosed connector" и планировщик не
+        # даёт event-loop'у завершиться чисто при systemctl stop/restart.
+        for task in (sched_task, warm_task):
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        from services.vpnctl_client import close_shared_session
+        await close_shared_session()
         await runner.cleanup()
 
 

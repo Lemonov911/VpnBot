@@ -49,6 +49,8 @@ from services.database import (
     update_esim_usage,
     get_winback_candidates,
     mark_winback_sent,
+    get_trial_nudge_candidates,
+    mark_trial_nudge_sent,
 )
 import services.esim_api as esim_api
 from services.vpnctl_client import client_for_server, VpnctlError
@@ -473,10 +475,10 @@ async def _process_expired_orders(bot: Bot):
         await mark_order_expired(order_id)
         logger.info("Order #%d истёк, пир удалён: %s", order_id, vpn_username)
 
-        try:
-            await bot.send_message(user_id, EXPIRY_NOTICE, parse_mode="HTML")
-        except Exception as e:
-            logger.warning("Не удалось уведомить user %d: %s", user_id, e, exc_info=True)
+        await _send_throttled(
+            bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
+            reply_markup=_renew_kb(),
+        )
 
 
 async def _sync_vless_stats():
@@ -842,6 +844,32 @@ async def _send_renewal_reminders(bot: Bot):
             await mark_renewal_reminded(sub["id"])
 
 
+async def _send_trial_nudge(bot: Bot):
+    """Day-2 engagement: через 20-48ч после активации триала шлём «как VPN?»
+
+    Момент пиковой мотивации: юзер освоился, но ещё не принял решение продлять.
+    Мягкое «помогу разобраться» конвертирует лучше чем напоминание о деньгах.
+    """
+    candidates = await get_trial_nudge_candidates()
+    if not candidates:
+        return
+    logger.info("trial nudge: %d кандидатов", len(candidates))
+    for sub in candidates:
+        text = (
+            "👋 <b>Как VPN?</b>\n\n"
+            "Ты уже сутки пользуешься пробным периодом.\n\n"
+            "Если что-то не работает или есть вопросы — напиши нам, "
+            "быстро разберёмся. Если всё ок — выбери постоянный тариф "
+            "прямо сейчас, не придётся настраивать заново."
+        )
+        sent = await _send_throttled(
+            bot, sub["user_id"], text, parse_mode="HTML",
+            reply_markup=_renew_kb(),
+        )
+        if sent:
+            await mark_trial_nudge_sent(sub["id"])
+
+
 async def _winback_campaign(bot: Bot):
     """Win-back: через 7-14 дней после истечения шлём реактивационное письмо.
 
@@ -864,7 +892,7 @@ async def _winback_campaign(bot: Bot):
             "Прошла неделя, а VPN всё ещё выключен.\n\n"
             "Возможно, что-то не устроило — напиши нам в поддержку, "
             "разберёмся. Или просто продли — тарифы с 200 ₽/мес, "
-            "без контракта, первый раз 3 дня в подарок при оплате на месяц.\n\n"
+            "без контракта, отмена в любой момент.\n\n"
             "Будем рады видеть тебя снова 🙂"
         )
         sent = await _send_throttled(
@@ -998,6 +1026,7 @@ async def run_scheduler(bot: Bot):
         # Критичные retention первыми и с коротким timeout — чтобы даже если
         # медленный agent залип, юзеры получили уведомления вовремя.
         await _safe("expiry_reminders", _send_expiry_reminders(bot),     timeout=120)
+        await _safe("trial_nudge",      _send_trial_nudge(bot),          timeout=60)
         await _safe("renewal_reminders", _send_renewal_reminders(bot),   timeout=60)
         await _safe("expired_subs",     _process_expired_subscriptions(bot),       timeout=180)
         await _safe("grace_expired",    _process_grace_expired_subscriptions(bot), timeout=180)

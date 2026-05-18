@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"vpnctl/service"
 )
 
@@ -59,6 +60,10 @@ func (s *Server) handleServiceAddPeer(svc service.Service, compatWG bool) http.H
 		var peer *service.Peer
 		var err error
 		if req.ID != "" {
+			if _, parseErr := uuid.Parse(req.ID); parseErr != nil {
+				jsonError(w, "bad request: id must be a valid UUID", http.StatusBadRequest)
+				return
+			}
 			if svc2, ok := svc.(service.PeerWithIDAdder); ok {
 				peer, err = svc2.AddPeerWithID(req.ID, req.Label)
 			} else {

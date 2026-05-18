@@ -41,15 +41,32 @@ async def _pre_migrate_snapshot():
     """Snapshot БД перед миграциями. Если ALTER TABLE упадёт (constraints,
     disk space, etc), бот не стартует — но юзер может вручную восстановить
     snapshot из /opt/vpnbot/.snapshots/pre-migrate-*.db и откатить commit.
+
+    Использует sqlite3.Connection.backup() вместо shutil.copy2 — корректно
+    работает в WAL-режиме (shutil не копирует .db-wal/.db-shm и может дать
+    inconsistent snapshot если есть незачекпоинченные транзакции).
     """
-    import shutil
+    import sqlite3 as _sqlite3
     if not DB_PATH.exists():
         return  # первая инициализация, нет что снапшотить
     snap_dir = DB_PATH.parent / ".snapshots"
     snap_dir.mkdir(exist_ok=True)
     snap_path = snap_dir / f"pre-migrate-{int(datetime.utcnow().timestamp())}.db"
+
+    def _backup_sync():
+        src = _sqlite3.connect(str(DB_PATH))
+        try:
+            dst = _sqlite3.connect(str(snap_path))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
     try:
-        shutil.copy2(DB_PATH, snap_path)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _backup_sync)
         # Ротация: оставляем только последние 5 pre-migrate snapshots
         snaps = sorted(snap_dir.glob("pre-migrate-*.db"))
         for old in snaps[:-5]:
@@ -451,6 +468,13 @@ async def _migrate(db: aiosqlite.Connection):
     if "winback_sent" not in sub_cols:
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN winback_sent INTEGER NOT NULL DEFAULT 0"
+        )
+    # trial_nudge_sent — флаг engagement-сообщения на 2й день триала.
+    # Шлётся через ~24-48ч после активации: «как VPN? Если не работает — поможем».
+    # Момент пиковой мотивации — юзер уже попользовался, но ещё не решил продлевать.
+    if "trial_nudge_sent" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN trial_nudge_sent INTEGER NOT NULL DEFAULT 0"
         )
 
     # server_health_log — sparse time-series of up/down probes per server.
@@ -2273,6 +2297,34 @@ async def mark_winback_sent(sub_id: int):
     async with _connect() as db:
         await db.execute(
             "UPDATE subscriptions SET winback_sent=1 WHERE id=?",
+            (sub_id,),
+        )
+        await db.commit()
+
+
+async def get_trial_nudge_candidates() -> list[dict]:
+    """Триальные подписки, активированные 20-48 часов назад, nudge ещё не отправлен.
+    Окно 20-48ч: юзер успел попробовать VPN, но до конца триала ещё есть время.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT id, user_id FROM subscriptions
+            WHERE plan = 'vpn_trial'
+              AND status = 'active'
+              AND trial_nudge_sent = 0
+              AND datetime(created_at) <= datetime('now', '-20 hours')
+              AND datetime(created_at) >= datetime('now', '-48 hours')
+            """
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_trial_nudge_sent(sub_id: int):
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET trial_nudge_sent=1 WHERE id=?",
             (sub_id,),
         )
         await db.commit()

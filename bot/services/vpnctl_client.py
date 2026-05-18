@@ -92,7 +92,14 @@ class VpnctlClient:
             method, url,
             data=body_bytes if body_bytes else None,
             headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout_s),
+            timeout=aiohttp.ClientTimeout(
+                total=timeout_s,
+                # connect/sock_connect предотвращают зависание при DROP-правиле
+                # (без RST). TCP SYN retransmit без connect timeout = ~2 min hang,
+                # что поглощает весь _safe() budget на один мёртвый сервер.
+                connect=min(10, timeout_s),
+                sock_connect=min(10, timeout_s),
+            ),
         ) as r:
             ctype = r.headers.get("Content-Type", "")
             if "application/json" in ctype:

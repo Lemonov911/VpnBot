@@ -357,6 +357,7 @@ _lavatop_rate:   dict[str, float] = {}  # /api/vpn/invoice/lavatop
 _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
 _trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
+_admin_rate:    dict[str, float] = {}  # /api/admin/* — брутфорс-защита
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -2466,9 +2467,16 @@ async def cors_middleware(request: web.Request, handler):
 # ── Admin API (для Next.js admin панели) ──────────────────────────────────────
 
 def _check_admin_secret(request: web.Request) -> bool:
-    """Проверяет X-Admin-Secret header. Без него все admin endpoints — 403."""
+    """Проверяет X-Admin-Secret header. Без него все admin endpoints — 403.
+    Rate-limit: 1 req/2s per IP — слишком быстро для brute-force, но ок для
+    нормального использования (admin-панель делает запросы не чаще 1/сек).
+    """
     import hmac as _hmac_lib
+    import time as _t
     if not ADMIN_API_SECRET:
+        return False
+    ip = request.remote or "unknown"
+    if not _rate_limit_check_evict(_admin_rate, ip, _t.monotonic(), window=2.0):
         return False
     incoming = request.headers.get("X-Admin-Secret", "")
     return _hmac_lib.compare_digest(incoming.encode(), ADMIN_API_SECRET.encode())
