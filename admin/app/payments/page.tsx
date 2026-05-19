@@ -20,15 +20,20 @@ function fmtDate(iso: string) {
   })
 }
 
-function MethodPill({ method, refunded }: { method: string; refunded: boolean }) {
+function MethodPill({ method, refunded, adminId }: { method: string; refunded: boolean; adminId: number | null }) {
   if (refunded) return <span className="text-rose-400">↶ refund</span>
-  if (method === 'crypto') return <span className="text-emerald-400">💎 CryptoBot</span>
-  if (method === 'free')   return <span className="text-neutral-500">🎁 gift</span>
+  if (method === 'crypto')      return <span className="text-emerald-400">💎 CryptoBot</span>
+  if (method === 'admin_grant') return (
+    <span className="text-fuchsia-400" title={adminId ? `выдал admin #${adminId}` : 'admin grant'}>
+      🎁 admin{adminId ? ` #${adminId}` : ''}
+    </span>
+  )
+  if (method === 'free')        return <span className="text-neutral-500">🎁 gift</span>
   return <span className="text-yellow-400">⭐ Stars</span>
 }
 
 type Filters = {
-  method?: 'stars' | 'crypto' | 'free'
+  method?: 'stars' | 'crypto' | 'free' | 'admin_grant'
   plan?: string
   days?: number
   hideRefunds?: boolean
@@ -37,7 +42,7 @@ type Filters = {
 function parseFilters(sp: Record<string, string | string[] | undefined>): Filters {
   const f: Filters = {}
   const m = sp.method
-  if (m === 'stars' || m === 'crypto' || m === 'free') f.method = m
+  if (m === 'stars' || m === 'crypto' || m === 'free' || m === 'admin_grant') f.method = m
   if (typeof sp.plan === 'string' && PLAN_NAMES[sp.plan]) f.plan = sp.plan
   if (typeof sp.days === 'string') {
     const d = parseInt(sp.days, 10)
@@ -138,6 +143,7 @@ export default async function Payments({
           <FilterChip label="Все"        href={buildHref(filters, { method: undefined })} active={!filters.method} />
           <FilterChip label="⭐ Stars"    href={buildHref(filters, { method: 'stars' })}   active={filters.method === 'stars'} />
           <FilterChip label="💎 Crypto"   href={buildHref(filters, { method: 'crypto' })}  active={filters.method === 'crypto'} />
+          <FilterChip label="🎁 Admin"    href={buildHref(filters, { method: 'admin_grant' })} active={filters.method === 'admin_grant'} />
           <FilterChip label="🎁 Free"     href={buildHref(filters, { method: 'free' })}    active={filters.method === 'free'} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -207,7 +213,7 @@ export default async function Payments({
                       )}
                     </td>
                     <td className="px-4 py-2">{PLAN_NAMES[r.plan] || r.plan}</td>
-                    <td className="px-4 py-2 text-xs"><MethodPill method={r.method} refunded={!!r.refunded_at} /></td>
+                    <td className="px-4 py-2 text-xs"><MethodPill method={r.method} refunded={!!r.refunded_at} adminId={r.granted_by_admin_id} /></td>
                     <td className="px-4 py-2 text-right">
                       {r.amount_rub > 0 ? (
                         <span className="text-emerald-400">💎 {r.amount_rub.toLocaleString('ru')} ₽</span>

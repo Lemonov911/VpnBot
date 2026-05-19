@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/attribution', label: 'Трафик'     },
   { href: '/clients',     label: 'Клиенты'    },
   { href: '/payments',    label: 'Платежи'    },
+  { href: '/grant',       label: 'Выдать'     },
   { href: '/monitoring',  label: 'Мониторинг' },
   { href: '/tickets',     label: 'Обращения'  },
   { href: '/servers',     label: 'Серверы'    },

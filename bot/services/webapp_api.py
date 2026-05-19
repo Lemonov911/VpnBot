@@ -31,7 +31,7 @@ from aiogram import Bot
 from aiogram.types import LabeledPrice
 
 from config import (
-    DEBUG, ADMIN_ID, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL,
+    DEBUG, ADMIN_ID, ADMIN_IDS, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL,
     ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM, SUB_URL_BASE,
     CRYPTOMUS_MERCHANT_UUID, CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_ENABLED,
     LAVATOP_API_KEY, LAVATOP_WEBHOOK_KEY, LAVATOP_ENABLED, LAVATOP_OFFERS,
@@ -2713,6 +2713,111 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
+    """POST /api/admin/grant_subscription
+    Body: {
+      "admin_id": <int>,           # telegram_id админа (whitelist через ADMIN_IDS)
+      "target_telegram_id": <int>, # кому выдать
+      "plan_key": "vpn_base"|"vpn_max"|...,
+      "days": <int 1..365>,
+      "reason": "<optional>",
+      "target_username": "<optional, для пометки в логах>"
+    }
+    Выдаёт бесплатную подписку любому tg-юзеру по ID (даже не запускавшему бота).
+    Если у юзера активная sub того же plan_key — продлевает на `days`.  Иначе
+    создаёт новую sub + пустые config-слоты (юзер активирует их сам в Mini App).
+    Опционально шлёт юзеру TG-уведомление о подарке если бот может ему написать.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+
+    admin_id = body.get("admin_id")
+    target_id = body.get("target_telegram_id")
+    plan_key = body.get("plan_key")
+    days = body.get("days")
+    reason = (body.get("reason") or "").strip()[:500] or None
+    target_username = (body.get("target_username") or "").strip().lstrip("@")[:32] or None
+
+    # Валидация: admin_id обязателен и должен быть в whitelist. Защита от
+    # ситуации «утёк ADMIN_API_SECRET» — атакующий не подделает чужой ID.
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        return web.json_response({"error": "admin_id required (int)"}, status=400)
+    if ADMIN_IDS and admin_id not in ADMIN_IDS:
+        return web.json_response({"error": "admin_id not in whitelist"}, status=403)
+
+    if not isinstance(target_id, int) or target_id <= 0:
+        return web.json_response({"error": "target_telegram_id required (positive int)"}, status=400)
+
+    from services.plans import VPN_PLANS
+    if not isinstance(plan_key, str) or plan_key not in VPN_PLANS:
+        return web.json_response({"error": "unknown plan_key"}, status=400)
+
+    if not isinstance(days, int) or not (1 <= days <= 365):
+        return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
+
+    from services.database import admin_grant_subscription
+    try:
+        result = await admin_grant_subscription(
+            admin_id=admin_id,
+            target_user_id=target_id,
+            plan_key=plan_key,
+            days=days,
+            reason=reason,
+            target_username=target_username,
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.error("admin_grant failed: %s", e, exc_info=True)
+        return web.json_response({"error": f"internal: {e}"}, status=500)
+
+    # Best-effort notify юзера. Если он не /start'нул бота — get 403/400 и
+    # игнорируем (юзер увидит подписку при первом /start).
+    bot: Bot = request.app["bot"]
+    plan_name = VPN_PLANS[plan_key].get("name", plan_key)
+    notify_text = (
+        f"🎁 <b>Вам подарили подписку!</b>\n\n"
+        f"План: <b>{plan_name}</b>\n"
+        f"Срок: <b>{days} дн.</b>\n\n"
+        f"Открой Mini App «Мои конфиги» — там уже ждут пустые слоты, "
+        f"активируй их и пользуйся."
+    )
+    if reason:
+        notify_text += f"\n\n<i>Комментарий: {reason[:200]}</i>"
+    try:
+        await bot.send_message(target_id, notify_text, parse_mode="HTML")
+        result["notified"] = True
+    except Exception as e:
+        logger.info("grant notify failed user=%d: %s (юзер не /start'нул бота — норма)",
+                    target_id, e)
+        result["notified"] = False
+
+    return web.json_response(result)
+
+
+async def handle_admin_grants_list(request: web.Request) -> web.Response:
+    """GET /api/admin/grants?limit=50
+    Список последних N grant'ов из payments (is_free_grant=1). Сортировка по created_at DESC.
+    """
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    try:
+        limit = int(request.query.get("limit", "50"))
+    except ValueError:
+        limit = 50
+    limit = max(1, min(limit, 500))
+
+    from services.database import list_admin_grants
+    grants = await list_admin_grants(limit)
+    return web.json_response({"grants": grants})
+
+
 async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
     """POST /api/admin/servers/{id}/backfill-vless
     Multi-location backfill: для нового VLESS-сервера провижит пиры всех
@@ -3003,6 +3108,8 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/admin/sub/{id}/refund",      handle_admin_sub_refund)
     app.router.add_post("/api/admin/user/{id}/ban",        handle_admin_user_ban)
     app.router.add_post("/api/admin/user/{id}/unban",      handle_admin_user_unban)
+    app.router.add_post("/api/admin/grant_subscription",   handle_admin_grant_subscription)
+    app.router.add_get ("/api/admin/grants",               handle_admin_grants_list)
     app.router.add_post("/api/admin/servers/{id}/backfill-vless",   handle_admin_vless_backfill)
     app.router.add_post("/api/admin/servers/{id}/migrate-configs",  handle_admin_migrate_configs)
     app.router.add_get ("/api/vpn/config/{id}/download",   handle_vpn_config_download)

@@ -76,13 +76,14 @@ export type PaymentRow = {
   refunded_at: string | null
   created_at: string
   expires_at: string | null
-  method: string  // 'stars' | 'crypto' | 'free'
+  method: string  // 'stars' | 'crypto' | 'free' | 'admin_grant'
   username: string | null
   first_name: string | null
+  granted_by_admin_id: number | null
 }
 
 export function allPayments(filters: {
-  method?: 'stars' | 'crypto' | 'free'
+  method?: 'stars' | 'crypto' | 'free' | 'admin_grant'
   plan?: string
   days?: number          // last N days
   includeRefunds?: boolean
@@ -91,30 +92,41 @@ export function allPayments(filters: {
   const { method, plan, days, includeRefunds = true, limit = 500 } = filters
   const excl = excludeAdminsClause('s.user_id')
 
-  // Метод определяем по payment_id префиксу — единственное, что у нас есть:
-  //   "crypto_*" → CryptoBot
-  //   "free_*"   → admin gift / trial reward
-  //   иначе      → Telegram Stars (sha256 charge_id или legacy формат)
+  // Метод определяем по payment_id префиксу:
+  //   "crypto_*"      → CryptoBot
+  //   "free_*"        → legacy trial reward
+  //   "admin_grant_*" → подарок от админа через /grant (с granted_by_admin_id)
+  //   иначе           → Telegram Stars (sha256 charge_id или legacy формат)
   const where: string[] = ['1=1']
   const params: unknown[] = []
 
-  if (method === 'crypto')      where.push("s.payment_id LIKE 'crypto_%'")
-  else if (method === 'free')   where.push("s.payment_id LIKE 'free_%'")
-  else if (method === 'stars')  where.push("s.payment_id NOT LIKE 'crypto_%' AND s.payment_id NOT LIKE 'free_%' AND s.payment_id IS NOT NULL")
+  if (method === 'crypto')           where.push("s.payment_id LIKE 'crypto_%'")
+  else if (method === 'free')        where.push("s.payment_id LIKE 'free_%'")
+  else if (method === 'admin_grant') where.push("s.payment_id LIKE 'admin_grant_%'")
+  else if (method === 'stars')       where.push("s.payment_id NOT LIKE 'crypto_%' AND s.payment_id NOT LIKE 'free_%' AND s.payment_id NOT LIKE 'admin_grant_%' AND s.payment_id IS NOT NULL")
 
   if (plan) { where.push('s.plan = ?'); params.push(plan) }
   if (days) where.push(`s.created_at > datetime('now', '-${Number(days)} days')`)
   if (!includeRefunds) where.push('s.refunded_at IS NULL')
 
+  // granted_by_admin_id — JOIN с payments по subscription_id. Для одной подписки
+  // в payments может быть несколько строк (refund-marker и т.п.) — берём
+  // последний free_grant если он есть. Подзапрос быстрый: idx_payments_granted_admin
+  // отсеивает обычные платежи, и subscription_id в payments редко повторяется.
   const sql = `
     SELECT s.id, s.user_id, s.plan, s.stars_paid, s.amount_rub, s.payment_id,
            s.status, s.refunded_at, s.created_at, s.expires_at,
            CASE
-             WHEN s.payment_id LIKE 'crypto_%' THEN 'crypto'
-             WHEN s.payment_id LIKE 'free_%'   THEN 'free'
+             WHEN s.payment_id LIKE 'crypto_%'      THEN 'crypto'
+             WHEN s.payment_id LIKE 'free_%'        THEN 'free'
+             WHEN s.payment_id LIKE 'admin_grant_%' THEN 'admin_grant'
              ELSE 'stars'
            END as method,
-           u.username, u.first_name
+           u.username, u.first_name,
+           (SELECT p.granted_by_admin_id
+              FROM payments p
+              WHERE p.subscription_id = s.id AND p.is_free_grant = 1
+              ORDER BY p.id DESC LIMIT 1) AS granted_by_admin_id
     FROM subscriptions s
     JOIN users u ON u.id = s.user_id
     WHERE ${where.join(' AND ')} ${excl}

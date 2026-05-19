@@ -309,6 +309,14 @@ async def _migrate(db: aiosqlite.Connection):
         cols = {row[1] for row in await cur.fetchall()}
     if "refunded_at" not in cols:
         await db.execute("ALTER TABLE payments ADD COLUMN refunded_at TIMESTAMP")
+    # Admin-grant tracking: какой админ выдал бесплатную подписку этой строкой.
+    # NULL для обычных платежей. is_free_grant=1 — это запись «подарка», amount=0
+    # и метод='admin_grant'. Используется в admin/payments-вьюхе как маркер 🎁
+    # и в аналитике (исключаем grant'ы из MRR/выручки).
+    if "granted_by_admin_id" not in cols:
+        await db.execute("ALTER TABLE payments ADD COLUMN granted_by_admin_id INTEGER")
+    if "is_free_grant" not in cols:
+        await db.execute("ALTER TABLE payments ADD COLUMN is_free_grant INTEGER NOT NULL DEFAULT 0")
     # UNIQUE на `tx_id` (partial — игнорит пустые/NULL) — payment-level
     # идемпотентность.  Audit 17.05 #1: без неё Lava/CryptoBot webhook retry
     # дважды записывал payments-row, а Stars/Lava recurring без проверки
@@ -316,6 +324,12 @@ async def _migrate(db: aiosqlite.Connection):
     await db.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_tx_id "
         "ON payments(tx_id) WHERE tx_id != '' AND tx_id IS NOT NULL"
+    )
+    # Индекс для admin/payments-вьюхи: фильтр grant'ов по конкретному админу
+    # (показать «какие подписки выдал именно я») идёт без полного скана.
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payments_granted_admin "
+        "ON payments(granted_by_admin_id) WHERE granted_by_admin_id IS NOT NULL"
     )
 
     # subscriptions — pending_plan, expiry reminders
@@ -763,6 +777,151 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def admin_grant_subscription(
+    admin_id: int,
+    target_user_id: int,
+    plan_key: str,
+    days: int,
+    reason: str | None = None,
+    target_username: str | None = None,
+) -> dict:
+    """Выдаёт бесплатную VPN-подписку юзеру по telegram_id.  Создаёт user-row
+    если её нет (юзер мог ещё не запускать бота — например, дал ник в чате).
+    Если у юзера уже есть активная sub того же плана — extend на `days`.
+    Иначе создаёт новую подписку и пустые config-слоты по тарифу.
+
+    Слоты — пустые: пиры на сервере НЕ провизятся здесь. Юзер активирует
+    их сам через Mini App «Мои конфиги» (так же как при обычной покупке).
+
+    Все grant'ы пишутся в `payments` с `is_free_grant=1` + `granted_by_admin_id`
+    (для биллинг-вьюхи) и в `audit_log` (для compliance).
+
+    Возвращает {ok, subscription_id, expires_at, action} где action — 'extended'
+    или 'created'.
+    """
+    import json as _json
+    from services.plans import VPN_PLANS
+
+    plan = VPN_PLANS.get(plan_key)
+    if not plan:
+        raise ValueError(f"unknown plan_key: {plan_key}")
+    if not isinstance(days, int) or not (1 <= days <= 365):
+        raise ValueError(f"days must be int in [1, 365], got {days}")
+
+    # 1) Ensure user exists. Если юзер ещё не /start'нул бота — username из
+    # admin-формы попадёт как first_name (для отображения «кому выдано»).
+    display = target_username or f"grant_{target_user_id}"
+    await upsert_user(target_user_id, target_username, display)
+
+    # 2) Проверяем активную/grace подписку. Extend срабатывает только для
+    # того же plan_key — иначе создаём отдельную (не downgrade'ить силой).
+    active = await get_active_subscription(target_user_id)
+    action = "created"
+    sub_id: int | None = None
+    expires_at_str: str | None = None
+
+    if active and active.get("plan") == plan_key and active.get("status") in ("active", "grace"):
+        extended = await extend_subscription(active["id"], days)
+        if extended:
+            sub_id = extended["id"]
+            expires_at_str = extended["expires_at"]
+            action = "extended"
+    if sub_id is None:
+        # Создаём новую sub. payment_id уникален (UNIQUE-constraint защитит от
+        # случайного дубль-вызова из admin UI при двойном click'е).
+        from datetime import datetime as _dt, timedelta as _td
+        import secrets as _secrets
+        payment_id = f"admin_grant_{admin_id}_{int(_dt.utcnow().timestamp())}_{_secrets.token_hex(4)}"
+        expires_at_dt = _dt.utcnow() + _td(days=days)
+        sub_id = await create_subscription(
+            user_id=target_user_id,
+            plan=plan_key,
+            payment_id=payment_id,
+            stars_paid=0,
+            amount_rub=0,
+            expires_at=expires_at_dt,
+            payment_provider="gift",
+        )
+        if sub_id is None:
+            raise RuntimeError("create_subscription returned None (UNIQUE collision?)")
+        expires_at_str = expires_at_dt.isoformat()
+
+        # Пустые слоты по тарифу. provision_peer НЕ вызываем — юзер сам
+        # активирует через Mini App.
+        for _ in range(plan.get("awg_slots", 0)):
+            await create_config_record(sub_id, target_user_id, protocol="awg")
+        for _ in range(plan.get("vless_slots", 0)):
+            await create_config_record(sub_id, target_user_id, protocol="vless")
+        for _ in range(plan.get("wg_slots", 0)):
+            await create_config_record(sub_id, target_user_id, protocol="wg")
+
+    # 3) payments-row: amount=0, is_free_grant=1, granted_by_admin_id.
+    # tx_id уникален; partial-index idx_payments_tx_id защитит от случайного
+    # дубля при retry.
+    import secrets as _secrets2
+    from datetime import datetime as _dt2
+    tx_id = f"grant_{admin_id}_{sub_id}_{int(_dt2.utcnow().timestamp())}_{_secrets2.token_hex(3)}"
+    async with _connect() as db:
+        try:
+            await db.execute(
+                """INSERT INTO payments
+                   (user_id, subscription_id, method, amount_usd, stars, tx_id,
+                    status, granted_by_admin_id, is_free_grant)
+                   VALUES (?, ?, 'admin_grant', 0, 0, ?, 'completed', ?, 1)""",
+                (target_user_id, sub_id, tx_id, admin_id),
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning("payments-row write failed for grant: %s", e, exc_info=True)
+
+    # 4) audit_log — compliance. details — JSON: что выдали, кому, почему,
+    # extend vs create. Если запись провалится — операция уже сделана, не откатываем.
+    await audit_log_record(
+        admin_id=admin_id,
+        action="grant_subscription",
+        target=str(target_user_id),
+        details=_json.dumps({
+            "plan": plan_key,
+            "days": days,
+            "reason": reason,
+            "subscription_id": sub_id,
+            "action": action,
+            "target_username": target_username,
+        }, ensure_ascii=False),
+    )
+
+    return {
+        "ok": True,
+        "subscription_id": sub_id,
+        "expires_at": expires_at_str,
+        "action": action,
+    }
+
+
+async def list_admin_grants(limit: int = 50) -> list[dict]:
+    """Последние grant-записи из payments (is_free_grant=1), JOIN'ятся с
+    subscriptions и users для отображения в admin /grant странице.
+    Сортировка DESC по created_at; limit clamp'ится в caller'е.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT p.id, p.user_id, p.subscription_id, p.granted_by_admin_id,
+                      p.tx_id, p.created_at,
+                      s.plan AS sub_plan, s.status AS sub_status,
+                      s.expires_at AS sub_expires_at,
+                      u.username AS user_username
+               FROM payments p
+               LEFT JOIN subscriptions s ON s.id = p.subscription_id
+               LEFT JOIN users u ON u.id = p.user_id
+               WHERE p.is_free_grant = 1
+               ORDER BY p.created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
 async def set_user_banned(user_id: int, banned: bool, reason: str | None = None) -> bool:
