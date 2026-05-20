@@ -52,5 +52,12 @@ new_server_wg*.conf
 gen_*.py
 maxvpn.vpn
 qr_*.png
-scripts/
+scripts/*
+# Whitelist для прод-тулинга: одноразовые миграции и опс-скрипты, которые
+# должны быть под версионным контролем (audit + reproducibility).
+# Паттерн `scripts/*` вместо `scripts/` даёт !-exceptions работать (директорию
+# целиком git не глубже-перебирает, файл-by-файл нужно).
+!scripts/test_vless.py
+!scripts/backfill_vless_canonical.py
+!scripts/add_vless_server.py
 *.conf

@@ -66,7 +66,11 @@ Bot → Go agent HTTP API → WireGuard/Xray на VPN-сервере
 - **VPS бота**: `151.243.113.31` — systemd-сервис `/etc/systemd/system/vpnbot.service`, Python venv в `/opt/vpnbot/`
 - **nginx** на VPS: проксирует `/api/` → `127.0.0.1:8080`
 - **GitHub Pages**: `lemonov911.github.io/VpnBot` — собирается и деплоится через GitHub Actions при пуше в `webapp/**`
-- **VPN-сервер**: `23.94.145.115` — там крутится Go-агент `vpnctl`
+- **VPN-сервер**: `68.183.15.95` (DigitalOcean Amsterdam) — там крутится:
+  - Go-агент `vpnctl-awg.service` (бинарь `/usr/local/bin/vpnctl_awg`, env `/opt/vpnctl/.env`) — обслуживает **awg + wg + vless** (SERVICES=awg,wg,vless-base,vless-max,vless-base-slow,vless-max-slow,vless-grace)
+  - `xray.service` — VLESS Reality, 5 tier-inbounds на портах 8443 (base), 8448 (max), 9443 (base-slow), 9448 (max-slow), 9453 (grace)
+  - SNI в проде = `www.microsoft.com`, pubkey/short_id в `/opt/vpnctl/.env` (XRAY_PUBKEY/XRAY_SHORT_ID)
+  - В БД бота зарегистрированы 3 записи: id=8 AWG, id=10 WG, id=11 VLESS (все указывают на этот же IP)
 
 ### Bot (`bot/`)
 

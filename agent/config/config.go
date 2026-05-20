@@ -85,7 +85,13 @@ func Load() *Config {
 		XrayPublicHost:  env("XRAY_PUBLIC_HOST", ""),
 		XrayPubKey:      env("XRAY_PUBKEY", ""),
 		XrayShortID:     env("XRAY_SHORT_ID", ""),
-		XraySNI:         env("XRAY_SNI", "www.yahoo.com"),
+		// SNI для VLESS Reality dest. Должен быть домен с TLS 1.3 + HTTP/2, НЕ за Cloudflare/Fastly
+		// (CDN headers ломают Reality routing). Выбран addons.mozilla.org:
+		//  - mass-used в РФ (Mozilla addons, AdBlock и т.д.) — не вызовет подозрений ТСПУ
+		//  - "too big to block" — РКН не блокирует Mozilla
+		//  - не на CDN, нативный TLS 1.3 + HTTP/2
+		// Переопределяется через env XRAY_SNI per-node (например для RU-нод можно vk.com/yandex).
+		XraySNI:         env("XRAY_SNI", "addons.mozilla.org"),
 		XrayFingerprint: env("XRAY_FINGERPRINT", "chrome"),
 		XrayPeerLabel:   env("XRAY_PEER_LABEL", ""),
 		XrayTiers:       map[string]TierConfig{},

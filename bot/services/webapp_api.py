@@ -52,6 +52,94 @@ logger = logging.getLogger(__name__)
 # Тарифы — services.plans (единственный источник истины).
 from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Dynamic VLESS URL resolution (2026-05-21 refactor — см. database.py)
+#
+#  Раньше: подписка читала `configs.config_data` и отдавала уже-готовые URL —
+#  один peer на конкретный сервер. Чтобы добавить новый сервер, требовалось
+#  N HTTP-вызовов на провижининг UUID + N INSERT-ов в configs (по одному
+#  на юзера). Хрупко.
+#
+#  Теперь: для VLESS URL строятся на лету из (users.vless_uuid, plan-tier,
+#  servers.xray_*). Добавить сервер = одна INSERT-row в `servers` + проход
+#  скриптом по существующим UUID. Никаких per-user DB-записей.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _resolve_vless_urls(user_id: int) -> list[str]:
+    """Returns vless:// URLs the user should see in /sub/{token}.
+
+    Поведение:
+      1. Если у юзера `users.vless_uuid` задан И есть ≥1 active VLESS-сервер
+         с заполненным `xray_pubkey` → строим URL динамически (по одному
+         per server, tier выбирается из подписки).
+      2. Иначе fallback: читаем `configs.config_data` как раньше (legacy mode).
+         Этот путь нужен пока backfill `users.vless_uuid` не прошёл; после
+         него код всё ещё работает корректно — просто не пользуется.
+    """
+    from urllib.parse import quote as _url_quote
+    from services.database import (
+        active_vless_servers, get_relevant_vless_subscription,
+        vless_port_column, get_active_vless_configs_for_user,
+    )
+
+    # --- Dynamic path ---
+    # Берём UUID юзера; если NULL — сразу в legacy.
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT vless_uuid FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            user_uuid = row["vless_uuid"] if row else None
+
+    if user_uuid:
+        sub = await get_relevant_vless_subscription(user_id)
+        if sub:
+            # Tier по плану + grace-override (как у scheduler._current_vless_service,
+            # но проще: grace всегда vless-grace, иначе — план).
+            if sub["status"] == "grace":
+                tier = "vless-grace"
+            else:
+                tier = vless_service_for_plan(sub["plan"])
+
+            port_col = vless_port_column(tier)
+            servers = await active_vless_servers()
+            urls: list[str] = []
+            for s in servers:
+                port = s.get(port_col)
+                if not port:
+                    # Сервер не объявил порт для этого tier'а — пропускаем
+                    # тихо (например, legacy node только base-tier).
+                    continue
+                # vless:// URL — StealthSurf-style: sni-параметр опускаем
+                # если пуст (DPI меньше fingerprint'ит). pbk/sid обязательны.
+                params = [
+                    "encryption=none",
+                    f"security=reality",
+                    f"pbk={s['xray_pubkey']}",
+                    f"sid={s['xray_short_id'] or ''}",
+                    f"fp={s.get('xray_fingerprint') or 'chrome'}",
+                    "type=tcp",
+                    "headerType=none",
+                    "spx=%2F",
+                ]
+                sni = s.get("xray_sni") or ""
+                if sni:
+                    params.append(f"sni={sni}")
+                # Fragment — название как в Happ: «🇺🇸 Charlotte»
+                label = f"{s.get('flag') or '🌐'} {s.get('city') or s.get('name') or ''}".strip()
+                frag = _url_quote(label, safe="")
+                query = "&".join(params)
+                urls.append(f"vless://{user_uuid}@{s['host']}:{port}?{query}#{frag}")
+            return urls
+
+    # --- Legacy fallback ---
+    configs = await get_active_vless_configs_for_user(user_id)
+    return [c["config_data"] for c in configs if c.get("config_data")]
+
+
 # ── Авторизация ────────────────────────────────────────────────────────────────
 
 def _resolve_user(request: web.Request, body: dict | None = None) -> dict | None:
@@ -2166,8 +2254,11 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     if not user:
         return web.Response(text="not found", status=404)
 
-    configs = await get_active_vless_configs_for_user(user["id"])
-    urls = [c["config_data"] for c in configs if c.get("config_data")]
+    # Динамический URL-резолвер: для backfilled юзеров строит URL'ы из
+    # `users.vless_uuid × servers.xray_*` (одна строка добавления сервера
+    # — и она автоматически появляется во всех подписках). Для не-backfilled
+    # фолбэчится на `configs.config_data`.
+    urls = await _resolve_vless_urls(user["id"])
 
     # Plain base64-encoded vless:// list. Universal формат поддерживаемый
     # всеми VLESS-клиентами (Happ, Streisand, V2Box, sing-box).

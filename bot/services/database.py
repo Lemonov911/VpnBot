@@ -521,6 +521,55 @@ async def _migrate(db: aiosqlite.Connection):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_server ON incidents(server_id, started_at DESC)")
 
+    # ── VLESS dynamic-subscription refactor (2026-05-21) ─────────────────────
+    # Цель: уйти от модели "1 строка в configs = 1 peer на 1 сервере" для VLESS.
+    # Раньше при добавлении нового сервера приходилось INSERT-ить N строк (по
+    # одной на каждого юзера) + по N HTTP-вызовов на провижининг UUID — это
+    # порождало баги (label-collision на admin'е 20.05) и hairy cleanup при
+    # отказе одного из шагов.
+    #
+    # Новая модель:
+    #   • users.vless_uuid — canonical credential юзера (один UUID на юзера).
+    #   • servers.xray_* — параметры Reality каждого VLESS-сервера, по которым
+    #     /sub/{token} строит URL'ы на лету (UUID юзера × все active VLESS
+    #     серверы × tier из его подписки).
+    #   • configs-rows для VLESS теперь нужны только для slot-учёта в UI
+    #     (отображение "сколько слотов используется"); сами URL генерируются
+    #     динамически.
+    #
+    # Полная архитектура — см. memory/mts-dpi.md и комментарии в
+    # handle_user_subscription.
+
+    # servers — параметры Reality, нужные для построения vless:// URL.
+    # При первой раскатке колонки NULL — это сигнал "сервер ещё не настроен под
+    # dynamic subscription, используем старый путь через config_data".
+    async with db.execute("PRAGMA table_info(servers)") as cur:
+        srv_cols = {row[1] for row in await cur.fetchall()}
+    for col, defn in [
+        ("xray_pubkey",         "TEXT"),
+        ("xray_short_id",       "TEXT"),
+        ("xray_sni",            "TEXT"),
+        ("xray_dest",           "TEXT"),
+        ("xray_fingerprint",    "TEXT NOT NULL DEFAULT 'chrome'"),
+        ("xray_port_base",      "INTEGER"),
+        ("xray_port_max",       "INTEGER"),
+        ("xray_port_base_slow", "INTEGER"),
+        ("xray_port_max_slow",  "INTEGER"),
+        ("xray_port_grace",     "INTEGER"),
+    ]:
+        if col not in srv_cols:
+            await db.execute(f"ALTER TABLE servers ADD COLUMN {col} {defn}")
+
+    # users.vless_uuid — canonical Reality credential. UNIQUE partial index
+    # (ignores NULL) защищает от двух юзеров с одинаковым UUID при гонке
+    # ensure_user_vless_uuid(). NULL = юзер ещё не использовал VLESS / pre-refactor.
+    if "vless_uuid" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN vless_uuid TEXT")
+    await db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_vless_uuid "
+        "ON users(vless_uuid) WHERE vless_uuid IS NOT NULL"
+    )
+
 
 async def _seed_default_server():
     """Если серверов нет — добавляет дефолтный из переменных окружения."""
@@ -1815,6 +1864,120 @@ async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
             (server_id,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Dynamic VLESS subscription (2026-05-21 refactor)
+#
+#  Раньше: `/sub/{token}` отдавал base64 список URL'ов, взятых из
+#  `configs.config_data`. Каждая строка == peer на конкретном сервере, поэтому
+#  при добавлении нового VLESS-сервера приходилось вручную INSERT-ить строки
+#  для каждого юзера + провижионить UUID на новом агенте.
+#
+#  Теперь: subscription для VLESS строится на лету.
+#    URLs = users.vless_uuid × {active VLESS servers} × {tier из plan/status}
+#  Добавление нового сервера = INSERT в `servers` + один скрипт-проход по
+#  users.vless_uuid с POST к новому агенту. DB-строки в `configs` для VLESS не
+#  трогаем (они нужны только для legacy fallback пока backfill не прошёл).
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def active_vless_servers() -> list[dict]:
+    """VLESS-серверы, готовые отдавать URL в подписке.
+
+    Фильтрация: protocol='vless' + is_active=1 + xray_pubkey IS NOT NULL
+    (последний — маркер «backfill параметров Reality прошёл»; пока NULL,
+    сервер невидим для dynamic-режима, чтобы случайно не отдать URL без
+    нужных pbk/sid).
+    Сортируем по id для детерминированного порядка в подписке.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, host, flag, city, name,
+                   xray_pubkey, xray_short_id, xray_sni, xray_fingerprint,
+                   xray_port_base, xray_port_max,
+                   xray_port_base_slow, xray_port_max_slow, xray_port_grace
+            FROM servers
+            WHERE protocol='vless' AND is_active=1
+              AND xray_pubkey IS NOT NULL AND xray_pubkey != ''
+            ORDER BY id
+        """) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def ensure_user_vless_uuid(user_id: int) -> str:
+    """Atomically allocate a canonical Reality UUID for the user.
+
+    Если уже есть — возвращает существующий. Иначе — UPDATE ... WHERE
+    vless_uuid IS NULL фиксирует значение в одной транзакции (защита от
+    race между двумя одновременными вызовами).
+    """
+    import uuid as _uuid
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT vless_uuid FROM users WHERE id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row and row[0]:
+            return row[0]
+        new_uuid = str(_uuid.uuid4())
+        # CAS: ставим только если ещё NULL. rowcount==0 → между SELECT и UPDATE
+        # уже другой воркер записал свой UUID; в этом случае дочитываем готовое
+        # значение.
+        cur = await db.execute(
+            "UPDATE users SET vless_uuid=? WHERE id=? AND vless_uuid IS NULL",
+            (new_uuid, user_id),
+        )
+        await db.commit()
+        if cur.rowcount == 0:
+            async with db.execute(
+                "SELECT vless_uuid FROM users WHERE id=?", (user_id,)
+            ) as cur2:
+                row2 = await cur2.fetchone()
+                return row2[0] if row2 else new_uuid
+        return new_uuid
+
+
+async def get_relevant_vless_subscription(user_id: int) -> dict | None:
+    """Самая релевантная подписка юзера для VLESS-доступа.
+
+    Возвращает {id, plan, status, expires_at} или None если у юзера нет
+    ни одной active/grace подписки.
+
+    Приоритет: active > grace (внутри одного статуса — самая поздняя по
+    expires_at, обычно у юзера так и так одна active за раз).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, plan, status, expires_at
+            FROM subscriptions
+            WHERE user_id=? AND status IN ('active', 'grace')
+            ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
+                     expires_at DESC
+            LIMIT 1
+        """, (user_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+# Маппинг tier-имени сервиса на префикс колонки в servers.xray_port_*.
+# vless-base-slow / vless-max-slow / vless-grace — throttle/grace инбаунды;
+# legacy 'vless' попадает на base-порт для совместимости со старыми планами.
+_VLESS_TIER_PORT_COL = {
+    "vless-base":      "xray_port_base",
+    "vless-max":       "xray_port_max",
+    "vless-base-slow": "xray_port_base_slow",
+    "vless-max-slow":  "xray_port_max_slow",
+    "vless-grace":     "xray_port_grace",
+    "vless":           "xray_port_base",
+}
+
+
+def vless_port_column(tier: str) -> str | None:
+    """Колонка в `servers`, в которой лежит порт нужного VLESS tier'а."""
+    return _VLESS_TIER_PORT_COL.get(tier)
 
 
 async def get_or_create_sub_token(user_id: int) -> str:
