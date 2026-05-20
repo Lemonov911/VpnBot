@@ -78,15 +78,17 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
          Этот путь нужен пока backfill `users.vless_uuid` не прошёл; после
          него код всё ещё работает корректно — просто не пользуется.
     """
+    import aiosqlite
     from urllib.parse import quote as _url_quote
     from services.database import (
+        DB_PATH as _DB_PATH,
         active_vless_servers, get_relevant_vless_subscription,
         vless_port_column, get_active_vless_configs_for_user,
     )
 
     # --- Dynamic path ---
     # Берём UUID юзера; если NULL — сразу в legacy.
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT vless_uuid FROM users WHERE id=?", (user_id,)
