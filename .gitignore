@@ -60,4 +60,5 @@ scripts/*
 !scripts/test_vless.py
 !scripts/backfill_vless_canonical.py
 !scripts/add_vless_server.py
+!scripts/recover_leaked_subs.py
 *.conf

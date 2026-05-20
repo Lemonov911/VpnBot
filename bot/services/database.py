@@ -2594,6 +2594,10 @@ async def get_winback_candidates(days_min: int = 7, days_max: int = 14) -> list[
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
+        # Audit 21.05 #7: было `datetime(s.updated_at)` — колонки updated_at в
+        # subscriptions нет → OperationalError на каждом scheduler-проходе,
+        # winback не работает с момента ввода фичи.  Правильное поле — expires_at:
+        # «когда подписка истекла» = реальная отметка ухода юзера.
         async with db.execute(
             """
             SELECT s.id, s.user_id, s.plan
@@ -2601,8 +2605,8 @@ async def get_winback_candidates(days_min: int = 7, days_max: int = 14) -> list[
             WHERE s.status = 'expired'
               AND s.winback_sent = 0
               AND s.plan != 'vpn_trial'
-              AND datetime(s.updated_at) <= datetime('now', ?||' days')
-              AND datetime(s.updated_at) >= datetime('now', ?||' days')
+              AND datetime(s.expires_at) <= datetime('now', ?||' days')
+              AND datetime(s.expires_at) >= datetime('now', ?||' days')
               AND NOT EXISTS (
                   SELECT 1 FROM subscriptions s2
                   WHERE s2.user_id = s.user_id

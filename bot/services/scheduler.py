@@ -155,15 +155,10 @@ async def _send_throttled(bot: Bot, user_id: int, text: str, **kwargs) -> bool:
         return False
 
 
-def _current_vless_service(config_data: str, plan_key: str) -> str:
-    """Определяет текущий vpnctl-сервис VLESS-конфига по порту в config_data."""
-    if ":9448" in config_data:
-        return "vless-max-slow"
-    if ":9443" in config_data:
-        return "vless-base-slow"
-    if ":9453" in config_data:
-        return "vless-grace"
-    return vless_service_for_plan(plan_key)
+# _current_vless_service вынесен в services.revoke.current_vless_service —
+# чтобы scheduler grace-loop и refund/recovery handlers использовали единое
+# определение текущего tier VLESS-конфига (audit C1: дубль был в 2 местах).
+from services.revoke import current_vless_service as _current_vless_service  # noqa: E402,F401
 
 
 async def _process_expired_subscriptions(bot: Bot):

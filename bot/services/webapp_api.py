@@ -2751,6 +2751,18 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     # Откат реф-бонуса если он был начислен на эту подписку
     await rollback_referral_bonus(sub_id)
 
+    # Revoke active configs: peer'ы на агенте + reset БД.  БЕЗ ЭТОГО ЮЗЕР
+    # ПРОДОЛЖАЕТ ПОЛЬЗОВАТЬСЯ VPN после refund'а — handler раньше делал
+    # только mark_refunded, а AWG-конфиги вообще никогда не подчищаются
+    # sync'ом.  Прод-инцидент 20.05: user 594024866 sub#5 expired 15 мая,
+    # 5 конфигов работали 6 дней без действующей подписки.  Audit #1.
+    from services.revoke import revoke_subscription_configs
+    revoked, failed = await revoke_subscription_configs(
+        sub_id, sub["plan"], log_prefix=f"refund#{sub_id}"
+    )
+    logger.info("refund sub #%d: revoked %d config(s), failed %d",
+                sub_id, revoked, failed)
+
     # Источник платежа — для audit log + UI чтобы админ видел корректный канал.
     payment_source = "stars"
     if payment_id:
@@ -2762,12 +2774,18 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     await audit_log_record(
         admin_id=0, action="sub_refund",
         target=f"sub:{sub_id}",
-        details=f"user={sub['user_id']} method={payment_source} stars_refund={stars_refund_done} reason={reason or '-'}",
+        details=(
+            f"user={sub['user_id']} method={payment_source} "
+            f"stars_refund={stars_refund_done} revoked={revoked} "
+            f"revoke_failed={failed} reason={reason or '-'}"
+        ),
     )
     return web.json_response({
         "ok": True,
         "stars_refund_done": stars_refund_done,
         "payment_source": payment_source,
+        "configs_revoked": revoked,
+        "configs_revoke_failed": failed,
         # backwards-compat: was_crypto был только CryptoBot. Если фронт
         # ориентируется на этот флаг — он по-прежнему получит ожидаемое.
         "was_crypto": payment_id and payment_id.startswith("crypto_"),
