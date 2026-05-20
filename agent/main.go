@@ -60,11 +60,18 @@ func main() {
 			if !ok {
 				log.Fatalf("vless tier %q not configured", svcName)
 			}
-			// vless-max и его slow-вариант используют чистый VLESS без vision,
-			// чтобы быть совместимым с большим набором клиентов и mux в перспективе.
-			// vless / vless-base / vless-base-slow — с Vision.
+			// Plain VLESS (без xtls-rprx-vision):
+			//   - vless-max / vless-max-slow — изначально без vision для совместимости + mux.
+			//   - vless-grace — grace-period tier без vision.
+			//   - vless-base / vless-base-slow — с фев 2026 переведены на plain Reality:
+			//     RKN на МТС/МГТС внедрил TLS connection-based policing, после ~15-20KB
+			//     реальных данных через vision-tunnel TCP замораживается. Plain Reality
+			//     даёт 99.5% bypass rate (community data). См. net4people/bbs#546.
+			// Legacy `vless` оставлен с vision — у старых юзеров URL уже с flow=vision,
+			// downgrade-миграция требует регенерации их subscription URL.
 			flow := cfg.XrayFlow
-			if svcName == "vless-max" || svcName == "vless-max-slow" || svcName == "vless-grace" {
+			if svcName == "vless-max" || svcName == "vless-max-slow" || svcName == "vless-grace" ||
+				svcName == "vless-base" || svcName == "vless-base-slow" {
 				flow = ""
 			}
 			xrayMgr := xraypkg.NewManager(
