@@ -14,7 +14,6 @@ let _db: Database.Database | null = null
 export function db(): Database.Database {
   if (!_db) {
     _db = new Database(DB_PATH, { readonly: true })
-    _db.pragma('journal_mode = WAL')
   }
   return _db
 }
@@ -106,7 +105,10 @@ export function allPayments(filters: {
   else if (method === 'stars')       where.push("s.payment_id NOT LIKE 'crypto_%' AND s.payment_id NOT LIKE 'free_%' AND s.payment_id NOT LIKE 'admin_grant_%' AND s.payment_id IS NOT NULL")
 
   if (plan) { where.push('s.plan = ?'); params.push(plan) }
-  if (days) where.push(`s.created_at > datetime('now', '-${Number(days)} days')`)
+  const daysNum = Math.floor(Number(days))
+  if (days && Number.isFinite(daysNum) && daysNum > 0) {
+    where.push(`s.created_at > datetime('now', '-${daysNum} days')`)
+  }
   if (!includeRefunds) where.push('s.refunded_at IS NULL')
 
   // granted_by_admin_id — JOIN с payments по subscription_id. Для одной подписки

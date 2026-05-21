@@ -125,17 +125,17 @@ VPN_PLANS: dict[str, dict] = {
 def vless_service_for_plan(plan_key: str) -> str:
     """Возвращает имя `vpnctl`-сервиса для VLESS-провижининга.
     Новые v2-планы маппятся на speed-tier сервисы; legacy / unknown → 'vless'."""
-    if plan_key == "vpn_base":
+    if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
         return "vless-base"
-    if plan_key == "vpn_max":
+    if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
         return "vless-max"
     return "vless"
 
 
 def vless_slow_service_for_plan(plan_key: str) -> str | None:
     """Throttled-сервис для плана. None для legacy без slow-tier."""
-    if plan_key == "vpn_base":
+    if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
         return "vless-base-slow"
-    if plan_key == "vpn_max":
+    if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
         return "vless-max-slow"
     return None

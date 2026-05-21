@@ -180,8 +180,10 @@ export default function VPN() {
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       }
-    } catch {
+    } catch (e) {
       setBuyLoading(null)
+      WebApp.HapticFeedback.notificationOccurred('error')
+      WebApp.showAlert(e instanceof Error ? e.message : 'Ошибка при создании счёта. Попробуйте ещё раз.')
     }
   }
 

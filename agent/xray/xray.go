@@ -145,6 +145,9 @@ func (m *Manager) addUserToConfig(uuidStr, email string) (*VLESSUser, error) {
 
 	for _, c := range settings.Clients {
 		if c.Email == email {
+			if c.ID != uuidStr {
+				return nil, fmt.Errorf("email %q already registered with different UUID (have %s, want %s)", email, c.ID, uuidStr)
+			}
 			return &VLESSUser{UUID: c.ID, Email: c.Email}, nil
 		}
 	}

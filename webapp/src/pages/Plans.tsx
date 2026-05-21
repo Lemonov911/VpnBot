@@ -47,6 +47,19 @@ const PLAN_NAME_KEY: Record<string, TKey> = {
   vpn_family:  'vpn_plan_family',
 }
 
+// Stars and rub prices for legacy plans — mirrors plans.py VPN_PLANS.
+// Used when the user has a legacy plan not present in PLANS[] to calculate
+// correct upgrade price and mode (avoid falling back to vpn_base defaults).
+const LEGACY_PLAN_PRICES: Record<string, { stars: number; rub: number }> = {
+  vpn_start:   { stars: 128,  rub: 180  },
+  vpn_popular: { stars: 214,  rub: 270  },
+  vpn_pro:     { stars: 342,  rub: 450  },
+  vpn_family:  { stars: 513,  rub: 640  },
+  vpn_1m:      { stars: 299,  rub: 299  },
+  vpn_3m:      { stars: 699,  rub: 699  },
+  vpn_1y:      { stars: 1990, rub: 1990 },
+}
+
 function PlanCard({
   plan, mode, upgradePrice, loading, isPending, onClick, animDelay,
 }: {
@@ -316,8 +329,19 @@ export default function Plans() {
     try {
       const res = await changeSubscriptionPlan(plan.key)
       if (res.invoice_url) {
-        setLoading(null)
-        WebApp.openLink(res.invoice_url)
+        // Must use openInvoice (not openLink) so the payment callback fires
+        // inside the Mini App. openLink opens an external browser and the
+        // 'paid' status callback is never delivered.
+        let callbackFired = false
+        const guardId = setTimeout(() => {
+          if (!callbackFired) setLoading(null)
+        }, 5 * 60 * 1000)
+        WebApp.openInvoice(res.invoice_url, s => {
+          callbackFired = true
+          clearTimeout(guardId)
+          setLoading(null)
+          if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
+        })
       } else if (res.scheduled) {
         WebApp.HapticFeedback.notificationOccurred('success')
         setSub(prev => prev ? { ...prev, pending_plan: plan.key } : prev)
@@ -424,7 +448,12 @@ export default function Plans() {
           ))
         ) : (
           (() => {
-            const curPlan = PLANS.find(p => p.key === sub.plan) ?? VISIBLE_PLANS[0]
+            const curPlan = PLANS.find(p => p.key === sub.plan) ?? {
+              ...VISIBLE_PLANS[0],
+              key:   sub.plan,
+              stars: LEGACY_PLAN_PRICES[sub.plan]?.stars ?? VISIBLE_PLANS[0].stars,
+              rub:   LEGACY_PLAN_PRICES[sub.plan]?.rub   ?? VISIBLE_PLANS[0].rub,
+            }
             const planList = VISIBLE_PLANS
             const inGrace = sub.status === 'grace'
             return planList.map((plan, i) => {

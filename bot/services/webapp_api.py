@@ -694,6 +694,7 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     if server_id:
         server = await get_server_by_id(server_id)
         if not server or not server["is_active"]:
+            await reset_config_slot(config_id)
             return web.json_response({"error": "Сервер недоступен"}, status=400)
     else:
         servers = await get_servers_by_protocol(config["protocol"])

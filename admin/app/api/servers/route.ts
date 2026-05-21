@@ -83,14 +83,18 @@ export async function POST(req: NextRequest) {
   }
 
   const db = writeDb()
-  // `status` колонки нет — убрана из INSERT.
-  const result = db.prepare(`
-    INSERT INTO servers (name, flag, city, host, user, agent_url, agent_token,
-                         wg_pubkey, protocol, capacity, is_active)
-    VALUES (?, ?, ?, ?, 'root', ?, ?, ?, ?, ?, 1)
-  `).run(name, flag || '🌍', city || '', host, agent_url, agent_token,
-         wg_pubkey, protocol, capacity || 100)
-  db.close()
+  let result: ReturnType<ReturnType<typeof db.prepare>['run']>
+  try {
+    // `status` колонки нет — убрана из INSERT.
+    result = db.prepare(`
+      INSERT INTO servers (name, flag, city, host, user, agent_url, agent_token,
+                           wg_pubkey, protocol, capacity, is_active)
+      VALUES (?, ?, ?, ?, 'root', ?, ?, ?, ?, ?, 1)
+    `).run(name, flag || '🌍', city || '', host, agent_url, agent_token,
+           wg_pubkey, protocol, capacity || 100)
+  } finally {
+    db.close()
+  }
 
   return NextResponse.json({ id: result.lastInsertRowid, wg_pubkey })
 }
@@ -108,8 +112,11 @@ export async function DELETE(req: NextRequest) {
   if (!Number.isFinite(numId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const db = writeDb()
-  db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(numId)
-  db.close()
+  try {
+    db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(numId)
+  } finally {
+    db.close()
+  }
   return NextResponse.json({ ok: true })
 }
 
@@ -146,8 +153,12 @@ export async function PATCH(req: NextRequest) {
 
   args.push(numId)
   const db = writeDb()
-  const result = db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id=?`).run(...args)
-  db.close()
+  let result: ReturnType<ReturnType<typeof db.prepare>['run']>
+  try {
+    result = db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id=?`).run(...args)
+  } finally {
+    db.close()
+  }
   if (result.changes === 0) {
     return NextResponse.json({ error: 'server not found' }, { status: 404 })
   }

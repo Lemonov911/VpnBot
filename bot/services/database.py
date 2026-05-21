@@ -8,6 +8,7 @@ SQLite через aiosqlite.
   (revoked удалён — отзыв сбрасывает слот в empty, слот не исчезает)
 """
 
+import asyncio
 import logging
 
 import aiosqlite
@@ -2295,9 +2296,16 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
             await db.commit()
             return None  # race: параллельный redeem забрал bank первым
 
-        # Шаг 3: claim успешен — extend sub и ставим redeemed_at на tracking
+        # Шаг 3: claim успешен — extend sub и ставим redeemed_at на tracking.
+        # Для grace-подписки: сбрасываем статус в active и очищаем grace_until,
+        # иначе sub остаётся throttled и scheduler заэкспайрит её по grace_until
+        # несмотря на только что продлённый expires_at.
         await db.execute(
-            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE id=?",
+            """UPDATE subscriptions
+               SET expires_at  = datetime(expires_at, ?),
+                   status      = CASE WHEN status = 'grace' THEN 'active' ELSE status END,
+                   grace_until = CASE WHEN status = 'grace' THEN NULL ELSE grace_until END
+               WHERE id = ?""",
             (f"+{bank} days", sub["id"]),
         )
         # Ставим redeemed_at на все subs где этот юзер был реферрером и бонус

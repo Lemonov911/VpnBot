@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createHmac } from 'crypto'
+import { createHmac, timingSafeEqual } from 'crypto'
 import { isAdmin, createSession, COOKIE_NAME } from '@/lib/auth'
 
 const BOT_TOKEN = process.env.BOT_TOKEN!
@@ -11,8 +11,9 @@ function verifyBotToken(token: string): { userId: number; username: string } | n
     const [payload64, sig] = decoded.split('.')
     if (!payload64 || !sig) return null
 
-    const expected = createHmac('sha256', BOT_TOKEN).update(payload64).digest('hex')
-    if (expected !== sig) return null
+    const expected = createHmac('sha256', BOT_TOKEN).update(payload64).digest()
+    const sigBuf = Buffer.from(sig, 'hex')
+    if (sigBuf.length !== expected.length || !timingSafeEqual(expected, sigBuf)) return null
 
     const { userId, username, exp } = JSON.parse(Buffer.from(payload64, 'base64').toString())
     if (Date.now() / 1000 > exp) return null

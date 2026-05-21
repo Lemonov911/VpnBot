@@ -473,6 +473,7 @@ export default function Configs() {
   }
 
   const handleActivate = async (configId: number, serverId: number) => {
+    setErrMsg('')
     try {
       await activateSlot(configId, serverId)
       WebApp.HapticFeedback.notificationOccurred('success')
@@ -483,6 +484,7 @@ export default function Configs() {
   }
 
   const handleRevoke = async (configId: number) => {
+    setErrMsg('')
     try {
       await revokeConfig(configId)
       setSlots(prev => prev.map(s =>
@@ -528,7 +530,7 @@ export default function Configs() {
         </div>
       )}
 
-      {!loading && slots.length === 0 && !errMsg && (
+      {!loading && slots.length === 0 && (
         <div className="text-center py-10">
           <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-center justify-center text-[30px]">🔒</div>
           <div className="font-semibold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">{t('configs_no_sub')}</div>
