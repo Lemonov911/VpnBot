@@ -11,6 +11,7 @@ import { useT } from '../i18n'
 import type { TKey } from '../i18n'
 
 function calcUpgradePrice(curRub: number, newRub: number, daysLeft: number): number {
+  if (daysLeft <= 0) return newRub
   return Math.max(1, Math.round((newRub - curRub) * daysLeft / 30))
 }
 

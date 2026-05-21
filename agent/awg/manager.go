@@ -8,6 +8,7 @@
 package awg
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -133,7 +134,9 @@ func NewManager(paramsPath string) (*Manager, error) {
 
 // awgCmd выполняет `awg <args...>` и возвращает stdout. На ошибке — stderr в %w.
 func awgCmd(args ...string) ([]byte, error) {
-	out, err := exec.Command("awg", args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "awg", args...).CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("awg %s: %w (%s)", strings.Join(args, " "), err, string(out))
 	}

@@ -1,6 +1,7 @@
 package xray
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -262,7 +264,9 @@ func (m *Manager) addUserAPI(uuidStr, email string) error {
 	}
 	f.Close()
 
-	cmd := exec.Command(m.xrayBin, "api", "adu", "--server="+m.apiAddr, f.Name())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.xrayBin, "api", "adu", "--server="+m.apiAddr, f.Name())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("adu: %s: %w", out, err)
@@ -279,7 +283,9 @@ func (m *Manager) removeUserAPI(email string) error {
 	if m.apiAddr == "" {
 		return nil
 	}
-	cmd := exec.Command(m.xrayBin, "api", "rmu", "--server="+m.apiAddr, "-tag="+m.inboundTag, email)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.xrayBin, "api", "rmu", "--server="+m.apiAddr, "-tag="+m.inboundTag, email)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// "User ... not found" comes back with exit 0 + "Removed 0"; if exit != 0 it's a real error

@@ -138,7 +138,7 @@ async def cmd_start(message: Message):
     if start_param.startswith("ref_"):
         try:
             referrer_id = int(start_param[4:])
-            if referrer_id != user_id:
+            if referrer_id > 0 and referrer_id != user_id:
                 if await has_any_subscription(user_id):
                     ref_link_late = True
                 elif await has_active_paid_sub(referrer_id):
