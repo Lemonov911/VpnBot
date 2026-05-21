@@ -53,6 +53,7 @@ from services.database import (
     mark_winback_sent,
     get_trial_nudge_candidates,
     mark_trial_nudge_sent,
+    set_quota_throttled_flag,
 )
 import services.esim_api as esim_api
 from services.vpnctl_client import client_for_server, VpnctlError
@@ -332,12 +333,45 @@ async def _process_expired_subscriptions(bot: Bot):
         if pending and pending != plan_key:
             try:
                 from services.database import apply_pending_plan_change
-                await apply_pending_plan_change(sub_id, pending)
-                logger.info(
-                    "Подписка #%d: применён pending downgrade %s → %s",
-                    sub_id, plan_key, pending,
-                )
-                plan_key = pending  # для следующих итераций (grace transition)
+                applied = await apply_pending_plan_change(sub_id, pending)
+                if applied:
+                    logger.info(
+                        "Подписка #%d: применён pending downgrade %s → %s",
+                        sub_id, plan_key, applied,
+                    )
+                    # Revoke excess slots: при downgrade vpn_max → vpn_base у
+                    # юзера остаются (old_slots - new_slots) configs которые
+                    # уже не входят в новый тариф. Они уже throttle'нутые
+                    # (предыдущий цикл for cfg in configs), но всё равно
+                    # активны как peers. Без revoke юзер после next payment
+                    # вернётся к full speed на ВСЕХ старых слотах, хотя
+                    # платит уже за меньший тариф. current_vless_service в
+                    # revoke.py учитывает что VLESS peers уже в vless-grace
+                    # inbound (порт 9453), AWG peers — unthrottle перед remove.
+                    try:
+                        from services.revoke import revoke_excess_configs_on_downgrade
+                        rev, fail = await revoke_excess_configs_on_downgrade(
+                            sub_id,
+                            old_plan_key=plan_key,
+                            new_plan_key=applied,
+                            log_prefix=f"pending_downgrade_sub{sub_id}",
+                        )
+                        logger.info(
+                            "Подписка #%d pending-downgrade excess-revoke: "
+                            "revoked=%d failed=%d",
+                            sub_id, rev, fail,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Подписка #%d: excess-revoke after downgrade failed: %s",
+                            sub_id, e, exc_info=True,
+                        )
+                    plan_key = applied  # для следующих итераций (grace transition)
+                else:
+                    logger.info(
+                        "Подписка #%d: pending downgrade no-op (race? pending уже NULL)",
+                        sub_id,
+                    )
             except Exception as e:
                 logger.warning(
                     "Подписка #%d: pending downgrade failed (%s → %s): %s",
@@ -658,7 +692,13 @@ async def _apply_quota_throttle(bot: Bot):
         # обязаны быть в одном tier'е (мы сами их так переводим). Если drift
         # обнаружится, цикл ниже выровняет: каждая row будет проверена против
         # общего should_throttle.
-        notified_for_throttle = False
+        #
+        # already_notified — флаг из БД на уровне подписки. Заменяет старый
+        # in-memory `notified_for_throttle`: переживает рестарт + позволяет
+        # триггерить un-throttle сообщение когда квота обновляется.
+        already_notified = bool(head.get("reminded_quota_throttled"))
+        sent_throttle_notify = False
+        sent_restore_notify = False
         for cfg in sub_configs:
             cfg_data = cfg.get("config_data") or ""
             is_throttled = (":9443" in cfg_data) or (":9448" in cfg_data)
@@ -695,8 +735,11 @@ async def _apply_quota_throttle(bot: Bot):
                         "throttled config #%d (sub=%d, total used %.1f GB > %d GB cap)",
                         cfg["config_id"], sub_id, total_used / 1024**3, cap_gb,
                     )
-                    if not notified_for_throttle:
-                        notified_for_throttle = True
+                    # Уведомляем юзера только если ещё не уведомляли в прошлом
+                    # тике (DB-флаг reminded_quota_throttled). Без этой проверки
+                    # после рестарта/drift'а юзер получил бы повторный спам.
+                    if not already_notified and not sent_throttle_notify:
+                        sent_throttle_notify = True
                         try:
                             await bot.send_message(
                                 cfg["user_id"],
@@ -727,10 +770,42 @@ async def _apply_quota_throttle(bot: Bot):
                     if normal_peer.config:
                         await update_config_data(cfg["config_id"], normal_peer.config)
                     logger.info("throttle restored on config #%d (sub=%d)", cfg["config_id"], sub_id)
+                    # Юзер раньше получал throttle-сообщение → сообщаем что
+                    # скорость вернулась (новый расчётный месяц / админ
+                    # сбросил счётчики). Без этого юзеры жаловались «продлил
+                    # подписку, а скорость всё ещё медленная» — продление
+                    # обнуляло rx_bytes, но мы не давали явного фидбека.
+                    if already_notified and not sent_restore_notify:
+                        sent_restore_notify = True
+                        try:
+                            await bot.send_message(
+                                cfg["user_id"],
+                                "⚡ <b>Скорость восстановлена</b>\n\n"
+                                "Квота обновилась — VPN снова работает на полной скорости.",
+                                parse_mode="HTML",
+                            )
+                        except Exception as e:
+                            logger.warning("notify restore user %d: %s", cfg["user_id"], e, exc_info=True)
             except VpnctlError as e:
                 logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e, exc_info=True)
             except Exception as e:
                 logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e, exc_info=True)
+
+        # Обновляем DB-флаг для подписки после обработки всех её row'ов:
+        # — отправили throttle-notify впервые → ставим в 1 (на следующих тиках
+        #   не повторим);
+        # — отправили restore-notify → сбрасываем в 0 (готовы снова уведомить
+        #   если юзер опять выберет квоту в этом или следующем периоде).
+        if sent_throttle_notify:
+            try:
+                await set_quota_throttled_flag(sub_id, True)
+            except Exception as e:
+                logger.warning("quota flag set failed sub=%d: %s", sub_id, e, exc_info=True)
+        elif sent_restore_notify:
+            try:
+                await set_quota_throttled_flag(sub_id, False)
+            except Exception as e:
+                logger.warning("quota flag clear failed sub=%d: %s", sub_id, e, exc_info=True)
 
 
 _VLESS_SYNC_SERVICES = [

@@ -515,6 +515,17 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN trial_rolled_back INTEGER NOT NULL DEFAULT 0"
         )
+    # reminded_quota_throttled — флаг что юзеру уже отправили уведомление о
+    # throttling'е (квота исчерпана, скорость снижена). Нужен чтобы:
+    # 1) не спамить при каждом тике scheduler'а (drift между rows одного sub'а
+    #    мог приводить к повторным notify);
+    # 2) знать что нужно отправить un-throttle сообщение когда квота обновится
+    #    (новый расчётный месяц) — без флага мы бы не знали, отправлял ли мы
+    #    уведомление в первый раз и стоит ли отправить «скорость восстановлена».
+    if "reminded_quota_throttled" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN reminded_quota_throttled INTEGER NOT NULL DEFAULT 0"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -909,6 +920,24 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
             return result
 
 
+class AdminGrantConflict(Exception):
+    """admin_grant_subscription отказался: у юзера активная sub другого плана.
+
+    Чтобы выдать новый план — админ должен сперва refund'ить существующую
+    sub (handle_admin_sub_refund) или сменить план через change-plan
+    endpoint. Без этого создавалась бы parallel sub, configs которой
+    остаются жить навсегда (get_active_subscription LIMIT 1 их скрывает).
+    """
+    def __init__(self, existing_sub: dict, requested_plan: str):
+        self.existing_sub = existing_sub
+        self.requested_plan = requested_plan
+        super().__init__(
+            f"user has active sub id={existing_sub.get('id')} "
+            f"plan={existing_sub.get('plan')} status={existing_sub.get('status')}; "
+            f"refusing grant of different plan={requested_plan}"
+        )
+
+
 async def admin_grant_subscription(
     admin_id: int,
     target_user_id: int,
@@ -920,7 +949,9 @@ async def admin_grant_subscription(
     """Выдаёт бесплатную VPN-подписку юзеру по telegram_id.  Создаёт user-row
     если её нет (юзер мог ещё не запускать бота — например, дал ник в чате).
     Если у юзера уже есть активная sub того же плана — extend на `days`.
-    Иначе создаёт новую подписку и пустые config-слоты по тарифу.
+    Если активная sub ДРУГОГО плана — raise `AdminGrantConflict` (раньше
+    создавалась parallel sub, configs которой leak'ались навсегда — L3 bug).
+    Если активной нет — создаёт новую подписку и пустые config-слоты.
 
     Слоты — пустые: пиры на сервере НЕ провизятся здесь. Юзер активирует
     их сам через Mini App «Мои конфиги» (так же как при обычной покупке).
@@ -930,6 +961,10 @@ async def admin_grant_subscription(
 
     Возвращает {ok, subscription_id, expires_at, action} где action — 'extended'
     или 'created'.
+
+    Raises:
+        ValueError: bad plan_key / days
+        AdminGrantConflict: юзер уже на другом активном плане
     """
     import json as _json
     from services.plans import VPN_PLANS
@@ -946,18 +981,29 @@ async def admin_grant_subscription(
     await upsert_user(target_user_id, target_username, display)
 
     # 2) Проверяем активную/grace подписку. Extend срабатывает только для
-    # того же plan_key — иначе создаём отдельную (не downgrade'ить силой).
+    # того же plan_key. Если другой план — REFUSE (не создаём parallel sub).
     active = await get_active_subscription(target_user_id)
     action = "created"
     sub_id: int | None = None
     expires_at_str: str | None = None
 
-    if active and active.get("plan") == plan_key and active.get("status") in ("active", "grace"):
-        extended = await extend_subscription(active["id"], days)
-        if extended:
-            sub_id = extended["id"]
-            expires_at_str = extended["expires_at"]
-            action = "extended"
+    if active and active.get("status") in ("active", "grace"):
+        active_plan = active.get("plan") or ""
+        # vpn_trial не блокирует grant — триал считается «pre-paid», поверх
+        # него админ нормально выдаёт paid план.
+        if active_plan == plan_key:
+            extended = await extend_subscription(active["id"], days)
+            if extended:
+                sub_id = extended["id"]
+                expires_at_str = extended["expires_at"]
+                action = "extended"
+        elif active_plan and active_plan != "vpn_trial":
+            logger.warning(
+                "admin_grant_subscription: user=%d has active sub=%d plan=%s, "
+                "refusing grant of different plan=%s (admin must refund first)",
+                target_user_id, active["id"], active_plan, plan_key,
+            )
+            raise AdminGrantConflict(active, plan_key)
     if sub_id is None:
         # Создаём новую sub. payment_id уникален (UNIQUE-constraint защитит от
         # случайного дубль-вызова из admin UI при двойном click'е).
@@ -1206,24 +1252,30 @@ async def get_active_subscription_by_id(sub_id: int) -> dict | None:
             return dict(row) if row else None
 
 
-async def apply_pending_plan_change(sub_id: int, new_plan: str):
+async def apply_pending_plan_change(sub_id: int, new_plan: str) -> str | None:
     """Переключает plan подписки на pending_plan и сбрасывает pending_plan.
 
     Вызывается scheduler'ом когда подписка истекает а у юзера был
     запланирован downgrade (vpn_max → vpn_base). После этого следующая
     покупка/продление будет за новый тариф.
+
+    Возвращает `new_plan` если UPDATE применился (1 row changed), иначе None
+    (race: юзер сделал upgrade параллельно → pending_plan уже NULL).
+    Caller'у нужно это значение чтобы решить надо ли revoke'ить лишние
+    configs (если new < old slots count).
     """
     async with _connect() as db:
         # WHERE pending_plan=? — guard от race: если юзер успел сделать
         # upgrade параллельно, pending_plan уже NULL → UPDATE no-op, не
         # перезаписываем актуальный plan. apply_pending_plan_change
         # вызывается из scheduler на момент истечения подписки.
-        await db.execute(
+        cur = await db.execute(
             "UPDATE subscriptions SET plan=?, pending_plan=NULL "
             "WHERE id=? AND pending_plan=?",
             (new_plan, sub_id, new_plan),
         )
         await db.commit()
+        return new_plan if cur.rowcount > 0 else None
 
 
 # ── Lava.top recurring helpers ────────────────────────────────────────────────
@@ -1338,6 +1390,18 @@ async def disable_auto_renew(sub_id: int):
     Сама подписка дослужит до expires_at."""
     async with _connect() as db:
         await db.execute("UPDATE subscriptions SET auto_renew=0 WHERE id=?", (sub_id,))
+        await db.commit()
+
+
+async def set_quota_throttled_flag(sub_id: int, flagged: bool) -> None:
+    """Помечает что юзер уже был уведомлён о throttling'е (квота исчерпана).
+    Используется scheduler'ом для дедупликации notify + триггера обратного
+    «скорость восстановлена» сообщения при un-throttle."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions SET reminded_quota_throttled=? WHERE id=?",
+            (1 if flagged else 0, sub_id),
+        )
         await db.commit()
 
 
@@ -1467,6 +1531,30 @@ async def get_configs_for_subscription(subscription_id: int) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_configs_for_subscription_by_protocol(
+    subscription_id: int, protocol: str,
+) -> list[dict]:
+    """Все configs (любой status) для sub+protocol, упорядоченные так чтобы
+    empty шли первыми, потом active по возрастанию id.
+
+    Используется в `revoke_excess_configs_on_downgrade` (revoke.py):
+    при downgrade тарифа нужно убрать excess-слоты — empty освобождаем
+    в первую очередь (без обращения к агенту), оставшиеся active — самые
+    старые (юзер уже привык к ним меньше всего, новые конфиги обычно
+    «нагружают» юзера сильнее).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, peer_name, protocol, server_id, assigned_ip, "
+            "vless_uuid, config_data, status FROM configs "
+            "WHERE subscription_id=? AND protocol=? "
+            "ORDER BY CASE WHEN status='empty' THEN 0 ELSE 1 END, id ASC",
+            (subscription_id, protocol),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_config_by_id(config_id: int) -> dict | None:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -1524,6 +1612,13 @@ async def get_active_subscription(user_id: int) -> dict | None:
     Включает status IN ('active', 'grace') — grace это «истекла, но 14 дней
     на 256 кбит/с»; для UX и provisioning это всё ещё валидная подписка с
     живыми пирами. UI отличает по `grace_until IS NOT NULL`.
+
+    Defensive logging: LIMIT 1 + ORDER BY created_at DESC раньше прятал
+    parallel subs (например если `admin_grant_subscription` некогда создавал
+    sub того же юзера параллельно с уже-активной другого тарифа — L3 bug).
+    Если такие подписки существуют — логируем warning со списком id чтобы
+    админ заметил и refund'ил/закрыл лишние вручную. Backward-compat: всё
+    равно возвращаем newest (как раньше).
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -1532,10 +1627,23 @@ async def get_active_subscription(user_id: int) -> dict | None:
                    auto_renew, payment_provider, parent_contract_id
             FROM subscriptions
             WHERE user_id=? AND status IN ('active', 'grace')
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY created_at DESC
         """, (user_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+            rows = await cur.fetchall()
+            if not rows:
+                return None
+            if len(rows) > 1:
+                # Игнорим trial — vpn_trial легитимно может сосуществовать
+                # с paid sub в редких race-сценариях, но не должен.
+                non_trial = [r for r in rows if (r["plan"] or "") != "vpn_trial"]
+                if len(non_trial) > 1:
+                    logger.warning(
+                        "get_active_subscription: user=%d has %d active non-trial subs: %s "
+                        "— returning newest (admin should reconcile)",
+                        user_id, len(non_trial),
+                        [(r["id"], r["plan"], r["status"]) for r in non_trial],
+                    )
+            return dict(rows[0])
 
 
 async def get_last_expired_subscription(user_id: int) -> dict | None:
@@ -1968,7 +2076,8 @@ async def get_active_vless_configs_with_plan() -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT c.id AS config_id, c.user_id, c.server_id, c.vless_uuid, c.config_data,
-                      c.rx_bytes, c.tx_bytes, s.plan AS plan_key, s.id AS subscription_id
+                      c.rx_bytes, c.tx_bytes, s.plan AS plan_key, s.id AS subscription_id,
+                      s.reminded_quota_throttled
                FROM configs c
                JOIN subscriptions s ON c.subscription_id = s.id
                WHERE c.protocol='vless' AND c.status='active'
@@ -2213,6 +2322,7 @@ async def get_user_configs_full(user_id: int) -> list[dict]:
                 s.plan, s.expires_at, s.status AS sub_status,
                 srv.name AS server_name, srv.flag, srv.city,
                 srv.host AS server_host,
+                srv.is_active AS server_active,
                 ROW_NUMBER() OVER (
                     PARTITION BY c.subscription_id, c.protocol ORDER BY c.id
                 ) AS slot_num

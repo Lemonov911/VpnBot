@@ -97,6 +97,9 @@ export interface VpnConfig {
   server_name: string
   server_flag: string
   server_city: string
+  // false = сервер auto-deactivated, конфиг в БД active но реально не работает.
+  // Фронт должен показать warning + кнопку пересоздать.
+  server_active?: boolean
   vless_url:   string | null
 }
 
@@ -180,7 +183,16 @@ export function createVpnInvoiceLavatop(
   return post('/api/vpn/invoice/lavatop', { plan_key: planKey })
 }
 
-export function cancelLavatopRenewal(): Promise<{ ok: boolean; lava_cancel_ok?: boolean; already_cancelled?: boolean }> {
+export function cancelLavatopRenewal(): Promise<{
+  ok?: boolean
+  lava_cancel_ok?: boolean
+  already_cancelled?: boolean
+  // Stars-recurring case: Telegram не даёт API для отмены, фронту нужно
+  // показать инструкцию пользователю чтобы он сам отменил в настройках TG.
+  manual_cancel?: boolean
+  provider?: 'stars'
+  instructions?: string
+}> {
   return post('/api/vpn/subscription/cancel-renewal', {})
 }
 

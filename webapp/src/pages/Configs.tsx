@@ -265,6 +265,14 @@ function SlotCard({
                 ? t('configs_not_activated')
                 : PROTO_HINT[slot.protocol] ?? label}
             </div>
+            {/* Сервер auto-deactivated: конфиг в БД active, но в реале не работает.
+                Подсвечиваем красным чтобы юзер не недоумевал «почему не подключается». */}
+            {!isEmpty && slot.server_active === false && (
+              <div className="text-[11px] text-[var(--tg-theme-destructive-text-color,#ff3b30)] mt-0.5 truncate flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--tg-theme-destructive-text-color,#ff3b30)]" />
+                {t('configs_server_offline' as never)}
+              </div>
+            )}
             {!isEmpty && (slot.rx_bytes > 0 || slot.tx_bytes > 0) && (
               <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5 opacity-70">
                 ↓ {slot.rx_human} · ↑ {slot.tx_human}

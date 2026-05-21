@@ -337,6 +337,11 @@ async def handle_vpn_configs(request: web.Request) -> web.Response:
             "server_name":  c.get("server_name") or "",
             "server_flag":  c.get("flag") or "🌍",
             "server_city":  c.get("city") or "",
+            # server_active: 0 = сервер auto-deactivated (health-check failed),
+            # конфиг в БД active, но реально не работает.  Фронт показывает
+            # warning + кнопку «пересоздать». NULL (legacy слот без server_id)
+            # трактуем как active=true чтобы не пугать ложными warning'ами.
+            "server_active": bool(c.get("server_active") if c.get("server_active") is not None else True),
             "vless_url":    c.get("config_data") if c["protocol"] == "vless" else None,
         })
     return web.json_response(result)
@@ -765,8 +770,17 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     from handlers.vpn import vless_service_for_plan
 
     # For VLESS, resolve speed-tier service from the subscription's plan.
+    # Grace-status guard: юзер в grace активирует empty слот → если выдать
+    # `vless-base` (full speed), он получит unthrottled пир пока остальные
+    # его пиры throttle'нутые в vless-grace (256 кбит/с). Это speed-bypass:
+    # юзер раз в 14 дней grace добавляет «свежий» слот и обходит throttle.
+    # Поэтому в grace — всегда `vless-grace` (port 9453).
+    sub_status = sub.get("status") or ""
     if config["protocol"] == "vless":
-        service_name = vless_service_for_plan(sub["plan"])
+        if sub_status == "grace":
+            service_name = "vless-grace"
+        else:
+            service_name = vless_service_for_plan(sub["plan"])
     else:
         service_name = config["protocol"]
 
@@ -800,6 +814,27 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     # server keeps "winning" the load-balancer for all subsequent peers.
     from services.database import update_server_peer_count
     await update_server_peer_count(server["id"], +1)
+
+    # AWG grace-status throttle: VLESS уже идёт в vless-grace inbound (см.
+    # service_name выше), но AWG не имеет отдельного «grace inbound» —
+    # throttle делается через tc-фильтр на awg0 по dst IP. Без этого
+    # AWG-пиры в grace activate'нутся на full speed (256 кбит/с throttle
+    # применится только при следующем scheduler tick'е grace_expired, что
+    # = bypass на много часов / дней).
+    if sub_status == "grace" and config["protocol"] == "awg" and peer_ip:
+        try:
+            from services.vpnctl_client import throttle_peer
+            await throttle_peer(server, peer_name, "awg", peer_ip, kbps=256)
+            logger.info(
+                "Слот #%d (AWG grace): применён throttle 256 кбит/с на %s",
+                config_id, peer_ip,
+            )
+        except Exception as e:
+            logger.warning(
+                "grace-activate AWG throttle failed cfg=%d ip=%s: %s",
+                config_id, peer_ip, e, exc_info=True,
+            )
+
     logger.info("Слот #%d активирован на %s (%s)", config_id, server["name"], peer_name)
     return web.json_response({"ok": True})
 
@@ -2296,10 +2331,33 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
         return _unauthorized()
 
     sub = await get_active_subscription(user["id"])
-    if sub is None or not sub.get("parent_contract_id"):
+    if sub is None:
         return web.json_response({"error": "Нет активной recurring-подписки"}, status=400)
     if not sub.get("auto_renew"):
+        # Уже отменено ранее — повторный клик; возвращаем ok чтобы UI не ругался.
         return web.json_response({"ok": True, "already_cancelled": True})
+
+    # Stars-recurring sub: auto_renew=1, payment_provider='stars',
+    # parent_contract_id=NULL. Telegram не даёт API для отмены — юзер
+    # должен сам зайти в TG → Настройки → Звёзды → Подписки.
+    # Возвращаем manual_cancel=true чтобы фронт показал инструкцию вместо
+    # успешной отмены (раньше тут был 400 — кнопка ломалась с ошибкой).
+    if sub.get("payment_provider") == "stars":
+        return web.json_response({
+            "manual_cancel": True,
+            "provider": "stars",
+            "instructions": (
+                "Чтобы отменить автопродление через Telegram Stars:\n"
+                "1. Открой Настройки в Telegram\n"
+                "2. Перейди в «Звёзды» → «Активные подписки»\n"
+                "3. Выбери MAX VPN → «Отменить»\n\n"
+                "Подписка останется активной до конца оплаченного периода."
+            ),
+        })
+
+    # Дальше — Lava recurring (требует contract_id).
+    if not sub.get("parent_contract_id"):
+        return web.json_response({"error": "Подписка не recurring"}, status=400)
 
     contract_id = sub["parent_contract_id"]
     # Сначала пытаемся отменить на стороне Lava — без этого она продолжит
@@ -2637,10 +2695,14 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
+            # Включаем grace: тело /sub/{token} возвращает рабочие VLESS URLs
+            # и для grace-подписок (vless-grace inbound, 256 кбит/с). Без
+            # status IN ('active','grace') юзер в grace-периоде получал пустой
+            # Subscription-Userinfo header и Profile-Title без plan_name.
             sub = await (await db.execute(
-                """SELECT id, plan, expires_at FROM subscriptions
-                   WHERE user_id=? AND status='active'
-                   ORDER BY id DESC LIMIT 1""",
+                """SELECT id, plan, expires_at, status FROM subscriptions
+                   WHERE user_id=? AND status IN ('active', 'grace')
+                   ORDER BY created_at DESC LIMIT 1""",
                 (user["id"],),
             )).fetchone()
             if sub:
@@ -2652,6 +2714,10 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                     plan_name = "Пробный 🎁"
                 else:
                     plan_name = plan.get("name", "VPN")
+                # В grace юзер видит, что подписка истекла, но всё ещё работает
+                # на пониженной скорости — даём явный визуальный сигнал в title.
+                if sub["status"] == "grace":
+                    plan_name = f"{plan_name} (grace)"
                 cap_gb = plan.get("soft_cap_gb")
                 if cap_gb:
                     total_bytes = int(cap_gb) * 1024 ** 3
@@ -3217,12 +3283,67 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
     if not ok:
         return web.json_response({"error": "user not found"}, status=404)
 
+    # Если у баненного юзера активная recurring-подписка — нужно остановить
+    # будущие webhook-charges. Иначе банен, но Lava продолжит снимать с него
+    # деньги, а наши webhook'и будут пытаться создавать sub'у баненному.
+    # Конфиги при этом не трогаем — пусть дослужат свой период (админ может
+    # отдельно сделать refund через /api/admin/sub/{id}/refund чтоб отрезать
+    # сразу). Stars-recurring: у Telegram нет API отмены подписки от нашего
+    # имени, поэтому сигналим админу что нужно сделать вручную refund.
+    lava_cancel_attempted = False
+    lava_cancel_ok = False
+    stars_manual_required = False
+    try:
+        sub = await get_active_subscription(user_id)
+    except Exception as e:
+        logger.warning("ban: get_active_subscription failed user=%d: %s", user_id, e)
+        sub = None
+    if sub and sub.get("auto_renew"):
+        provider = sub.get("payment_provider")
+        if provider == "lavatop":
+            from services.database import disable_auto_renew
+            try:
+                await disable_auto_renew(sub["id"])
+            except Exception as e:
+                logger.warning("ban: disable_auto_renew failed sub=%d: %s", sub["id"], e)
+            if sub.get("parent_contract_id") and LAVATOP_API_KEY:
+                from services.lavatop import cancel_subscription as _lava_cancel
+                lava_cancel_attempted = True
+                try:
+                    lava_cancel_ok = await _lava_cancel(
+                        api_key=LAVATOP_API_KEY,
+                        contract_id=sub["parent_contract_id"],
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "ban: Lava cancel failed sub=%d: %s",
+                        sub["id"], e, exc_info=True,
+                    )
+        elif provider == "stars":
+            # Telegram не даёт API для отмены подписки. Админ должен сам
+            # refund'нуть последний charge через /api/admin/sub/{id}/refund —
+            # это автоматически снимет stars-recurring у Telegram.
+            stars_manual_required = True
+
     await audit_log_record(
         admin_id=0, action="user_ban",
         target=f"user:{user_id}",
-        details=f"reason={reason or '-'}",
+        details=(
+            f"reason={reason or '-'} "
+            f"lava_cancel_attempted={lava_cancel_attempted} "
+            f"lava_cancel_ok={lava_cancel_ok} "
+            f"stars_manual_required={stars_manual_required}"
+        ),
     )
-    return web.json_response({"ok": True})
+    return web.json_response({
+        "ok": True,
+        "lava_cancel_attempted": lava_cancel_attempted,
+        "lava_cancel_ok": lava_cancel_ok,
+        # Если True — фронт админки покажет «не забудь сделать refund Stars
+        # подписки чтобы остановить будущие списания».
+        "stars_manual_required": stars_manual_required,
+        "active_sub_id": sub["id"] if sub else None,
+    })
 
 
 async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
@@ -3272,7 +3393,7 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     if not isinstance(days, int) or not (1 <= days <= 365):
         return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
 
-    from services.database import admin_grant_subscription
+    from services.database import admin_grant_subscription, AdminGrantConflict
     try:
         result = await admin_grant_subscription(
             admin_id=admin_id,
@@ -3284,6 +3405,25 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
         )
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
+    except AdminGrantConflict as e:
+        # 409: юзер уже на другом активном плане. Админу нужно сначала
+        # refund'ить существующую sub или сменить план через change-plan
+        # endpoint, иначе создалась бы parallel sub с leak'ом конфигов.
+        return web.json_response({
+            "error": "active_sub_different_plan",
+            "message": (
+                f"У юзера уже активная подписка плана '{e.existing_sub.get('plan')}' "
+                f"(sub id={e.existing_sub.get('id')}, status={e.existing_sub.get('status')}). "
+                f"Сначала refund'и её, потом выдавай '{e.requested_plan}'."
+            ),
+            "existing_sub": {
+                "id": e.existing_sub.get("id"),
+                "plan": e.existing_sub.get("plan"),
+                "status": e.existing_sub.get("status"),
+                "expires_at": e.existing_sub.get("expires_at"),
+            },
+            "requested_plan": e.requested_plan,
+        }, status=409)
     except Exception as e:
         logger.error("admin_grant failed: %s", e, exc_info=True)
         return web.json_response({"error": f"internal: {e}"}, status=500)

@@ -117,7 +117,17 @@ export default function VPN() {
     if (cancelLoading || !sub) return
     setCancelLoading(true)
     try {
-      await cancelLavatopRenewal()
+      const res = await cancelLavatopRenewal()
+      // Stars-recurring: Telegram API не позволяет отменить, показываем
+      // юзеру инструкции как отменить руками в настройках TG. НЕ показываем
+      // success-toast — auto_renew всё ещё true, отмена будет только когда
+      // юзер сам это сделает.
+      if (res?.manual_cancel) {
+        WebApp.HapticFeedback.impactOccurred('light')
+        setCancelModalOpen(false)
+        WebApp.showAlert(res.instructions || t('vpn_cancel_renewal_stars_hint' as never))
+        return
+      }
       WebApp.HapticFeedback.notificationOccurred('success')
       setCancelModalOpen(false)
       // Подтянуть свежее состояние sub — auto_renew теперь false
