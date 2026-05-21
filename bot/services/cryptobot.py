@@ -57,26 +57,6 @@ async def create_invoice(
     return data["result"]
 
 
-async def set_webhook(token: str, url: str) -> bool:
-    try:
-        connector = aiohttp.TCPConnector(ssl=_ssl_ctx())
-        async with aiohttp.ClientSession(connector=connector) as session:
-            resp = await session.post(
-                f"{CRYPTOPAY_URL}/setWebhook",
-                headers={"Crypto-Pay-API-Token": token},
-                json={"url": url},
-            )
-            data = await resp.json()
-        ok = data.get("ok", False)
-        if ok:
-            logger.info("CryptoBot webhook set: %s", url)
-        else:
-            logger.warning("CryptoBot setWebhook failed: %s", data)
-        return ok
-    except Exception as e:
-        logger.warning("CryptoBot setWebhook error (non-critical): %s", e, exc_info=True)
-        return False
-
 
 def verify_signature(body: bytes, signature: str, token: str) -> bool:
     """Verify incoming webhook signature from CryptoBot."""
