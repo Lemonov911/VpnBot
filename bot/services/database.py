@@ -526,6 +526,18 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN reminded_quota_throttled INTEGER NOT NULL DEFAULT 0"
         )
+    # ref_bonus_applied_to_sub_id — id подписки реферрера, которой были
+    # начислены бонусные дни при redeem_referral_bonus. Раньше rollback
+    # реф-бонуса (audit R6) использовал subquery «найди newest active/grace
+    # sub реферрера» — это могло вычесть дни из НЕ той подписки, или из
+    # уже-другого тарифа реферрера. Теперь записываем точный target_sub_id
+    # в момент redeem'а и rollback вычитает только из него.
+    # NULL = legacy row (бонус редимнут до этого fix'a) ИЛИ бонус ещё не
+    # редимнут (тогда дни в users.ref_bonus_days, см. rollback логику).
+    if "ref_bonus_applied_to_sub_id" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN ref_bonus_applied_to_sub_id INTEGER"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -863,11 +875,29 @@ async def mark_subscription_expired_from_grace(subscription_id: int) -> bool:
 async def mark_subscription_refunded(subscription_id: int):
     """Помечает подписку как возвращённую. Используется при Stars refund /
     manual CryptoBot refund. Отличается от 'expired' тем что MRR-аналитика
-    и referral logic не должны считать refunded как реальный доход."""
+    и referral logic не должны считать refunded как реальный доход.
+
+    Также чистит «висящие» поля:
+    - grace_until: refunded sub не должна показываться в admin «в grace до X»
+    - auto_renew, parent_contract_id: даже если Lava cancel API упадёт,
+      локально считаем sub отвязанной — следующий webhook не должен её
+      воскресить через extend
+    - reminder-флаги: не отправлять напоминания про закрытую sub
+    """
     async with _connect() as db:
         await db.execute(
             """UPDATE subscriptions
-               SET status='refunded', refunded_at=CURRENT_TIMESTAMP, pending_plan=NULL
+               SET status='refunded',
+                   refunded_at=CURRENT_TIMESTAMP,
+                   pending_plan=NULL,
+                   grace_until=NULL,
+                   auto_renew=0,
+                   parent_contract_id=NULL,
+                   reminded_3d=0,
+                   reminded_1d=0,
+                   reminded_grace_3d=0,
+                   reminded_renewal_3d=0,
+                   reminded_quota_throttled=0
                WHERE id=?""",
             (subscription_id,),
         )
@@ -959,8 +989,9 @@ async def admin_grant_subscription(
     Все grant'ы пишутся в `payments` с `is_free_grant=1` + `granted_by_admin_id`
     (для биллинг-вьюхи) и в `audit_log` (для compliance).
 
-    Возвращает {ok, subscription_id, expires_at, action} где action — 'extended'
-    или 'created'.
+    Возвращает {ok, subscription_id, expires_at, action, was_grace} где
+    action — 'extended' или 'created', was_grace=True если extend перевёл
+    sub из grace в active (caller должен снять throttle на агентах).
 
     Raises:
         ValueError: bad plan_key / days
@@ -986,6 +1017,7 @@ async def admin_grant_subscription(
     action = "created"
     sub_id: int | None = None
     expires_at_str: str | None = None
+    was_grace = False  # True если extend поднял sub из grace — caller сделает unthrottle
 
     if active and active.get("status") in ("active", "grace"):
         active_plan = active.get("plan") or ""
@@ -997,6 +1029,11 @@ async def admin_grant_subscription(
                 sub_id = extended["id"]
                 expires_at_str = extended["expires_at"]
                 action = "extended"
+                # extend_subscription stash'ит _was_grace во внутреннем поле —
+                # извлекаем чтобы caller (handle_admin_grant_subscription)
+                # мог запустить unthrottle. Без этого extend из grace оставлял
+                # пиров на 256 кбит/с — sub active, но peers throttle'нутые.
+                was_grace = bool(extended.get("_was_grace", False))
         elif active_plan and active_plan != "vpn_trial":
             logger.warning(
                 "admin_grant_subscription: user=%d has active sub=%d plan=%s, "
@@ -1073,6 +1110,7 @@ async def admin_grant_subscription(
         "subscription_id": sub_id,
         "expires_at": expires_at_str,
         "action": action,
+        "was_grace": was_grace,
     }
 
 
@@ -1133,11 +1171,16 @@ async def mark_subscription_grace(subscription_id: int, grace_until: str) -> boo
     """Переводит подписку в grace-period (14 дней низкой скорости).
 
     Возвращает True если переход состоялся; False если строка уже не active
-    (например, recurring renewal продлил подписку прямо перед нами — race).
+    ИЛИ expires_at уже отодвинут в будущее (admin extend / recurring renew
+    мог отработать пока scheduler throttle'ил пиров). Без проверки expires_at
+    sub оказалась бы в противоречивом состоянии: status='grace',
+    grace_until=now+14d, но expires_at в будущем.
     """
     async with _connect() as db:
         cur = await db.execute(
-            "UPDATE subscriptions SET status='grace', grace_until=? WHERE id=? AND status='active'",
+            "UPDATE subscriptions SET status='grace', grace_until=? "
+            "WHERE id=? AND status='active' "
+            "AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now')",
             (grace_until, subscription_id),
         )
         await db.commit()
@@ -1317,16 +1360,28 @@ async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
 
 
 async def extend_subscription_expires_at(
-    sub_id: int, new_expires_at: str, *, reset_status: bool = True
+    sub_id: int, days: int, *, reset_status: bool = True
 ) -> bool | None:
-    """Продлевает подписку (Lava recurring success).  Сбрасывает status='active'
-    если он был 'grace' — recurring деньги пришли вовремя или с задержкой,
-    значит юзер хочет оставаться на VPN.  Сбрасываются все reminded_* флаги.
+    """Продлевает подписку на `days` дней от max(expires_at, now). Атомарно.
+
+    РАНЬШЕ: caller сам вычислял `new_expires = max(cur, now) + days` и
+    передавал isoformat. При двух concurrent renewal-webhook'ах их max'ы
+    основывались на одном и том же stale `expires_at` → один из них
+    overwrite'ил другой меньшим значением (lost update).
+
+    ТЕПЕРЬ: вся арифметика max()/+days в SQL. Два параллельных вызова дадут
+    одинаковый итог только если они оба сработали с одним базовым expires_at;
+    последовательный — каждый раз даст на `days` больше предыдущего.
+
+    Сбрасывает status='active' если он был 'grace' — recurring деньги пришли
+    вовремя или с задержкой, значит юзер хочет оставаться на VPN. Сбрасываются
+    все reminded_* флаги.
 
     Возвращает True если sub была в 'grace' (caller должен снять throttle),
     False если была active, None если sub уже expired или не найдена —
     UPDATE не выполнен (zombie-guard: не воскрешаем expired sub).
     """
+    days_int = int(days)  # defensive cast: f-string injection — safe только если int
     async with _connect() as db:
         async with db.execute(
             "SELECT status FROM subscriptions WHERE id=?", (sub_id,)
@@ -1336,19 +1391,42 @@ async def extend_subscription_expires_at(
             return None  # sub expired или not found — не воскрешаем
         was_grace = row[0] == "grace"
         if reset_status:
-            await db.execute(
-                "UPDATE subscriptions SET expires_at=?, status='active', "
-                "grace_until=NULL, reminded_3d=0, reminded_1d=0, "
-                "reminded_renewal_3d=0, reminded_grace_3d=0 "
-                "WHERE id=? AND status IN ('active', 'grace')",
-                (new_expires_at, sub_id),
+            cur_ = await db.execute(
+                f"""UPDATE subscriptions
+                    SET expires_at = datetime(
+                        CASE
+                            WHEN datetime(REPLACE(expires_at, 'T', ' ')) > datetime('now')
+                            THEN REPLACE(expires_at, 'T', ' ')
+                            ELSE datetime('now')
+                        END,
+                        '+{days_int} days'
+                    ),
+                    status='active',
+                    grace_until=NULL,
+                    reminded_3d=0, reminded_1d=0,
+                    reminded_renewal_3d=0, reminded_grace_3d=0
+                    WHERE id=? AND status IN ('active', 'grace')""",
+                (sub_id,),
             )
         else:
-            await db.execute(
-                "UPDATE subscriptions SET expires_at=?, reminded_renewal_3d=0 "
-                "WHERE id=?",
-                (new_expires_at, sub_id),
+            cur_ = await db.execute(
+                f"""UPDATE subscriptions
+                    SET expires_at = datetime(
+                        CASE
+                            WHEN datetime(REPLACE(expires_at, 'T', ' ')) > datetime('now')
+                            THEN REPLACE(expires_at, 'T', ' ')
+                            ELSE datetime('now')
+                        END,
+                        '+{days_int} days'
+                    ),
+                    reminded_renewal_3d=0
+                    WHERE id=?""",
+                (sub_id,),
             )
+        if (cur_.rowcount or 0) == 0:
+            # Sub изменился между SELECT и UPDATE (race с refund/expire) —
+            # не воскрешаем, возвращаем None как при изначально expired sub.
+            return None
         await db.commit()
     return was_grace
 
@@ -1375,14 +1453,25 @@ async def get_recurring_renewal_due_soon(days_before: int = 3) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def mark_renewal_reminded(sub_id: int):
-    """Ставит reminded_renewal_3d=1 чтобы не слать второе напоминание."""
+async def mark_renewal_reminded(sub_id: int) -> bool:
+    """Ставит reminded_renewal_3d=1 только если sub всё ещё active/grace с
+    auto_renew=1 и expires_at в окне напоминания (3 дня).
+
+    Race: между `get_recurring_renewal_due_soon` и mark'ом юзер мог отменить
+    auto-renew или Lava recurring мог продлить sub. extend_subscription и
+    extend_subscription_expires_at сбрасывают reminded_renewal_3d=0 — если
+    мы безусловно поставим обратно =1, reminder для следующего auto-charge
+    не сработает.
+    """
     async with _connect() as db:
-        await db.execute(
-            "UPDATE subscriptions SET reminded_renewal_3d=1 WHERE id=?",
+        cur = await db.execute(
+            """UPDATE subscriptions SET reminded_renewal_3d=1
+               WHERE id=? AND auto_renew=1 AND status IN ('active','grace')
+                 AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now', '+3 days')""",
             (sub_id,),
         )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def disable_auto_renew(sub_id: int):
@@ -1570,11 +1659,20 @@ async def revoke_config(config_id: int):
 
 async def get_subscription_by_id(sub_id: int) -> dict | None:
     """Возвращает подписку по id или None. Используется для проверки
-    user_id при апгрейде (sec audit H6)."""
+    user_id при апгрейде (sec audit H6).
+
+    Поля `auto_renew`, `payment_provider`, `parent_contract_id` и
+    `refunded_at` нужны refund-каскаду в `handle_admin_sub_refund`
+    (Lava-cancel ветка) и `handle_admin_user_ban` (L9). Без них
+    `sub.get(...)` тихо возвращал None и Lava-recurring оставалась
+    активной после refund'а.
+    """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id, user_id, plan, status, expires_at, grace_until, pending_plan FROM subscriptions WHERE id=?",
+            "SELECT id, user_id, plan, status, expires_at, grace_until, pending_plan, "
+            "auto_renew, payment_provider, parent_contract_id, refunded_at "
+            "FROM subscriptions WHERE id=?",
             (sub_id,),
         ) as cur:
             row = await cur.fetchone()
@@ -1809,11 +1907,28 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def mark_reminded(sub_id: int, days: int):
+async def mark_reminded(sub_id: int, days: int) -> bool:
+    """Ставит reminded_3d/reminded_1d=1 только если sub всё ещё в окне напоминания.
+
+    Race: между `get_subscriptions_expiring_soon` и отправкой reminder'а админ
+    мог extend'нуть sub (extend_subscription сбрасывает reminded_*=0). Без
+    проверки expires_at этот UPDATE поставил бы reminded_3d=1 на свежепродлённой
+    sub → legitimate reminder для NEXT cycle подавился бы.
+
+    Returns: True если строка обновлена, False если sub больше не в окне
+    (caller может проигнорировать — reminder следующего цикла теперь сработает).
+    """
     col = "reminded_3d" if days >= 2 else "reminded_1d"
+    modifier = f"+{int(days)} days"  # int() — защита от SQL-injection через days
     async with _connect() as db:
-        await db.execute(f"UPDATE subscriptions SET {col}=1 WHERE id=?", (sub_id,))
+        cur = await db.execute(
+            f"""UPDATE subscriptions SET {col}=1
+                WHERE id=? AND status='active'
+                  AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now', '{modifier}')""",
+            (sub_id,),
+        )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def get_subscriptions_grace_ending_soon(days: int = 3) -> list[dict]:
@@ -1834,12 +1949,19 @@ async def get_subscriptions_grace_ending_soon(days: int = 3) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def mark_grace_reminded(sub_id: int):
+async def mark_grace_reminded(sub_id: int) -> bool:
+    """Ставит reminded_grace_3d=1 только если sub всё ещё в grace (admin не
+    extend'нул её обратно в active между select'ом и mark'ом). Иначе
+    extend сбросил reminded_grace_3d=0, а мы бы заглушили reminder следующего
+    grace-цикла.
+    """
     async with _connect() as db:
-        await db.execute(
-            "UPDATE subscriptions SET reminded_grace_3d=1 WHERE id=?", (sub_id,)
+        cur = await db.execute(
+            "UPDATE subscriptions SET reminded_grace_3d=1 WHERE id=? AND status='grace'",
+            (sub_id,),
         )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def renew_subscription_from_grace(
@@ -2087,13 +2209,25 @@ async def get_active_vless_configs_with_plan() -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def update_config_data(config_id: int, config_data: str):
+async def update_config_data(config_id: int, config_data: str) -> bool:
+    """Обновляет config_data только если слот ещё active.
+
+    Защита от race: refund/revoke reset'нул слот в status='empty' с
+    config_data=NULL ПОКА вызывающий код (например _apply_quota_throttle или
+    grace move) держит локальную копию старого config_data и вычисляет новый.
+    Без AND status='active' этот UPDATE воскресил бы пустой слот с устаревшим
+    config_data, оставив зомби-запись в БД.
+
+    Returns: True если строка обновлена, False если слот уже не active
+    (caller может проигнорировать — обычно это значит refund/revoke прошёл).
+    """
     async with _connect() as db:
-        await db.execute(
-            "UPDATE configs SET config_data=? WHERE id=?",
+        cur = await db.execute(
+            "UPDATE configs SET config_data=? WHERE id=? AND status='active'",
             (config_data, config_id),
         )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
@@ -2580,11 +2714,15 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
         )
         # Ставим redeemed_at на все subs где этот юзер был реферрером и бонус
         # ещё не помечен redeemed. Для rollback логики — отличить bank vs sub.
+        # Параллельно сохраняем КУДА именно ушли дни (sub["id"] реферрера) —
+        # rollback_referral_bonus вычитает дни именно из этой подписки, без
+        # subquery «newest active/grace» который мог промахнуться (audit R6).
         await db.execute(
             """UPDATE subscriptions
-               SET ref_bonus_redeemed_at=CURRENT_TIMESTAMP
+               SET ref_bonus_redeemed_at=CURRENT_TIMESTAMP,
+                   ref_bonus_applied_to_sub_id=?
                WHERE ref_bonus_awarded_to=? AND ref_bonus_redeemed_at IS NULL""",
-            (user_id,),
+            (sub["id"], user_id),
         )
         # Достаём новый expires_at для возврата UI
         async with db.execute(
@@ -2689,17 +2827,36 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
         # Шаг 3: claim успешен, делаем reverse — куда именно зависит от redeemed_at
         if was_redeemed:
             # Бонус был активирован → сидит в sub.expires_at реферрера.
-            # Учитываем grace тоже — бонус мог быть редимнут когда sub был
-            # active, потом ушёл в grace; всё равно sub та же, expires_at там же.
-            await db.execute(
-                """UPDATE subscriptions SET expires_at=datetime(expires_at, ?)
-                   WHERE id = (
-                       SELECT id FROM subscriptions
-                       WHERE user_id=? AND status IN ('active', 'grace')
-                       ORDER BY id DESC LIMIT 1
-                   )""",
-                (f"-{days} days", referrer_id),
-            )
+            # Используем сохранённый ref_bonus_applied_to_sub_id (audit R6),
+            # а не subquery «newest active/grace» — раньше это могло вычесть
+            # дни из НЕ той подписки реферрера (e.g. если он купил новый план
+            # после redeem'а).
+            async with db.execute(
+                "SELECT ref_bonus_applied_to_sub_id FROM subscriptions WHERE id=?",
+                (refunded_sub_id,),
+            ) as cur:
+                target_row = await cur.fetchone()
+            target_sub_id = target_row["ref_bonus_applied_to_sub_id"] if target_row else None
+            if target_sub_id is None:
+                # Legacy row: redeemed_at стоит, но ref_bonus_applied_to_sub_id
+                # не записан (бонус редимнут до R6 migration). Скипаем
+                # decrement — guess'ить какую sub шортить рискованно, проще
+                # дать рефереру оставить эти дни (это меньше зло чем урезать
+                # не ту подписку). Логируем чтобы админ видел.
+                logger.warning(
+                    "rollback_referral_bonus sub=%d: legacy row, "
+                    "ref_bonus_applied_to_sub_id IS NULL but redeemed_at set — "
+                    "skipping expires_at decrement for referrer=%d days=%d",
+                    refunded_sub_id, referrer_id, days,
+                )
+            else:
+                # Decrement только если target sub ещё active/grace.
+                # Если target expired/refunded — дни уже «сгорели», ничего не делаем.
+                await db.execute(
+                    "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) "
+                    "WHERE id=? AND status IN ('active', 'grace')",
+                    (f"-{days} days", target_sub_id),
+                )
         else:
             # Бонус в банке pending → вычитаем оттуда
             await db.execute(

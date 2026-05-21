@@ -348,13 +348,10 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
 
     # Extend expires_at от max(now, current) + plan duration. Если sub был в grace
     # или просрочен — extend от now (не теряем неоплаченное время).
-    try:
-        cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
-    except Exception:
-        cur_expires = datetime.utcnow()
-    base = max(cur_expires, datetime.utcnow())
-    new_expires = base + timedelta(days=plan["duration_days"])
-    extended = await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+    # Арифметика max()/+days делается АТОМАРНО внутри SQL — иначе два параллельных
+    # renewal webhook'а оба прочитали бы stale expires_at и второй overwrite'ил
+    # бы первого (lost update).
+    extended = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
     if extended is None:
         # Sub перешла в expired до нашего extend (TOCTOU со scheduler'ом).
         # Fallback: обрабатываем как первый платёж — создаём новую sub.
@@ -376,11 +373,22 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
             name=f"unthrottle_stars_sub{sub['id']}",
         )
 
+    # Fetch updated expires_at для отображения юзеру (SQL посчитал max+days
+    # атомарно — пересчитать в Python нельзя без race).
+    from services.database import get_subscription_by_id
+    updated_sub = await get_subscription_by_id(sub["id"])
+    try:
+        new_expires_dt = datetime.fromisoformat(
+            (updated_sub.get("expires_at") if updated_sub else "") or datetime.utcnow().isoformat()
+        )
+    except Exception:
+        new_expires_dt = datetime.utcnow() + timedelta(days=plan["duration_days"])
+
     try:
         await bot.send_message(
             user_id,
             f"🔁 <b>Подписка продлена автоматически</b>\n\n"
-            f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>.\n"
+            f"VPN {plan['name']} активен до <b>{new_expires_dt.strftime('%d.%m.%Y')}</b>.\n"
             f"Списано: <b>{payment.total_amount} ⭐</b>",
             parse_mode="HTML",
         )

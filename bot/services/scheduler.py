@@ -380,14 +380,32 @@ async def _process_expired_subscriptions(bot: Bot):
 
         transitioned = await mark_subscription_grace(sub_id, grace_until)
         if not transitioned:
-            # Race: recurring webhook (или admin grant) продлил подписку
-            # пока мы throttle'или peers. UPDATE … WHERE status='active' не
-            # сработал → DB показывает active, а пиры всё ещё на 256 кбит/с.
-            # Откатываем throttle, иначе paying user залип на medium speed.
-            logger.warning(
-                "Race detected: sub %d no longer active after throttle, rolling back",
-                sub_id,
-            )
+            # Race: status уже не active ИЛИ expires_at был отодвинут в
+            # будущее пока мы throttle'или peers. Возможные сценарии:
+            #   1) recurring webhook / admin grant продлил sub → status='active',
+            #      expires_at в будущем — нужен unthrottle, paying user не должен
+            #      висеть на 256 кбит/с.
+            #   2) refund прошёл → status='refunded', configs reset'нуты в empty.
+            #      unthrottle всё равно полезен (tc filter мог остаться по IP
+            #      несмотря на пустой config_data); unthrottle_sub_configs
+            #      идемпотентен и просто no-op для отсутствующих peers.
+            # Логируем отдельно чтобы post-mortem различал «забыл unthrottle
+            # после refund» vs «paying user залип на medium speed».
+            from services.database import get_subscription_by_id
+            current_sub = await get_subscription_by_id(sub_id)
+            cur_status = current_sub.get("status") if current_sub else "missing"
+            if cur_status == "refunded":
+                logger.info(
+                    "Race: sub %d refunded during throttle, attempting idempotent unthrottle "
+                    "(configs уже отозваны refund-flow, но tc-filter мог остаться)",
+                    sub_id,
+                )
+            else:
+                logger.warning(
+                    "Race detected: sub %d no longer active after throttle "
+                    "(status=%s), rolling back",
+                    sub_id, cur_status,
+                )
             from services.grace import unthrottle_sub_configs
             _spawn_bg(
                 unthrottle_sub_configs(sub_id, user_id, plan_key),

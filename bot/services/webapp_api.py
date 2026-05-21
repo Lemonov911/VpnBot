@@ -80,6 +80,24 @@ def _spawn_bg(coro, *, name: str | None = None) -> asyncio.Task:
     return task
 
 
+# Per-server lock для handle_admin_migrate_configs. Без него два параллельных
+# admin-call'а на один сервер обработали бы те же configs дважды:
+# - первый успел provision_peer на новом сервере + activate_config_slot
+# - второй прочитал get_active_configs_for_migration ещё ДО первого UPDATE'а
+#   (snapshot был старый) → второй второй раз provision'ит того же юзера,
+#   создаёт duplicate peer, потом activate_config_slot overwrite'ит первый
+#   результат — старая запись висит orphan на новом сервере.
+# pre-check `lock.locked()` отдаёт 409 моментально вместо ожидания в очереди
+# (миграция может идти минутами).
+_migrate_locks: dict[int, asyncio.Lock] = {}
+
+
+def _migrate_lock_for(server_id: int) -> asyncio.Lock:
+    if server_id not in _migrate_locks:
+        _migrate_locks[server_id] = asyncio.Lock()
+    return _migrate_locks[server_id]
+
+
 # Тарифы — services.plans (единственный источник истины).
 from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
 
@@ -1817,17 +1835,14 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         # Продлеваем от max(now, current_expires_at) + duration — если был
         # grace и юзер просрочил, expires_at в прошлом → продлеваем от now,
         # иначе от старого expires_at (не теряем неиспользованные дни).
-        try:
-            cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
-        except Exception:
-            cur_expires = datetime.utcnow()
-        base = max(cur_expires, datetime.utcnow())
-        new_expires = base + timedelta(days=plan["duration_days"])
+        # Арифметика max()/+days делается АТОМАРНО внутри SQL — иначе два
+        # параллельных webhook'а на один parent_contract_id оба прочитали бы
+        # один stale expires_at и второй overwrite'ил бы первого (lost update).
         # extend_subscription_expires_at переключает status grace→active атомарно
         # и возвращает флаг — использовать его вместо pre-fetch'нутого sub.status,
         # чтобы избежать race со scheduler'ом между чтением и записью.
         # None = sub уже expired (webhook пришёл слишком поздно) — не воскрешаем.
-        was_grace = await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+        was_grace = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
 
         if was_grace is None:
             logger.error(
@@ -1856,11 +1871,22 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
                 name=f"unthrottle_lava_sub{sub['id']}",
             )
 
+        # Fetch updated expires_at для отображения юзеру (SQL посчитал max+days
+        # атомарно — пересчитать в Python нельзя без race).
+        from services.database import get_subscription_by_id
+        updated_sub = await get_subscription_by_id(sub["id"])
+        try:
+            new_expires_dt = datetime.fromisoformat(
+                (updated_sub.get("expires_at") if updated_sub else "") or datetime.utcnow().isoformat()
+            )
+        except Exception:
+            new_expires_dt = datetime.utcnow() + timedelta(days=plan["duration_days"])
+
         try:
             await bot.send_message(
                 sub["user_id"],
                 f"🔁 <b>Подписка продлена автоматически</b>\n\n"
-                f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>."
+                f"VPN {plan['name']} активен до <b>{new_expires_dt.strftime('%d.%m.%Y')}</b>."
                 + ("\n⚡ Полная скорость восстановлена." if was_grace else ""),
                 parse_mode="HTML",
             )
@@ -3152,14 +3178,33 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         return web.json_response({"error": "sub not found"}, status=404)
 
     # Получаем payment_id отдельным запросом — get_subscription_by_id его не возвращает.
+    # R8: для Stars refund приоритизируем ПОСЛЕДНИЙ Stars-charge для этой
+    # подписки (могла быть doplata за upgrade), потом фолбэчим на оригинальный
+    # subscriptions.payment_id. Если оба отличаются — это upgrade-сценарий,
+    # автоматом возвращается только последний; админ видит warning.
     import aiosqlite
     from services.database import DB_PATH
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
+            "SELECT tx_id FROM payments WHERE subscription_id=? AND method='stars' "
+            "AND COALESCE(refunded_at, '') = '' "
+            "ORDER BY id DESC LIMIT 1",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            latest_stars_tx = row[0] if row else None
+        async with db.execute(
             "SELECT payment_id FROM subscriptions WHERE id=?", (sub_id,),
         ) as cur:
             row = await cur.fetchone()
-            payment_id = row[0] if row else None
+            sub_payment_id = row[0] if row else None
+    payment_id = latest_stars_tx or sub_payment_id
+    if latest_stars_tx and sub_payment_id and latest_stars_tx != sub_payment_id:
+        logger.warning(
+            "Refund sub=%d: refunding latest Stars charge=%s but sub has original=%s "
+            "— upgrade scenario, additional charges may need manual refund",
+            sub_id, latest_stars_tx, sub_payment_id,
+        )
 
     # Определяем provider по префиксу payment_id.  Stars = всё что НЕ
     # crypto_/oxapay_/lavatop_/free_/admin_grant_/trial_ — не Stars-платёж,
@@ -3188,8 +3233,20 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
                     {"error": f"Stars refund failed: {e}"}, status=502,
                 )
 
-    await mark_subscription_refunded(sub_id)
-    # Откат реф-бонуса если он был начислен на эту подписку
+    # R4: trial refund — это не «вернуть деньги» (денег не было), а
+    # «откатить triаl чтобы юзер мог попробовать снова». mark_refunded
+    # перевело бы sub в status='refunded' + установило refunded_at —
+    # cooldown-фильтр триала смотрит на «есть ли expired-trial за последние
+    # 30 дней», и refunded считался бы expired-like → юзер заблокирован на
+    # месяц после провалившегося триала. mark_subscription_trial_rolled_back
+    # ставит trial_rolled_back=1 чтобы cooldown НЕ применялся.
+    if payment_id and payment_id.startswith("trial_"):
+        from services.database import mark_subscription_trial_rolled_back
+        await mark_subscription_trial_rolled_back(sub_id)
+    else:
+        await mark_subscription_refunded(sub_id)
+    # Откат реф-бонуса если он был начислен на эту подписку.
+    # Для trial это no-op (trial не даёт реф-бонус), но вызов безвреден.
     await rollback_referral_bonus(sub_id)
 
     # Lava-recurring: вырубаем auto_renew в нашей БД + дёргаем Lava cancel API.
@@ -3231,12 +3288,36 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
                 sub_id, revoked, failed)
 
     # Источник платежа — для audit log + UI чтобы админ видел корректный канал.
+    # R5: добавлены admin_grant_ и trial_ — раньше они мис-лейблились как «stars»
+    # и админ-UI пытался показать «Stars refund successful» для бесплатной выдачи.
     payment_source = "stars"
     if payment_id:
         if payment_id.startswith("oxapay_"): payment_source = "oxapay"
         elif payment_id.startswith("lavatop_"): payment_source = "lavatop"
         elif payment_id.startswith("crypto_"): payment_source = "cryptobot"
         elif payment_id.startswith("free_"): payment_source = "free"
+        elif payment_id.startswith("admin_grant_"): payment_source = "admin_grant"
+        elif payment_id.startswith("trial_"): payment_source = "trial"
+
+    # R2/R3: Lava recurring — деньги НЕ возвращаются автоматически, только
+    # cancel API. Собираем список всех Lava-charges чтобы UI показал админу
+    # «вы должны вернуть N платежей вручную в Lava-кабинете».
+    lava_recurring_charges: list[dict] = []
+    if payment_source == "lavatop":
+        import aiosqlite as _aiosqlite_local
+        async with _aiosqlite_local.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT tx_id, amount_usd, created_at FROM payments "
+                "WHERE subscription_id=? AND method='lavatop' ORDER BY id DESC",
+                (sub_id,),
+            ) as cur:
+                rows = await cur.fetchall()
+                for r in rows:
+                    lava_recurring_charges.append({
+                        "tx_id": r[0],
+                        "amount": r[1],
+                        "created_at": r[2],
+                    })
 
     await audit_log_record(
         admin_id=0, action="sub_refund",
@@ -3255,7 +3336,24 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         "configs_revoke_failed": failed,
         # backwards-compat: was_crypto был только CryptoBot. Если фронт
         # ориентируется на этот флаг — он по-прежнему получит ожидаемое.
-        "was_crypto": payment_id and payment_id.startswith("crypto_"),
+        # NB: при payment_source ∈ {admin_grant, trial} этот флаг = False
+        # как и раньше — фронту нечего возвращать, никаких денег нет.
+        "was_crypto": bool(payment_id and payment_id.startswith("crypto_")),
+        # R2/R3: Lava UI-context. Админ видит «надо вернуть N платежей вручную»
+        # вместе со списком конкретных tx_id из Lava-кабинета.
+        "lava_manual_refund_required": payment_source == "lavatop",
+        "lava_recurring_charges": lava_recurring_charges,
+        "lava_cancel_attempted": (
+            payment_source == "lavatop" and bool(sub.get("parent_contract_id"))
+        ),
+        # R8: upgrade-warning — для Stars если refund'ится не оригинальный
+        # charge (была doplata за upgrade). Админ видит оба tx_id и понимает
+        # что один из них надо refund'нуть вручную.
+        "stars_refunded_tx": latest_stars_tx if stars_refund_done else None,
+        "stars_original_tx": sub_payment_id,
+        "stars_multiple_charges": bool(
+            latest_stars_tx and sub_payment_id and latest_stars_tx != sub_payment_id
+        ),
     })
 
 
@@ -3427,6 +3525,16 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("admin_grant failed: %s", e, exc_info=True)
         return web.json_response({"error": f"internal: {e}"}, status=500)
+
+    # Если extend поднял sub из grace — снять throttle на агентах (AWG tc +
+    # VLESS inbound). Без этого DB показывает active, а пиры остаются на
+    # 256 кбит/с — зеркало того что делает handle_admin_sub_extend.
+    if result.get("was_grace") and result.get("subscription_id"):
+        from services.grace import unthrottle_sub_configs
+        _spawn_bg(
+            unthrottle_sub_configs(result["subscription_id"], target_id, plan_key),
+            name=f"unthrottle_grant_sub{result['subscription_id']}",
+        )
 
     # Best-effort notify юзера. Если он не /start'нул бота — get 403/400 и
     # игнорируем (юзер увидит подписку при первом /start).
@@ -3601,9 +3709,10 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
     from services.database import (
         get_server_by_id, get_active_configs_for_migration,
         get_best_server, activate_config_slot, reset_config_slot,
-        update_server_peer_count, audit_log_record,
+        update_server_peer_count, audit_log_record, DB_PATH,
     )
     from services.vpnctl_client import provision_peer, revoke_peer, VpnctlError
+    import aiosqlite
 
     dead_server = await get_server_by_id(server_id)
     if not dead_server:
@@ -3611,94 +3720,134 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
     if dead_server.get("is_active"):
         return web.json_response({"error": "drain server first (is_active=1)"}, status=400)
 
-    configs = await get_active_configs_for_migration(server_id)
-    bot: Bot = request.app["bot"]
+    # Pre-check + acquire per-server lock. lock.locked() возвращает 409
+    # моментально без блокировки в очереди — миграция длится минутами,
+    # admin не должен фризиться в ожидании первого вызова.
+    lock = _migrate_lock_for(server_id)
+    if lock.locked():
+        return web.json_response(
+            {"error": "Migration already in progress for this server"},
+            status=409,
+        )
 
-    migrated = 0
-    reset_vless = 0
-    failed = 0
-    failures: list[dict] = []
-    notified: set[int] = set()
+    async with lock:
+        configs = await get_active_configs_for_migration(server_id)
+        bot: Bot = request.app["bot"]
 
-    for cfg in configs:
-        config_id = cfg["id"]
-        user_id   = cfg["user_id"]
-        protocol  = cfg["protocol"]
+        migrated = 0
+        reset_vless = 0
+        skipped = 0  # configs уже мигрированные параллельным вызовом
+        failed = 0
+        failures: list[dict] = []
+        notified: set[int] = set()
 
-        try:
-            if protocol == "vless":
-                # Multi-location: drop this dead-server record; other-server copies are intact.
-                await reset_config_slot(config_id)
+        for cfg in configs:
+            config_id = cfg["id"]
+            user_id   = cfg["user_id"]
+            protocol  = cfg["protocol"]
+
+            # Idempotency check: re-fetch server_id для config'а ДО любых
+            # внешних вызовов. Параллельный migrate-run (или admin/refund)
+            # мог уже переместить config на другой сервер; повторный
+            # provision_peer создаст duplicate peer + activate_config_slot
+            # overwrite'ит результат первого run'а → orphan peer навсегда.
+            try:
+                async with aiosqlite.connect(DB_PATH) as _db:
+                    async with _db.execute(
+                        "SELECT server_id, status FROM configs WHERE id=?",
+                        (config_id,),
+                    ) as _cur:
+                        _row = await _cur.fetchone()
+                current_server_id = _row[0] if _row else None
+                current_status = _row[1] if _row else None
+            except Exception as _e:
+                logger.warning("migrate idempotency-check failed cfg=%d: %s", config_id, _e)
+                current_server_id = None
+                current_status = None
+
+            if current_server_id != server_id or current_status != "active":
+                logger.info(
+                    "migrate skip cfg=%d: уже мигрирован (server=%s status=%s, ожидали server=%d active)",
+                    config_id, current_server_id, current_status, server_id,
+                )
+                skipped += 1
+                continue
+
+            try:
+                if protocol == "vless":
+                    # Multi-location: drop this dead-server record; other-server copies are intact.
+                    await reset_config_slot(config_id)
+                    await update_server_peer_count(server_id, -1)
+                    reset_vless += 1
+                    continue
+
+                # AWG / plain WG — single-server, must migrate
+                target = await get_best_server(protocol)
+                if not target or target["id"] == server_id:
+                    failures.append({"config_id": config_id, "error": "no available server"})
+                    failed += 1
+                    continue
+
+                label = f"user_{user_id}_{protocol}_{config_id}"
+                peer  = await provision_peer(target, label, protocol)
+                peer_ip = (peer.extra or {}).get("assigned_ip", "")
+
+                # Best-effort: remove old peer from dead server
+                old_peer_id = cfg.get("wg_pubkey") or ""
+                if old_peer_id:
+                    await revoke_peer(dead_server, old_peer_id, protocol)
+
+                await activate_config_slot(
+                    config_id, label, peer.config,
+                    server_id=target["id"],
+                    wg_pubkey=peer.id,
+                    assigned_ip=peer_ip,
+                )
+                await update_server_peer_count(target["id"], +1)
                 await update_server_peer_count(server_id, -1)
-                reset_vless += 1
-                continue
+                migrated += 1
 
-            # AWG / plain WG — single-server, must migrate
-            target = await get_best_server(protocol)
-            if not target or target["id"] == server_id:
-                failures.append({"config_id": config_id, "error": "no available server"})
+                if user_id not in notified:
+                    notified.add(user_id)
+                    srv_name = " ".join(filter(None, [
+                        (target.get("flag") or "").strip(),
+                        (target.get("name") or "").strip(),
+                    ])) or f"Server {target['id']}"
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"🔄 <b>Ваш VPN перенесён</b>\n\n"
+                            f"Сервер заменён на {srv_name}.\n"
+                            f"Скачайте обновлённый конфиг в "
+                            f"<a href=\"{WEBAPP_URL}\">приложении</a>.",
+                            parse_mode="HTML",
+                            disable_web_page_preview=True,
+                        )
+                    except Exception as notify_err:
+                        logger.warning("migrate notify user=%d: %s", user_id, notify_err)
+
+            except VpnctlError as e:
+                logger.warning("migrate config=%d: %s", config_id, e)
                 failed += 1
-                continue
+                if len(failures) < 10:
+                    failures.append({"config_id": config_id, "error": str(e)[:200]})
+            except Exception as e:
+                logger.error("migrate config=%d: %s", config_id, e, exc_info=True)
+                failed += 1
+                if len(failures) < 10:
+                    failures.append({"config_id": config_id, "error": str(e)[:200]})
 
-            label = f"user_{user_id}_{protocol}_{config_id}"
-            peer  = await provision_peer(target, label, protocol)
-            peer_ip = (peer.extra or {}).get("assigned_ip", "")
-
-            # Best-effort: remove old peer from dead server
-            old_peer_id = cfg.get("wg_pubkey") or ""
-            if old_peer_id:
-                await revoke_peer(dead_server, old_peer_id, protocol)
-
-            await activate_config_slot(
-                config_id, label, peer.config,
-                server_id=target["id"],
-                wg_pubkey=peer.id,
-                assigned_ip=peer_ip,
-            )
-            await update_server_peer_count(target["id"], +1)
-            await update_server_peer_count(server_id, -1)
-            migrated += 1
-
-            if user_id not in notified:
-                notified.add(user_id)
-                srv_name = " ".join(filter(None, [
-                    (target.get("flag") or "").strip(),
-                    (target.get("name") or "").strip(),
-                ])) or f"Server {target['id']}"
-                try:
-                    await bot.send_message(
-                        user_id,
-                        f"🔄 <b>Ваш VPN перенесён</b>\n\n"
-                        f"Сервер заменён на {srv_name}.\n"
-                        f"Скачайте обновлённый конфиг в "
-                        f"<a href=\"{WEBAPP_URL}\">приложении</a>.",
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                except Exception as notify_err:
-                    logger.warning("migrate notify user=%d: %s", user_id, notify_err)
-
-        except VpnctlError as e:
-            logger.warning("migrate config=%d: %s", config_id, e)
-            failed += 1
-            if len(failures) < 10:
-                failures.append({"config_id": config_id, "error": str(e)[:200]})
-        except Exception as e:
-            logger.error("migrate config=%d: %s", config_id, e, exc_info=True)
-            failed += 1
-            if len(failures) < 10:
-                failures.append({"config_id": config_id, "error": str(e)[:200]})
-
-    await audit_log_record(
-        admin_id=0, action="server_migrate",
-        target=f"server:{server_id}",
-        details=f"migrated={migrated} reset_vless={reset_vless} failed={failed}",
-    )
+        await audit_log_record(
+            admin_id=0, action="server_migrate",
+            target=f"server:{server_id}",
+            details=f"migrated={migrated} reset_vless={reset_vless} skipped={skipped} failed={failed}",
+        )
 
     return web.json_response({
         "ok": True,
         "migrated": migrated,
         "reset_vless": reset_vless,
+        "skipped": skipped,
         "failed": failed,
         "failures": failures,
     })
