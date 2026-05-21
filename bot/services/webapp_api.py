@@ -38,6 +38,7 @@ from config import (
     OXAPAY_API_KEY, OXAPAY_ENABLED,
 )
 from services.auth import verify_init_data
+from services.i18n_plural import plural_ru, DAYS
 import services.esim_api as esim
 from services.database import (
     get_user_configs, get_user_configs_full, get_config_by_id, activate_config_slot,
@@ -78,6 +79,21 @@ def _spawn_bg(coro, *, name: str | None = None) -> asyncio.Task:
     _BG_TASKS.add(task)
     task.add_done_callback(_on_bg_done)
     return task
+
+
+def _safe_header(value: str) -> str:
+    """Percent-encode non-ASCII chars for HTTP header values.
+
+    RFC 7230 restricts header values to ISO-8859-1. Cyrillic + emoji aren't
+    in that set: aiohttp on Python 3.12+ refuses to encode them (raises
+    UnicodeEncodeError mid-response), older versions silently truncate.
+
+    Happ/Streisand tolerate percent-encoded UTF-8 in Profile-Title and
+    decode it back for display. Other clients (sing-box) just show the
+    percent-encoded form, which is ugly but doesn't break the subscription.
+    """
+    from urllib.parse import quote as _urlquote
+    return _urlquote(value.encode('utf-8'), safe=' .,/-_:()')
 
 
 # Per-server lock для handle_admin_migrate_configs. Без него два параллельных
@@ -150,7 +166,10 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
     )
 
     # --- Dynamic path ---
-    # Берём UUID юзера; если NULL — сразу в legacy.
+    # Берём UUID юзера; если NULL — пытаемся allocate (если есть хотя бы 1
+    # backfilled VLESS-сервер). Без allocate юзер бы навсегда залип в legacy
+    # mode даже после миграции — UUID создаётся только при purchase, а
+    # старые юзеры с pre-2026-05 покупкой никогда туда не попадут.
     async with aiosqlite.connect(_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -158,6 +177,13 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
         ) as cur:
             row = await cur.fetchone()
             user_uuid = row["vless_uuid"] if row else None
+
+    if not user_uuid:
+        # Если есть хотя бы один backfilled VLESS-сервер — allocate UUID.
+        # Если ни одного — fall through в legacy (configs.config_data).
+        if await active_vless_servers():
+            from services.database import ensure_user_vless_uuid
+            user_uuid = await ensure_user_vless_uuid(user_id)
 
     if user_uuid:
         sub = await get_relevant_vless_subscription(user_id)
@@ -194,8 +220,20 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
                         s["id"], port_col, tier, fallback,
                     )
                     port = fallback
-                # vless:// URL — StealthSurf-style: sni-параметр опускаем
-                # если пуст (DPI меньше fingerprint'ит). pbk/sid обязательны.
+                # Reality REQUIRES sni — without it client TLS hello mismatches
+                # server's `serverNames` and connection drops. Fail-fast at URL
+                # build time (rather than silently serving a broken URL); the
+                # DB filter in active_vless_servers() already drops sni-less
+                # rows, so this is double protection for prod misconfig.
+                sni = s.get("xray_sni") or ""
+                if not sni:
+                    logger.error(
+                        "Skipping server %d in /sub/ — xray_sni is NULL/empty. "
+                        "Reality REQUIRES sni; serving this URL would break the client.",
+                        s.get("id"),
+                    )
+                    continue
+                # vless:// URL — sni обязателен; pbk/sid тоже.
                 params = [
                     "encryption=none",
                     f"security=reality",
@@ -205,10 +243,14 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
                     "type=tcp",
                     "headerType=none",
                     "spx=%2F",
+                    f"sni={sni}",
                 ]
-                sni = s.get("xray_sni") or ""
-                if sni:
-                    params.append(f"sni={sni}")
+                # Per-tier flow= must match agent's xray_flow config (see
+                # agent/main.go:77-89). Wrong flow = handshake fails.
+                from services.plans import VLESS_FLOW_BY_SERVICE
+                flow = VLESS_FLOW_BY_SERVICE.get(tier, "")
+                if flow:
+                    params.append(f"flow={flow}")
                 # Fragment — название как в Happ: «🇺🇸 Charlotte»
                 label = f"{s.get('flag') or '🌐'} {s.get('city') or s.get('name') or ''}".strip()
                 frag = _url_quote(label, safe="")
@@ -1711,7 +1753,7 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         await bot.send_message(
             user_id,
             f"✅ <b>Оплата получена!</b>\n\n"
-            f"VPN {plan['name']} активирован на {plan['duration_days']} дней.\n"
+            f"VPN {plan['name']} активирован на {plan['duration_days']} {plural_ru(plan['duration_days'], DAYS)}.\n"
             f"Открой Mini App → «Конфиги» чтобы скачать файлы подключения.",
             parse_mode="HTML",
         )
@@ -2631,7 +2673,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
         win_note = "💻 <b>Windows</b>: качай <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a>, не WireGuard.exe"
         if has_awg:
             msg = (
-                f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+                f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
                 f"📅 До: <b>{expires_str}</b>\n"
                 f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
                 f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
@@ -2644,7 +2686,7 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
             )
         else:
             msg = (
-                f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+                f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
                 f"📅 До: <b>{expires_str}</b>\n"
                 f"🚀 Скорость: 60 Mbps\n\n"
                 f"<b>Subscription URL</b> (импортируй в Happ / Amnezia VPN один раз):\n"
@@ -2812,18 +2854,23 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     import aiosqlite
     from services.database import DB_PATH
 
-    # Rate limit: публичный endpoint без auth. Защита от brute-force token'а
-    # (32+ chars entropy, но без лимита нельзя — лог-флуд + DDoS).
-    # Happ/Streisand тянут URL раз в 12 часов (Profile-Update-Interval) →
-    # 6 сек/IP rate-limit с запасом.
-    ip = _client_ip(request)
-    now = _time.monotonic()
-    if not _rate_limit_check_evict(_sub_rate, ip, now, window=6.0):
-        return web.Response(text="rate limited", status=429)
-
     token = request.match_info.get("token", "").strip()
     if not token or len(token) < 16:
         return web.Response(text="invalid", status=400)
+
+    # Rate limit: публичный endpoint без auth. Защита от brute-force token'а
+    # (32+ chars entropy, но без лимита нельзя — лог-флуд + DDoS).
+    # Happ/Streisand тянут URL раз в 12 часов (Profile-Update-Interval) →
+    # 6 сек/(IP,token) rate-limit с запасом.
+    # Per-(ip, token) instead of ip-only: carrier NAT users with multiple
+    # devices (phone + laptop + router) share the same public IP but pull
+    # different sub URLs simultaneously — pure ip-key would 429 the second
+    # device on every refresh tick.
+    ip = _client_ip(request)
+    rate_key = f"{ip}:{token[:16]}"  # truncate token to keep dict key small
+    now = _time.monotonic()
+    if not _rate_limit_check_evict(_sub_rate, rate_key, now, window=6.0):
+        return web.Response(text="rate limited", status=429)
 
     user = await get_user_by_sub_token(token)
     if not user:
@@ -2836,8 +2883,15 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
             status=410,
             headers={
                 "Content-Type":            "text/plain; charset=utf-8",
-                "Profile-Title":           "MAX VPN — token expired",
+                # ASCII-only here, but use _safe_header for consistency.
+                "Profile-Title":           _safe_header("MAX VPN — token expired"),
                 "Profile-Update-Interval": "0",
+                # No-cache on 410: client may have cached the old (valid)
+                # body for hours; without no-cache it might keep using
+                # rotated token for a full Profile-Update-Interval cycle
+                # even though we already told it the token is gone.
+                "Cache-Control":           "no-cache, no-store, must-revalidate",
+                "Pragma":                  "no-cache",
                 "Profile-Web-Page-Url":    "https://t.me/maxvpnesim_bot",
                 "Support-Url":             "https://t.me/maxvpnesim_bot",
             },
@@ -2863,14 +2917,19 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     # «0 серверов» и юзер думает что подписка отвалилась раньше времени.
     if not urls:
         import time as _t
+        # Omit total= on expired path. expire= in the past is the standard
+        # signal; total=1 sentinel was a workaround for early Happ versions
+        # that no longer applies and may confuse other parsers (sing-box
+        # reads total=1 with download=0 as «1 byte cap, 0 used» — a data
+        # anomaly, not «expired»).
         return web.Response(
             text="",
             headers={
                 "Content-Type":           "text/plain; charset=utf-8",
                 "Cache-Control":          "no-cache, no-store, must-revalidate",
-                "Subscription-Userinfo":  f"download=0; upload=0; total=1; expire={int(_t.time()) - 1}",
+                "Subscription-Userinfo":  f"download=0; upload=0; expire={int(_t.time()) - 1}",
                 "Profile-Update-Interval": "12",
-                "Profile-Title":          "❌ MAX VPN — подписка истекла",
+                "Profile-Title":          _safe_header("❌ MAX VPN — подписка истекла"),
                 "Profile-Web-Page-Url":   "https://t.me/maxvpnesim_bot",
                 "Support-Url":            "https://t.me/maxvpnesim_bot",
             },
@@ -2878,7 +2937,8 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
 
     # ── Build Subscription-Userinfo header ───────────────────────────────────
     # Найдём активную подписку юзера + лимиты её плана + использованный трафик
-    used_bytes = 0
+    rx_total = 0    # bytes received BY peer (= client download)
+    tx_total = 0    # bytes sent BY peer (= client upload)
     total_bytes = 0
     expire_unix = 0
     plan_name = "MAX VPN"
@@ -2911,14 +2971,21 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 cap_gb = plan.get("soft_cap_gb")
                 if cap_gb:
                     total_bytes = int(cap_gb) * 1024 ** 3
-                # Cумма трафика по конфигам подписки
+                # Сумма трафика по конфигам подписки. Splitting rx/tx так
+                # как Happ показывает download/upload отдельно. Orientation:
+                # agent reports `rx_bytes` = bytes received BY the peer (=
+                # data the VPN server sent to the client = client download),
+                # `tx_bytes` = bytes sent BY peer (= client upload).
+                # See agent vpnctl peer stats + services.scheduler._sync_vless_stats.
                 row = await (await db.execute(
-                    """SELECT COALESCE(SUM(rx_bytes),0)+COALESCE(SUM(tx_bytes),0) AS used
+                    """SELECT COALESCE(SUM(rx_bytes),0) AS rx,
+                              COALESCE(SUM(tx_bytes),0) AS tx
                        FROM configs WHERE subscription_id=? AND status='active'""",
                     (sub["id"],),
                 )).fetchone()
                 if row:
-                    used_bytes = int(row["used"] or 0)
+                    rx_total = int(row["rx"] or 0)
+                    tx_total = int(row["tx"] or 0)
                 # expire_at
                 try:
                     exp = sub["expires_at"]
@@ -2942,12 +3009,17 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     except Exception as e:
         logger.warning("subscription header build failed: %s", e, exc_info=True)
 
-    # download = upload + общий используемый объём (Happ показывает download)
-    sub_userinfo_parts = [f"download={used_bytes}", "upload=0"]
+    # Split download/upload so Happ shows them separately instead of
+    # everything bundled under "download".
+    sub_userinfo_parts = [f"download={rx_total}", f"upload={tx_total}"]
     if total_bytes > 0:
         sub_userinfo_parts.append(f"total={total_bytes}")
-    if expire_unix > 0:
-        sub_userinfo_parts.append(f"expire={expire_unix}")
+    # Always emit expire= — omitting it makes Happ treat sub as lifetime,
+    # which is misleading if sub has no parseable expires_at. Use past
+    # timestamp as «unknown / treat as expired» sentinel.
+    sub_userinfo_parts.append(
+        f"expire={expire_unix if expire_unix > 0 else int(_time.time()) - 1}"
+    )
     sub_userinfo = "; ".join(sub_userinfo_parts)
 
     headers = {
@@ -2955,7 +3027,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Subscription-Userinfo": sub_userinfo,
         "Profile-Update-Interval": "12",
-        "Profile-Title": f"🌐 MAX VPN · {plan_name}",
+        "Profile-Title": _safe_header(f"🌐 MAX VPN · {plan_name}"),
         "Profile-Web-Page-Url": "https://t.me/maxvpnesim_bot",
         "Support-Url": "https://t.me/maxvpnesim_bot",
     }
@@ -3084,7 +3156,7 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
         await bot.send_message(
             user["id"],
             f"🎁 <b>Бонусные дни активированы!</b>\n\n"
-            f"Добавлено: <b>+{result['days']} дней</b>\n"
+            f"Добавлено: <b>+{result['days']} {plural_ru(result['days'], DAYS)}</b>\n"
             f"Подписка действует до: <b>{new_date}</b>",
             parse_mode="HTML",
         )
@@ -3135,10 +3207,11 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     bot: Bot = request.app["bot"]
     cat_label = CATEGORY_LABELS.get(category, category)
     username  = f"@{user['username']}" if user.get("username") else f"id:{user['id']}"
-    name      = user.get("first_name") or "—"
+    name      = html_escape(user.get("first_name") or "—")
+    username_safe = html_escape(username)
     text = (
         f"🎫 <b>Тикет #{ticket_id}</b>\n"
-        f"👤 {name} ({username})\n"
+        f"👤 {name} ({username_safe})\n"
         f"📂 {cat_label}\n\n"
         f"{html_escape(message)}"
     )
@@ -3249,11 +3322,13 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
         return web.json_response({"error": "ticket not found"}, status=404)
 
     bot: Bot = request.app["bot"]
+    quoted = html_escape((ticket.get('message') or '')[:300])
+    reply_body = html_escape(text)
     msg_text = (
         f"💬 <b>Ответ от поддержки</b> (#{ticket_id})\n\n"
         f"<i>На твоё обращение:</i>\n"
-        f"<blockquote>{(ticket.get('message') or '')[:300]}</blockquote>\n\n"
-        f"{text}"
+        f"<blockquote>{quoted}</blockquote>\n\n"
+        f"{reply_body}"
     )
     try:
         await bot.send_message(ticket["user_id"], msg_text, parse_mode="HTML")
@@ -3772,7 +3847,7 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
         f"активируй их и пользуйся."
     )
     if reason:
-        notify_text += f"\n\n<i>Комментарий: {reason[:200]}</i>"
+        notify_text += f"\n\n<i>Комментарий: {html_escape(reason[:200])}</i>"
     try:
         await bot.send_message(target_id, notify_text, parse_mode="HTML")
         result["notified"] = True

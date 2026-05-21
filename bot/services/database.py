@@ -38,24 +38,19 @@ _SENTINEL = _Sentinel()
 async def _connect():
     """aiosqlite.connect + busy_timeout 5s + foreign_keys=ON.
 
-    `journal_mode=WAL` ставится один раз в `init_db()` (это persistent
-    pragma — переживает рестарт SQLite). `busy_timeout` и `foreign_keys` —
-    per-connection, поэтому ставятся здесь на каждом подключении.
+    `journal_mode=WAL` ставится один раз в `init_db()`. busy_timeout +
+    foreign_keys = per-connection, ставятся здесь на каждом подключении.
 
-    foreign_keys=ON: до этого SQLite молча игнорировал FOREIGN KEY
-    constraints — можно было удалить server с привязанными configs, и
-    configs.server_id оставался dangling. Теперь DELETE servers где есть
-    referenced configs упадёт IntegrityError — это правильное поведение,
-    forces explicit cleanup. PRAGMA ничего не делает с уже-существующими
-    dangling rows (только enforce'ит новые modifications).
+    foreign_keys=ON enforce'ит ТОЛЬКО те FK, что объявлены в CREATE TABLE.
+    Колонки добавленные через ALTER TABLE (users.referred_by, configs.server_id,
+    кое-что в payments) не могут получить FK в SQLite — ALTER TABLE ADD COLUMN
+    не поддерживает FOREIGN KEY. Эти колонки остаются plain INTEGER без
+    cascade/restrict. Проверки runtime (e.g. SELECT exists) — единственный
+    способ найти орфанные ссылки. См. _reconcile_orphans в scheduler.py.
 
-    ⚠️ Direct `aiosqlite.connect(DB_PATH)` (вне _connect) НЕ получает этот
-    PRAGMA — таких мест по коду есть (services/trial.py, services/health.py
-    и т.д.). Это сознательный compromise: тесты и read-only/health-check
-    запросы FK не нарушают, а апгрейдить всё на _connect выходит за рамки
-    этого фикса.
-
-    Все вызовы в этом модуле должны идти через `_connect()`.
+    ⚠️ Direct `aiosqlite.connect(DB_PATH)` (вне _connect) НЕ получает
+    busy_timeout/foreign_keys PRAGMA — health.py, trial.py etc. так делают
+    осознанно (read-only or with их собственным PRAGMA).
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA busy_timeout=5000")
@@ -418,19 +413,24 @@ async def _migrate(db: aiosqlite.Connection):
         "CREATE TABLE IF NOT EXISTS schema_state ("
         " key TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
     )
-    # ATOMIC INSERT-first idempotency: пробуем INSERT с UNIQUE-constraint.
-    # Если уже мигрировали раньше — IntegrityError, skip. Если первый раз —
-    # делаем reset. Безопасно даже при race между двумя процессами.
+    # SELECT-then-UPDATE-then-INSERT-marker: если UPDATE упадёт (crash mid-flight),
+    # маркер не ставится и миграция повторится на следующем старте. INSERT-first
+    # вариант (старый) ставил маркер до UPDATE — partial failure → marker есть,
+    # данные не мигрированы, никогда не отдиагностируешь.
     import sqlite3 as _sqlite
     try:
-        await db.execute(
-            "INSERT INTO schema_state (key) VALUES ('ref_bonus_redeem_migration_v1')"
-        )
-        # INSERT прошёл — мы первые, делаем reset
-        await db.execute("UPDATE users SET ref_bonus_days=0 WHERE ref_bonus_days > 0")
-        logger.info("ref_bonus_days reset to 0 (manual redeem semantics, one-time migration)")
-    except _sqlite.IntegrityError:
-        pass  # уже мигрировано раньше
+        async with db.execute(
+            "SELECT 1 FROM schema_state WHERE key='ref_bonus_redeem_migration_v1'"
+        ) as cur:
+            already_done = await cur.fetchone() is not None
+        if not already_done:
+            await db.execute("UPDATE users SET ref_bonus_days=0 WHERE ref_bonus_days > 0")
+            await db.execute(
+                "INSERT INTO schema_state (key) VALUES ('ref_bonus_redeem_migration_v1')"
+            )
+            logger.info("ref_bonus_days reset to 0 (manual redeem semantics, one-time migration)")
+    except _sqlite.OperationalError:
+        pass  # schema_state может отсутствовать на очень старых БД
     if "sub_token" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN sub_token TEXT")
         await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)")
@@ -644,6 +644,42 @@ async def _migrate(db: aiosqlite.Connection):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_vless_uuid "
         "ON users(vless_uuid) WHERE vless_uuid IS NOT NULL"
     )
+
+    # One-time backfill: subscriptions with NULL expires_at from legacy code
+    # paths. NULL означает «never expires» по текущей семантике WHERE — таких
+    # sub'ы не подбирает scheduler reaper, юзер пользуется бесплатно вечно
+    # (или коннект ломается из-за NULL в datetime math). Маркируем expired
+    # — caller'у нужно понимать что данные не восстановишь, юзер давно ушёл
+    # или плохо аккаунтили. trial — отдельная история (там NULL означает
+    # ещё-не-активирован, не трогаем).
+    try:
+        async with db.execute(
+            "SELECT 1 FROM schema_state WHERE key='null_expires_backfill_v1'"
+        ) as cur:
+            already_done = await cur.fetchone() is not None
+        if not already_done:
+            async with db.execute(
+                """SELECT COUNT(*) FROM subscriptions
+                   WHERE expires_at IS NULL AND plan != 'vpn_trial'
+                     AND status NOT IN ('expired', 'refunded')"""
+            ) as cur:
+                row = await cur.fetchone()
+                null_count = row[0] if row else 0
+            if null_count > 0:
+                logger.warning(
+                    "Migration: marking %d NULL-expires_at subscriptions as expired",
+                    null_count,
+                )
+                await db.execute(
+                    "UPDATE subscriptions SET status='expired' "
+                    "WHERE expires_at IS NULL AND plan != 'vpn_trial' "
+                    "AND status NOT IN ('expired', 'refunded')"
+                )
+            await db.execute(
+                "INSERT INTO schema_state (key) VALUES ('null_expires_backfill_v1')"
+            )
+    except _sqlite.OperationalError:
+        pass  # schema_state может отсутствовать на очень старых БД
 
 
 async def _seed_default_server():
@@ -1900,6 +1936,19 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                 "UPDATE subscriptions SET payment_id=? WHERE id=?",
                 (new_payment_id, sub_id),
             )
+        # Idempotent slot insertion: вместо «add delta» используем «reach target
+        # count from VPN_PLANS». При retry/race повторный вызов не создаёт
+        # дубликат слотов — то же target_count → to_create=0. delta-логика
+        # ниже остаётся для warning о downgrade (когда target < existing,
+        # revoke_excess_configs_on_downgrade должен быть вызван caller'ом — см.
+        # PS3 round 10).
+        from services.plans import VPN_PLANS
+        new_plan_def = VPN_PLANS.get(new_plan, {})
+        target_counts = {
+            "awg":   new_plan_def.get("awg_slots", 0),
+            "vless": new_plan_def.get("vless_slots", 0),
+            "wg":    new_plan_def.get("wg_slots", 0),
+        }
         for proto, delta in (("awg", awg_delta), ("vless", vless_delta), ("wg", wg_delta)):
             if delta < 0:
                 logger.warning(
@@ -1907,7 +1956,19 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                     "caller should call revoke_excess_configs_on_downgrade to revoke surplus",
                     proto, delta, sub_id, new_plan,
                 )
-            for _ in range(max(0, delta)):
+            target = target_counts[proto]
+            if target == 0:
+                continue
+            async with db.execute(
+                "SELECT COUNT(*) FROM configs WHERE subscription_id=? AND protocol=?",
+                (sub_id, proto),
+            ) as cur2:
+                row = await cur2.fetchone()
+                existing = row[0] if row else 0
+            to_create = max(0, target - existing)
+            if to_create == 0:
+                continue
+            for _ in range(to_create):
                 await db.execute(
                     "INSERT INTO configs (subscription_id, user_id, protocol, status) "
                     "VALUES (?, ?, ?, 'empty')",
@@ -2500,6 +2561,12 @@ async def active_vless_servers() -> list[dict]:
         для всех пиров на новой ноде. Существующие сервера получают
         backfilled=1 автоматически при миграции.
     Сортируем по id для детерминированного порядка в подписке.
+
+    NB: ordering by `id` is stable in steady state but jumps if a server is
+    DELETEd and re-INSERTed (new id == max+1, jumps to end of subscription
+    list — Happ shows it as a "new" server). A proper fix would be a
+    `display_order` column. Until then: in prod prefer `update_server(...)`
+    over delete+create to keep server order stable for users.
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -2511,6 +2578,7 @@ async def active_vless_servers() -> list[dict]:
             FROM servers
             WHERE protocol='vless' AND is_active=1
               AND xray_pubkey IS NOT NULL AND xray_pubkey != ''
+              AND xray_sni IS NOT NULL AND xray_sni != ''
               AND backfilled=1
             ORDER BY id
         """) as cur:
@@ -2592,16 +2660,42 @@ def vless_port_column(tier: str) -> str | None:
 
 
 async def get_or_create_sub_token(user_id: int) -> str:
-    """Returns the user's stable subscription token (creates one on first call)."""
+    """Returns existing sub_token or atomically creates one. Race-safe.
+
+    SELECT-then-UPDATE race: два параллельных вызова видели NULL и оба
+    делали UPDATE — второй перетирал первого, а если в это время кто-то
+    уже использовал первый токен (sub URL), он становился невалидным.
+    Решаем CAS-pattern: UPDATE ... WHERE sub_token IS NULL — loser of
+    race получает rowcount=0 и дочитывает значение победителя.
+    """
     import secrets
     async with _connect() as db:
-        async with db.execute("SELECT sub_token FROM users WHERE id=?", (user_id,)) as cur:
+        # Fast-path: token already exists
+        async with db.execute(
+            "SELECT sub_token FROM users WHERE id=?", (user_id,)
+        ) as cur:
             row = await cur.fetchone()
-        if row and row[0]:
-            return row[0]
+            if row and row[0]:
+                return row[0]
+
+        # Generate candidate token
         token = secrets.token_urlsafe(24)
-        await db.execute("UPDATE users SET sub_token=? WHERE id=?", (token, user_id))
+        # Atomic CAS: only update if still NULL (loser of race re-reads winner)
+        cur2 = await db.execute(
+            "UPDATE users SET sub_token=? WHERE id=? AND sub_token IS NULL",
+            (token, user_id),
+        )
         await db.commit()
+        if cur2.rowcount == 0:
+            # Race lost. Re-read to get the winning token.
+            async with db.execute(
+                "SELECT sub_token FROM users WHERE id=?", (user_id,)
+            ) as cur3:
+                row2 = await cur3.fetchone()
+                if row2 and row2[0]:
+                    return row2[0]
+            # Genuinely no user row? shouldn't happen but be defensive
+            raise RuntimeError(f"get_or_create_sub_token: user {user_id} disappeared")
         return token
 
 

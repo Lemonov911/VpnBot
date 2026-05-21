@@ -16,7 +16,7 @@ from typing import Literal
 
 import aiosqlite
 
-from services.database import DB_PATH
+from services.database import DB_PATH, _connect
 from services.vpnctl_client import VpnctlError, client_for_server
 
 logger = logging.getLogger(__name__)
@@ -136,9 +136,14 @@ async def _maybe_deactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
     )
     if consec_down < AUTO_DEACTIVATE_AFTER_DOWN:
         return False
-    await db.execute(
-        "UPDATE servers SET is_active=0 WHERE id=?", (server["id"],),
-    )
+    # Route write via _connect() — busy_timeout + foreign_keys=ON. Parent db
+    # здесь raw aiosqlite (probe loop читает много), а UPDATE servers критичный
+    # → нужны PRAGMA. См. D4 в audit notes.
+    async with _connect() as wdb:
+        await wdb.execute(
+            "UPDATE servers SET is_active=0 WHERE id=?", (server["id"],),
+        )
+        await wdb.commit()
     logger.warning(
         "health: AUTO-DEACTIVATED server #%d %s (%d consecutive down probes)",
         server["id"], server.get("name", ""), consec_down,
@@ -173,9 +178,12 @@ async def _maybe_reactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
     )
     if consec_up < AUTO_REACTIVATE_AFTER_UP:
         return False
-    await db.execute(
-        "UPDATE servers SET is_active=1 WHERE id=?", (server["id"],),
-    )
+    # Route write via _connect() — см. D4.
+    async with _connect() as wdb:
+        await wdb.execute(
+            "UPDATE servers SET is_active=1 WHERE id=?", (server["id"],),
+        )
+        await wdb.commit()
     logger.info(
         "health: AUTO-REACTIVATED server #%d %s (%d consecutive up probes)",
         server["id"], server.get("name", ""), consec_up,
@@ -237,7 +245,7 @@ async def probe_all_servers(bot=None):
 
 async def cleanup_old_logs(keep_days: int = 31):
     """Чистит probes старше keep_days. Зовётся раз в день."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             f"DELETE FROM server_health_log WHERE checked_at < datetime('now', '-{keep_days} days')"
         )

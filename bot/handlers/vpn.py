@@ -14,6 +14,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta
+from html import escape as html_escape
 from io import BytesIO
 
 from aiogram import Router, F, Bot
@@ -52,6 +53,7 @@ from services.payments import stars_invoice_kwargs
 from services.plans import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan  # noqa: F401
 from services.vpnctl_client import provision_peer, VpnctlError
 from services.scheduler import _spawn_bg
+from services.i18n_plural import plural_ru, DAYS
 import services.esim_api as esim_api
 
 logger = logging.getLogger(__name__)
@@ -548,12 +550,14 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
                 )
                 await update_server_peer_count(server["id"], +1)
                 created_wg += 1
+                flag_safe = html_escape(server.get('flag', ''))
+                name_safe = html_escape(server.get('name', ''))
                 await message.answer_document(
                     BufferedInputFile(
                         peer.config.encode(),
                         filename=f"maxvpn_{i+1}.conf",
                     ),
-                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {server.get('flag','')} {server.get('name','')}\nIP: {peer_ip}",
+                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {flag_safe} {name_safe}\nIP: {html_escape(peer_ip)}",
                     parse_mode="HTML",
                 )
             except VpnctlError as e:
@@ -675,7 +679,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
                             f"User: <code>{user_id}</code>\n"
                             f"Charge: <code>{payment_id}</code>\n"
                             f"Stars: {payment.total_amount}\n"
-                            f"Error: <code>{e}</code>\n\n"
+                            f"Error: <code>{html_escape(str(e))}</code>\n\n"
                             f"Нужно вернуть вручную через @BotSupport.",
                             parse_mode="HTML",
                         )
@@ -997,9 +1001,8 @@ async def _apply_plan_upgrade(message: Message, payment):
             except Exception:
                 pass
             await message.answer(
-                "⚠️ План уже был изменён в параллельной сессии. "
-                "Админ свяжется для возврата ⭐. Напиши в поддержку с этим charge_id: "
-                f"<code>{payment_id}</code>",
+                "⚠️ Произошла ошибка обработки. Админ уже уведомлён — деньги вернутся "
+                "в течение нескольких часов. Если не — напиши в поддержку.",
                 parse_mode="HTML",
             )
             return
@@ -1047,8 +1050,8 @@ async def _apply_plan_upgrade(message: Message, payment):
             except Exception:
                 pass
             await message.answer(
-                "⚠️ Подписка уже была закрыта. Админ свяжется для возврата ⭐. "
-                f"Напиши в поддержку с charge_id: <code>{payment_id}</code>",
+                "⚠️ Произошла ошибка обработки. Админ уже уведомлён — деньги вернутся "
+                "в течение нескольких часов. Если не — напиши в поддержку.",
                 parse_mode="HTML",
             )
             return
@@ -1281,8 +1284,9 @@ async def deliver_esim_to_user(bot: Bot, profile_id: int):
         "📲 <b>iPhone — самый простой путь:</b>",
     ]
     if short_url:
+        short_url_safe = html_escape(short_url, quote=True)
         caption_lines.append(
-            f"1. <a href=\"{short_url}\">Открой эту ссылку с iPhone 17.4+</a> — "
+            f"1. <a href=\"{short_url_safe}\">Открой эту ссылку с iPhone 17.4+</a> — "
             "появится нативный диалог установки"
         )
         caption_lines.append("2. Или: Настройки → Сотовая связь → Добавить eSIM → Сканируй QR ниже")
@@ -1294,13 +1298,18 @@ async def deliver_esim_to_user(bot: Bot, profile_id: int):
         "🤖 <b>Android:</b> Настройки → SIM-карты → Добавить eSIM → Сканируй QR",
         "",
         "📝 <b>Вручную</b> (если QR/ссылка не работают):",
-        f"   SM-DP+ адрес: <code>{smdp}</code>",
-        f"   Код активации: <code>{matching}</code>",
+        f"   SM-DP+ адрес: <code>{html_escape(smdp)}</code>",
+        f"   Код активации: <code>{html_escape(matching)}</code>",
         "",
         "⚠️ <b>Установить можно только 1 раз</b> — сохрани QR до активации.",
         "⚡ eSIM активируется при первом подключении к сети.",
     ]
     caption = "\n".join(caption_lines)
+    if len(caption) > 1024:
+        # Telegram caption limit. Truncate с сохранением header'а — лучше
+        # потерять manual fallback чем вообще не доставить eSIM юзеру.
+        logger.warning("eSIM caption %d chars > 1024 limit; truncating", len(caption))
+        caption = caption[:1020] + "..."
 
     try:
         if qr_url:
@@ -1381,7 +1390,7 @@ async def maybe_award_referral_bonus(bot: Bot, user_id: int, sub_id: int) -> Non
             try:
                 await bot.send_message(
                     referrer_id,
-                    f"🎁 <b>+{REFERRAL_BONUS_DAYS} дней в твой бонус-банк!</b>\n\n"
+                    f"🎁 <b>+{REFERRAL_BONUS_DAYS} {plural_ru(REFERRAL_BONUS_DAYS, DAYS)} в твой бонус-банк!</b>\n\n"
                     f"Твой друг купил VPN по реферальной ссылке. "
                     f"Активируй бонус в Mini App: <b>Друзья → 🎁 Мои бонусы</b>.\n\n"
                     f"Бонус применится к твоей активной подписке (продлит срок).",

@@ -26,6 +26,7 @@ from services.database import (
     upsert_user,
 )
 from services.vpnctl_client import client_for_server, VpnctlError
+from services.i18n_plural import plural_ru, DAYS
 from handlers.vpn import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan
 
 router = Router()
@@ -176,7 +177,7 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
 
     if has_awg:
         text = (
-            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+            f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
             f"📅 До: <b>{expires_str}</b>\n"
             f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
             f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
@@ -189,7 +190,7 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
     else:
         # AWG-сервер недоступен — fallback на VLESS-only (старое поведение)
         text = (
-            f"🎁 <b>Trial на {result['duration_days']} дня активирован</b>\n\n"
+            f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
             f"📅 До: <b>{expires_str}</b>\n"
             f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
             f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
@@ -295,7 +296,7 @@ async def cmd_refund_referral(message: Message):
         details=f"days={days}",
     )
     await message.answer(
-        f"✅ Откачено: <b>{days} дней</b> у юзера <code>{referrer_id}</code>.\n"
+        f"✅ Откачено: <b>{days} {plural_ru(days, DAYS)}</b> у юзера <code>{referrer_id}</code>.\n"
         f"ref_bonus_days уменьшен (clamp на 0), expires_at активной подписки сдвинут назад.\n"
         f"Подписка помечена refunded.",
         parse_mode="HTML",

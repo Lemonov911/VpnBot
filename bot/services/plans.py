@@ -122,6 +122,19 @@ VPN_PLANS: dict[str, dict] = {
 }
 
 
+# VLESS Reality flow parameter per tier. Must match agent's xray_flow config
+# (agent/main.go:77-89). Plain Reality tiers omit flow; legacy Vision tier
+# uses xtls-rprx-vision. Wrong flow = TLS handshake fails on client.
+VLESS_FLOW_BY_SERVICE: dict[str, str] = {
+    "vless-base":       "",
+    "vless-max":        "",
+    "vless-base-slow":  "",
+    "vless-max-slow":   "",
+    "vless-grace":      "",
+    "vless":            "xtls-rprx-vision",  # legacy Vision tier
+}
+
+
 def vless_service_for_plan(plan_key: str) -> str:
     """Возвращает имя `vpnctl`-сервиса для VLESS-провижининга.
     Новые v2-планы маппятся на speed-tier сервисы; legacy / unknown → 'vless'."""

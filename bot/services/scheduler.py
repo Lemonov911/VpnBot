@@ -1195,13 +1195,32 @@ async def _send_renewal_reminders(bot: Bot):
 
     Снижает chargeback risk + строит trust («предупредил, не сюрприз»).
     """
-    from services.database import get_recurring_renewal_due_soon, mark_renewal_reminded
-    subs = await get_recurring_renewal_due_soon(days_before=3)
+    from services.database import get_recurring_renewal_due_soon, mark_renewal_reminded, get_subscription_by_id
+    from services.i18n_plural import plural_ru, DAYS
+    days_before = 3
+    subs = await get_recurring_renewal_due_soon(days_before=days_before)
     if not subs:
         return
     logger.info("renewal reminders: %d sub'ов готовы напомнить", len(subs))
 
     for sub in subs:
+        # Re-fetch в случае если админ extend'нул между SELECT и send_message —
+        # без этого юзер получит «через 3 дня спишется» хотя sub продлена и
+        # auto-charge уже не на горизонте 3 дней.
+        fresh = await get_subscription_by_id(sub["id"])
+        if not fresh or not fresh.get("expires_at"):
+            continue
+        try:
+            cur_expires = datetime.fromisoformat(str(fresh["expires_at"]).replace(' ', 'T'))
+        except Exception:
+            continue
+        days_left = (cur_expires - datetime.utcnow()).days
+        if days_left < 0 or days_left > days_before + 1:
+            # Sub была extended или expired с момента SELECT — пропускаем
+            # устаревший reminder.
+            continue
+        days_left = max(0, days_left)
+
         user_id = sub["user_id"]
         plan_key = sub.get("plan") or ""
         provider = sub.get("payment_provider") or ""
@@ -1209,16 +1228,11 @@ async def _send_renewal_reminders(bot: Bot):
         plan_name = plan.get("name", plan_key)
         amount_rub = sub.get("amount_rub") or int(float(plan.get("rub", 0)))
         stars = plan.get("stars", 0)
-
-        try:
-            cur_expires = datetime.fromisoformat(sub.get("expires_at") or datetime.utcnow().isoformat())
-            days_left = max(0, (cur_expires - datetime.utcnow()).days)
-        except Exception:
-            days_left = 3
+        day_word = plural_ru(days_left, DAYS)
 
         if provider == "lavatop":
             text = (
-                f"🔁 <b>Через {days_left} {'день' if days_left == 1 else 'дня' if days_left < 5 else 'дней'} "
+                f"🔁 <b>Через {days_left} {day_word} "
                 f"спишется {amount_rub} ₽ с твоей карты</b>\n\n"
                 f"Тариф: <b>{plan_name}</b>\n"
                 f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
@@ -1228,7 +1242,7 @@ async def _send_renewal_reminders(bot: Bot):
             )
         else:  # stars
             text = (
-                f"🔁 <b>Через {days_left} {'день' if days_left == 1 else 'дня' if days_left < 5 else 'дней'} "
+                f"🔁 <b>Через {days_left} {day_word} "
                 f"Telegram спишет {stars} ⭐ за продление</b>\n\n"
                 f"Тариф: <b>{plan_name}</b>\n"
                 f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
@@ -1406,6 +1420,62 @@ async def _reconcile_peer_counters(bot: Bot) -> None:
             logger.warning("reconcile admin alert: %s", e)
 
 
+async def _reconcile_orphans(bot: Bot) -> None:
+    """Find DB rows that reference non-existent parents (FK-not-enforced
+    columns: users.referred_by, payments.subscription_id).
+
+    Также детектирует subscriptions с NULL expires_at (на non-trial плане) —
+    это «never expires» bug который мы фиксили миграцией D7, но runtime
+    регрешн может его вернуть. Reports counts via admin alert if any
+    orphans found. Запускается раз в сутки (24h), per D3.
+    """
+    import aiosqlite
+    from services.database import DB_PATH as _DB_PATH
+    async with aiosqlite.connect(_DB_PATH) as db:
+        async with db.execute(
+            """SELECT COUNT(*) FROM users u
+               WHERE u.referred_by IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM users r WHERE r.id = u.referred_by)"""
+        ) as cur:
+            row = await cur.fetchone()
+            orphan_referred = row[0] if row else 0
+
+        async with db.execute(
+            """SELECT COUNT(*) FROM payments p
+               WHERE p.subscription_id IS NOT NULL
+                 AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.id = p.subscription_id)"""
+        ) as cur:
+            row = await cur.fetchone()
+            orphan_payments = row[0] if row else 0
+
+        async with db.execute(
+            """SELECT COUNT(*) FROM subscriptions
+               WHERE expires_at IS NULL AND plan != 'vpn_trial'"""
+        ) as cur:
+            row = await cur.fetchone()
+            null_expires = row[0] if row else 0
+
+    if orphan_referred + orphan_payments + null_expires > 0:
+        logger.warning(
+            "Orphan reconcile: referred=%d payments=%d null_expires=%d",
+            orphan_referred, orphan_payments, null_expires,
+        )
+        try:
+            from config import ADMIN_ID
+            if ADMIN_ID and bot:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🔍 <b>DB integrity check</b>\n\n"
+                    f"Orphan users.referred_by: {orphan_referred}\n"
+                    f"Orphan payments.subscription_id: {orphan_payments}\n"
+                    f"NULL expires_at (non-trial): {null_expires}\n\n"
+                    "См. логи для деталей.",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.warning("Orphan reconcile admin alert failed: %s", e)
+
+
 async def _run_health_loop(bot: Bot | None = None):
     """Independent loop: probe servers every 60s, write to server_health_log.
     Передаём bot чтобы health.py мог слать alert админу при auto-(de)activate.
@@ -1506,3 +1576,9 @@ async def run_scheduler(bot: Bot):
         # пользователям у которых sub истёк 7-14 дней назад и они не вернулись.
         if _TICK % 24 == 0:
             await _safe("winback",      _winback_campaign(bot),          timeout=120)
+        # Orphan reconcile — раз в сутки (24h cadence). Детектит DB-integrity
+        # дрифт по FK-not-enforced колонкам (users.referred_by,
+        # payments.subscription_id) + NULL expires_at runtime-регрешн.
+        # См. D3 в audit notes.
+        if _TICK % 24 == 0:
+            await _safe("reconcile_orphans", _reconcile_orphans(bot), timeout=120)
