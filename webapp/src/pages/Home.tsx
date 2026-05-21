@@ -173,7 +173,7 @@ export default function Home() {
               📥 {t('trial_open_configs')}
             </button>
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/plans') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
               className="w-full min-h-[44px] py-2.5 rounded-[10px] border-none bg-primary/[0.13] text-primary text-[12px] font-medium cursor-pointer"
             >
               {t('trial_success_upgrade')}
@@ -372,9 +372,10 @@ export default function Home() {
         {/* ── Referral banner ── */}
         {/* Если юзер уже кого-то пригласил — показываем его прогресс прямо
             в баннере (без клика). Иначе — generic CTA. */}
-        <div
+        <button
+          type="button"
           onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/referral') }}
-          className="bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-center gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
+          className="w-full text-left bg-[var(--tg-theme-section-bg-color)] rounded-2xl py-[14px] px-4 flex items-center gap-3.5 cursor-pointer border-[1.5px] border-warning/20"
         >
           <div className="w-11 h-11 rounded-[13px] shrink-0 bg-warning flex items-center justify-center shadow-[0_4px_12px_rgba(230,126,34,0.35)]">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -413,7 +414,7 @@ export default function Home() {
           <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
             <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-        </div>
+        </button>
 
         {/* ── Stats ── */}
         {hasStats && (
@@ -438,7 +439,6 @@ export default function Home() {
 
       {trialSheet && (
         <TrialSuccessSheet
-          days={trial?.duration_days}
           onClose={() => setTrialSheet(false)}
         />
       )}

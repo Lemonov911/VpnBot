@@ -55,10 +55,28 @@ logger = logging.getLogger(__name__)
 _BG_TASKS: set[asyncio.Task] = set()
 
 
+def _on_bg_done(task: asyncio.Task) -> None:
+    """done-callback: убираем task из реестра + логируем upexpected exception.
+    Без этого `task.add_done_callback(set.discard)` глотает исключения и
+    диагностика «что-то не работает в фоне» превращается в шаманство.
+    """
+    _BG_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "bg task %s failed: %s",
+            task.get_name() or "<unnamed>",
+            exc,
+            exc_info=exc,
+        )
+
+
 def _spawn_bg(coro, *, name: str | None = None) -> asyncio.Task:
     task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
     _BG_TASKS.add(task)
-    task.add_done_callback(_BG_TASKS.discard)
+    task.add_done_callback(_on_bg_done)
     return task
 
 
@@ -2920,8 +2938,13 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
             payment_id = row[0] if row else None
 
     # Определяем provider по префиксу payment_id.  Stars = всё что НЕ
-    # crypto_/oxapay_/lavatop_/free_ — не Stars-платёж, нельзя делать Stars refund.
-    _NON_STARS_PREFIXES = ("crypto_", "oxapay_", "lavatop_", "free_")
+    # crypto_/oxapay_/lavatop_/free_/admin_grant_/trial_ — не Stars-платёж,
+    # нельзя делать Stars refund. `admin_grant_` (бесплатное продление от
+    # админа) и `trial_` (триал) тоже не Stars: попытка refund_star_payment
+    # упадёт CHARGE_ID_INVALID и заспамит лог.
+    _NON_STARS_PREFIXES = (
+        "crypto_", "oxapay_", "lavatop_", "free_", "admin_grant_", "trial_",
+    )
     is_stars = payment_id and not payment_id.startswith(_NON_STARS_PREFIXES)
     stars_refund_done = False
 

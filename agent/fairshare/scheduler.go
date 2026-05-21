@@ -135,7 +135,9 @@ func (s *Scheduler) clearTC() {
 func run(args ...string) error {
 	out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, out)
+		// %w preserves the error chain so callers can errors.Is/As against
+		// *exec.ExitError; %v dropped that.
+		return fmt.Errorf("%w: %s", err, out)
 	}
 	return nil
 }

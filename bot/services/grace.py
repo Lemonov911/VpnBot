@@ -229,18 +229,29 @@ async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
                     if protocol == "awg" and peer_name:
                         try:
                             await cli.remove_peer("awg", peer_name)
-                            await update_server_peer_count(server_id, -1)
                         except VpnctlError as e:
-                            logger.warning("remove_peer awg failed in _close_dangling_grace: %s", e)
+                            logger.warning(
+                                "remove_peer awg failed in _close_dangling_grace "
+                                "(orphan will be reaped by sync): %s", e,
+                            )
+                        # Счётчик уменьшаем всегда: ниже мы делаем reset_config_slot
+                        # → DB-сторона показывает «слот empty». Если бы декремент
+                        # пропускали при ошибке агента, counter завис бы и сервер
+                        # выглядел переполненным навсегда. Orphan-пир на агенте
+                        # подберёт hourly `_sync_vless_active_uuids` / AWG-аналог.
+                        await update_server_peer_count(server_id, -1)
                     elif protocol in ("vless", "vless-reality") and vless_uuid:
                         # peer мог быть в vless-grace или обычном inbound
                         config_data = cfg.get("config_data") or ""
                         svc = current_vless_service(config_data, plan_key)
                         try:
                             await cli.remove_peer(svc, vless_uuid)
-                            await update_server_peer_count(server_id, -1)
                         except VpnctlError as e:
-                            logger.warning("remove_peer vless failed in _close_dangling_grace: %s", e)
+                            logger.warning(
+                                "remove_peer vless failed in _close_dangling_grace "
+                                "(orphan will be reaped by sync): %s", e,
+                            )
+                        await update_server_peer_count(server_id, -1)
                 except Exception as e:
                     logger.warning("close_dangling_grace cfg #%d: %s", cfg_id, e)
         await reset_config_slot(cfg_id)

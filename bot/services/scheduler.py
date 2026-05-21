@@ -343,7 +343,22 @@ async def _process_expired_subscriptions(bot: Bot):
                     sub_id, plan_key, pending, e, exc_info=True,
                 )
 
-        await mark_subscription_grace(sub_id, grace_until)
+        transitioned = await mark_subscription_grace(sub_id, grace_until)
+        if not transitioned:
+            # Race: recurring webhook (или admin grant) продлил подписку
+            # пока мы throttle'или peers. UPDATE … WHERE status='active' не
+            # сработал → DB показывает active, а пиры всё ещё на 256 кбит/с.
+            # Откатываем throttle, иначе paying user залип на medium speed.
+            logger.warning(
+                "Race detected: sub %d no longer active after throttle, rolling back",
+                sub_id,
+            )
+            from services.grace import unthrottle_sub_configs
+            _spawn_bg(
+                unthrottle_sub_configs(sub_id, user_id, plan_key),
+                name=f"rollback_throttle_sub{sub_id}",
+            )
+            continue
         logger.info("Подписка #%d → grace (до %s)", sub_id, grace_until[:10])
 
         await _send_throttled(
@@ -478,7 +493,16 @@ async def _sync_vless_stats():
             continue
         try:
             client = client_for_server(server)
-            peers = await client.list_peers("vless")
+            # Per-server timeout: один зависший агент не должен залипать tick
+            # на полные 300 секунд `_safe(..., timeout=300)` (а потом ещё и
+            # пропустить остальные серверы из списка).
+            peers = await asyncio.wait_for(client.list_peers("vless"), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "_sync_vless_stats: timeout for server=%s, skipping",
+                server.get("name"),
+            )
+            continue
         except VpnctlError as e:
             logger.warning("vless stats sync skipped server=%s: %s", server.get("name"), e, exc_info=True)
             continue
@@ -501,11 +525,28 @@ async def _sync_vless_stats():
 
 
 async def _apply_quota_throttle(bot: Bot):
-    """For each VLESS config, check if soft-cap is exceeded and switch
-    user between normal and throttled tiers via the agent."""
+    """For each VLESS subscription, aggregate usage across all its locations
+    and switch the entire subscription between normal and throttled tiers
+    via the agent.
+
+    NB: multi-location VLESS = one logical slot replicated on N servers (same
+    UUID, multiple rows in `configs`). The quota cap is per-subscription, NOT
+    per-row — otherwise user gets Nx the allowance.  We sum bytes across all
+    rows of the same subscription_id, then apply identical action to each row.
+    """
+    from collections import defaultdict
+
     configs = await get_active_vless_configs_with_plan()
+    by_sub: dict[int, list[dict]] = defaultdict(list)
     for cfg in configs:
-        plan = VPN_PLANS.get(cfg["plan_key"])
+        sub_id = cfg.get("subscription_id")
+        if sub_id is not None:
+            by_sub[int(sub_id)].append(cfg)
+
+    for sub_id, sub_configs in by_sub.items():
+        head = sub_configs[0]
+        plan_key = head["plan_key"]
+        plan = VPN_PLANS.get(plan_key)
         if not plan:
             continue
         cap_gb = plan.get("soft_cap_gb")
@@ -513,83 +554,94 @@ async def _apply_quota_throttle(bot: Bot):
             continue  # legacy plan without speed-tier — пропускаем
 
         cap_bytes = cap_gb * (1024 ** 3)
-        used = (cfg.get("rx_bytes") or 0) + (cfg.get("tx_bytes") or 0)
-        cfg_data = cfg.get("config_data") or ""
-        is_throttled = (":9443" in cfg_data) or (":9448" in cfg_data)
-        should_throttle = used > cap_bytes
+        total_used = sum(
+            (c.get("rx_bytes") or 0) + (c.get("tx_bytes") or 0)
+            for c in sub_configs
+        )
+        should_throttle = total_used > cap_bytes
 
-        if should_throttle == is_throttled:
-            continue  # state already correct
-
-        normal_svc = vless_service_for_plan(cfg["plan_key"])
-        slow_svc = vless_slow_service_for_plan(cfg["plan_key"])
+        normal_svc = vless_service_for_plan(plan_key)
+        slow_svc = vless_slow_service_for_plan(plan_key)
         if not slow_svc:
             continue
 
-        server = await get_server_by_id(cfg["server_id"])
-        if not server or not server.get("agent_url"):
-            continue
-        client = client_for_server(server)
-        uuid = cfg["vless_uuid"]
-        label = f"tg{cfg['user_id']}_{cfg['config_id']}"
+        # `is_throttled` определяем по головному cfg — все локации одной sub'и
+        # обязаны быть в одном tier'е (мы сами их так переводим). Если drift
+        # обнаружится, цикл ниже выровняет: каждая row будет проверена против
+        # общего should_throttle.
+        notified_for_throttle = False
+        for cfg in sub_configs:
+            cfg_data = cfg.get("config_data") or ""
+            is_throttled = (":9443" in cfg_data) or (":9448" in cfg_data)
+            if should_throttle == is_throttled:
+                continue  # state already correct for this row
 
-        try:
-            if should_throttle and not is_throttled:
-                # Move into throttled tier: add to slow, remove from normal.
-                # Compensating rollback: if remove fails after add, undo the add
-                # to avoid split-brain (UUID in both inbounds simultaneously).
-                slow_added = False
-                try:
-                    slow_peer = await client.add_peer(slow_svc, label, peer_id=uuid)
-                    slow_added = True
-                    await client.remove_peer(normal_svc, uuid)
-                except VpnctlError:
-                    if slow_added:
-                        try:
-                            await client.remove_peer(slow_svc, uuid)
-                        except Exception:
-                            pass
-                    raise
-                if slow_peer.config:
-                    await update_config_data(cfg["config_id"], slow_peer.config)
-                logger.info(
-                    "throttled config #%d (used %.1f GB > %d GB cap)",
-                    cfg["config_id"], used / 1024**3, cap_gb,
-                )
-                try:
-                    await bot.send_message(
-                        cfg["user_id"],
-                        f"🐢 <b>Лимит трафика {cap_gb} GB исчерпан</b>\n\n"
-                        f"Скорость снижена до {plan.get('throttle_mbps', '?')} Mbps до конца месяца.\n"
-                        f"Если ты импортировал <b>Subscription URL</b> — конфиг обновится автоматически "
-                        f"в течение нескольких минут.\n\n"
-                        f"💎 Апгрейд тарифа в /start даёт больше квоты.",
-                        parse_mode="HTML",
+            server = await get_server_by_id(cfg["server_id"])
+            if not server or not server.get("agent_url"):
+                continue
+            client = client_for_server(server)
+            uuid = cfg["vless_uuid"]
+            label = f"tg{cfg['user_id']}_{cfg['config_id']}"
+
+            try:
+                if should_throttle and not is_throttled:
+                    # Move into throttled tier: add to slow, remove from normal.
+                    # Compensating rollback: if remove fails after add, undo the add
+                    # to avoid split-brain (UUID in both inbounds simultaneously).
+                    slow_added = False
+                    try:
+                        slow_peer = await client.add_peer(slow_svc, label, peer_id=uuid)
+                        slow_added = True
+                        await client.remove_peer(normal_svc, uuid)
+                    except VpnctlError:
+                        if slow_added:
+                            try:
+                                await client.remove_peer(slow_svc, uuid)
+                            except Exception:
+                                pass
+                        raise
+                    if slow_peer.config:
+                        await update_config_data(cfg["config_id"], slow_peer.config)
+                    logger.info(
+                        "throttled config #%d (sub=%d, total used %.1f GB > %d GB cap)",
+                        cfg["config_id"], sub_id, total_used / 1024**3, cap_gb,
                     )
-                except Exception as e:
-                    logger.warning("notify throttle user %d: %s", cfg["user_id"], e, exc_info=True)
-            elif is_throttled and not should_throttle:
-                # Restore: re-add to normal, remove from slow.
-                # Same compensating rollback pattern.
-                restore_added = False
-                try:
-                    normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
-                    restore_added = True
-                    await client.remove_peer(slow_svc, uuid)
-                except VpnctlError:
-                    if restore_added:
+                    if not notified_for_throttle:
+                        notified_for_throttle = True
                         try:
-                            await client.remove_peer(normal_svc, uuid)
-                        except Exception:
-                            pass
-                    raise
-                if normal_peer.config:
-                    await update_config_data(cfg["config_id"], normal_peer.config)
-                logger.info("throttle restored on config #%d", cfg["config_id"])
-        except VpnctlError as e:
-            logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e, exc_info=True)
-        except Exception as e:
-            logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e, exc_info=True)
+                            await bot.send_message(
+                                cfg["user_id"],
+                                f"🐢 <b>Лимит трафика {cap_gb} GB исчерпан</b>\n\n"
+                                f"Скорость снижена до {plan.get('throttle_mbps', '?')} Mbps до конца месяца.\n"
+                                f"Если ты импортировал <b>Subscription URL</b> — конфиг обновится автоматически "
+                                f"в течение нескольких минут.\n\n"
+                                f"💎 Апгрейд тарифа в /start даёт больше квоты.",
+                                parse_mode="HTML",
+                            )
+                        except Exception as e:
+                            logger.warning("notify throttle user %d: %s", cfg["user_id"], e, exc_info=True)
+                elif is_throttled and not should_throttle:
+                    # Restore: re-add to normal, remove from slow.
+                    # Same compensating rollback pattern.
+                    restore_added = False
+                    try:
+                        normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
+                        restore_added = True
+                        await client.remove_peer(slow_svc, uuid)
+                    except VpnctlError:
+                        if restore_added:
+                            try:
+                                await client.remove_peer(normal_svc, uuid)
+                            except Exception:
+                                pass
+                        raise
+                    if normal_peer.config:
+                        await update_config_data(cfg["config_id"], normal_peer.config)
+                    logger.info("throttle restored on config #%d (sub=%d)", cfg["config_id"], sub_id)
+            except VpnctlError as e:
+                logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e, exc_info=True)
+            except Exception as e:
+                logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e, exc_info=True)
 
 
 _VLESS_SYNC_SERVICES = [
@@ -616,19 +668,32 @@ async def _sync_vless_active_uuids():
             valid = await get_active_vless_uuids_by_server(server["id"])
             total_kept = 0
             total_removed: list[str] = []
+            timed_out = False
             for svc in _VLESS_SYNC_SERVICES:
                 try:
-                    result = await client.sync_active_ids(svc, valid)
+                    # Per-call timeout: 6 услуг × hung agent = весь _safe()
+                    # сожран; 30 сек хватит на любой здоровый sync_active_ids.
+                    result = await asyncio.wait_for(
+                        client.sync_active_ids(svc, valid), timeout=30,
+                    )
                     total_kept += result.get("kept", 0)
                     total_removed += result.get("removed", []) or []
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    logger.warning(
+                        "_sync_vless_active_uuids: timeout server=%s svc=%s, skipping rest",
+                        server.get("name"), svc,
+                    )
+                    break
                 except VpnctlError:
                     pass  # service not present on this server — skip
             logger.info(
-                "vless sync: server=%s, valid=%d, kept=%d, removed=%d",
+                "vless sync: server=%s, valid=%d, kept=%d, removed=%d%s",
                 server.get("name"),
                 len(valid),
                 total_kept,
                 len(total_removed),
+                " (partial — timeout)" if timed_out else "",
             )
         except Exception as e:
             logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e, exc_info=True)
@@ -980,6 +1045,24 @@ HEALTH_CLEANUP_INTERVAL_SEC = 24 * 3600  # раз в сутки чистим л�
 _BG_TASKS: set[asyncio.Task] = set()
 
 
+def _on_bg_done(task: asyncio.Task) -> None:
+    """done-callback: убираем task из реестра + логируем unexpected exception.
+    Без этого `set.discard` молча проглатывал бы все исключения, и фоновые
+    падения становились невидимыми.
+    """
+    _BG_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error(
+            "bg task %s failed: %s",
+            task.get_name() or "<unnamed>",
+            exc,
+            exc_info=exc,
+        )
+
+
 def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     """Запускает фоновую корутину и удерживает ссылку. Снимает её
     после завершения, чтобы set не рос бесконечно.
@@ -990,7 +1073,7 @@ def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     """
     task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
     _BG_TASKS.add(task)
-    task.add_done_callback(_BG_TASKS.discard)
+    task.add_done_callback(_on_bg_done)
     return task
 
 

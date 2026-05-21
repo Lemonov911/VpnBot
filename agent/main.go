@@ -156,7 +156,12 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	httpServer.Shutdown(ctx)
+	if err := httpServer.Shutdown(ctx); err != nil {
+		// Shutdown returns the context deadline error if in-flight handlers
+		// don't drain within 5s. Logging makes the difference between
+		// "clean shutdown" and "killed mid-request" visible in journalctl.
+		log.Printf("http shutdown: %v", err)
+	}
 
 	log.Println("vpnctl stopped")
 }

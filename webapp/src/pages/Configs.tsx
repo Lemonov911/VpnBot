@@ -160,7 +160,7 @@ function ServerPicker({
 }
 
 
-function ProtoIcon({ protocol: _protocol }: { protocol: string }) {
+function ProtoIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <rect x="3" y="3" width="18" height="18" rx="3" stroke="#fff" strokeWidth="2"/>
@@ -246,7 +246,7 @@ function SlotCard({
       <div className={isLast ? '' : 'border-b border-solid border-[var(--card-border)]'}>
         <div className="py-[13px] px-4 flex items-center gap-[14px]">
           <div className={`w-10 h-10 rounded-xl shrink-0 flex items-center justify-center relative ${isEmpty ? bgDim : bg}`}>
-            <ProtoIcon protocol={slot.protocol} />
+            <ProtoIcon />
             {!isEmpty && (
               <span className="absolute -bottom-[3px] -right-[3px] w-3 h-3 rounded-full bg-success border-2 border-[var(--tg-theme-bg-color,#fff)]" />
             )}
@@ -381,7 +381,6 @@ function SlotCard({
 function SubscriptionGroup({
   slots, onActivate, onRevoke, lang,
 }: {
-  subscriptionId: number
   slots: (VpnConfig & { slot_num: number; subscription_id: number })[]
   onActivate: (id: number, serverId: number) => Promise<void>
   onRevoke:   (id: number) => Promise<void>
@@ -586,7 +585,6 @@ export default function Configs() {
       {Object.entries(bySubscription).map(([subId, subSlots]) => (
         <SubscriptionGroup
           key={subId}
-          subscriptionId={Number(subId)}
           slots={subSlots}
           onActivate={handleActivate}
           onRevoke={handleRevoke}

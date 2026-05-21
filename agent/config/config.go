@@ -125,7 +125,13 @@ func Load() *Config {
 		}
 		hasVLESS = true
 		def := tierDefaults[svc]
-		port, _ := strconv.Atoi(env(prefix+"_INBOUND_PORT", strconv.Itoa(def.InboundPort)))
+		portStr := env(prefix+"_INBOUND_PORT", strconv.Itoa(def.InboundPort))
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			// Atoi-swallow silently gave port=0 → random port → agent broken
+			// in a way that's invisible until the bot tries to connect.
+			log.Fatalf("invalid env %s_INBOUND_PORT=%q: %v", prefix, portStr, err)
+		}
 		cfg.XrayTiers[svc] = TierConfig{
 			InboundTag:  env(prefix+"_INBOUND_TAG", def.InboundTag),
 			InboundPort: port,

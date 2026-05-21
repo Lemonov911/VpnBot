@@ -146,7 +146,6 @@ function AppChoiceAnswer() {
 
 function FaqGroup({ t }: { t: ReturnType<typeof useT> }) {
   const [open, setOpen] = useState<number | null>(null)
-  const tp = WebApp.themeParams
   // FAQ q3+a3 — про установку eSIM. Скрываем если eSIM выключен (build flag),
   // иначе юзер видит подробную инструкцию на отсутствующий в UI продукт.
   const SHOW_ESIM = import.meta.env.VITE_SHOW_ESIM !== 'false'
@@ -198,7 +197,6 @@ type PageState = 'form' | 'sending' | 'done' | 'error'
 
 export default function Support() {
   const nav = useNavigate()
-  const tp  = WebApp.themeParams
   const t   = useT()
   const accent = 'var(--tg-theme-button-color, #2481cc)'
 

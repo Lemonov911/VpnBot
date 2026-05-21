@@ -1015,14 +1015,19 @@ async def is_user_banned(user_id: int) -> bool:
             return bool(row and row[0])
 
 
-async def mark_subscription_grace(subscription_id: int, grace_until: str):
-    """Переводит подписку в grace-period (14 дней низкой скорости)."""
+async def mark_subscription_grace(subscription_id: int, grace_until: str) -> bool:
+    """Переводит подписку в grace-period (14 дней низкой скорости).
+
+    Возвращает True если переход состоялся; False если строка уже не active
+    (например, recurring renewal продлил подписку прямо перед нами — race).
+    """
     async with _connect() as db:
-        await db.execute(
+        cur = await db.execute(
             "UPDATE subscriptions SET status='grace', grace_until=? WHERE id=? AND status='active'",
             (grace_until, subscription_id),
         )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def get_grace_expired_subscriptions() -> list[dict]:

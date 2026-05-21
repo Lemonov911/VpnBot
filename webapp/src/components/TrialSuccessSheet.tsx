@@ -9,7 +9,7 @@ const APP_LINKS = [
   { label: '🤖 AmneziaWG — Android', url: 'https://play.google.com/store/apps/details?id=org.amnezia.awg' },
 ]
 
-export default function TrialSuccessSheet({ onClose, days }: { onClose: () => void; days?: number }) {
+export default function TrialSuccessSheet({ onClose }: { onClose: () => void }) {
   const nav = useNavigate()
   const t = useT()
 

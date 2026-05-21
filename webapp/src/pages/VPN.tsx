@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
   createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceOxapay, createVpnInvoiceLavatop, cancelLavatopRenewal,
-  getActiveSubscription, getUserConfigs, getVpnStatus,
-  type Subscription, type VpnConfig, type VpnServerStatus,
+  getActiveSubscription, getUserConfigs,
+  type Subscription, type VpnConfig,
 } from '../api'
 import { useT, usePlural, useLang } from '../i18n'
 import { InitDataGate } from '../components/InitDataGate'
@@ -106,7 +106,6 @@ export default function VPN() {
 
   const [sub,        setSub]        = useState<Subscription | null | undefined>(undefined)
   const [configs,    setConfigs]    = useState<VpnConfig[] | null>(null)
-  const [status,     setStatus]     = useState<VpnServerStatus[] | null>(null)
   const [sheetPlan,  setSheetPlan]  = useState<Plan | null>(null)
   const [buyLoading, setBuyLoading] = useState<string | null>(null)
   const [paid,       setPaid]       = useState(false)
@@ -143,10 +142,9 @@ export default function VPN() {
     Promise.all([
       getActiveSubscription().catch(() => null),
       getUserConfigs().catch(() => [] as VpnConfig[]),
-      getVpnStatus().catch(() => null),
-    ]).then(([s, c, st]) => {
+    ]).then(([s, c]) => {
       if (cancelled) return
-      setSub(s); setConfigs(c as VpnConfig[]); setStatus(st)
+      setSub(s); setConfigs(c as VpnConfig[])
     })
     return () => { cancelled = true; WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])

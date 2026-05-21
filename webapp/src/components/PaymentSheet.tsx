@@ -173,9 +173,10 @@ export default function PaymentSheet({
               : []),
           ]) as [PayMethod, string, string, string][]).map(([val, icon, label, price], i, arr) => (
             <div key={val}>
-              <div
+              <button
+                type="button"
                 onClick={() => setMethod(val)}
-                className={`py-[13px] px-4 flex items-center gap-3.5 cursor-pointer ${i < arr.length - 1 && method !== val ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
+                className={`w-full text-left py-[13px] px-4 flex items-center gap-3.5 cursor-pointer border-none bg-transparent ${i < arr.length - 1 && method !== val ? 'border-b border-gray-500/10' : ''} ${method === val ? 'bg-primary/[0.06]' : ''}`}
               >
                 <span className="text-[22px] w-8 text-center shrink-0">{icon}</span>
                 <span className="flex-1 text-[15px] text-[var(--tg-theme-text-color,#000)] font-medium">{label}</span>
@@ -187,7 +188,7 @@ export default function PaymentSheet({
                 }`}>
                   {method === val && <div className="w-2 h-2 rounded-full bg-white" />}
                 </div>
-              </div>
+              </button>
               {/* Period chips под всеми методами оплаты (Stars / Cryptomus /
                   Lava / CryptoBot — у каждого свой way принимать multi-period). */}
               {method === val && (
@@ -262,9 +263,10 @@ export default function PaymentSheet({
             скрыт (длинные периоды всегда one-time). По дефолту ON — экономит
             юзеру клик и улучшает retention; отключить можно одним тапом. */}
         {method === 'stars' && period === '1m' && (
-          <div
+          <button
+            type="button"
             onClick={() => setRecurring(r => !r)}
-            className="flex items-center gap-3 p-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color,#f1f1f1)] cursor-pointer mb-3"
+            className="w-full text-left flex items-center gap-3 p-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color,#f1f1f1)] cursor-pointer mb-3"
           >
             <span className="text-base shrink-0">🔁</span>
             <div className="flex-1 min-w-0">
@@ -282,7 +284,7 @@ export default function PaymentSheet({
                 recurring ? 'translate-x-[18px]' : 'translate-x-0.5'
               }`} />
             </div>
-          </div>
+          </button>
         )}
         <button
           className="btn !w-full !text-base !py-3.5"

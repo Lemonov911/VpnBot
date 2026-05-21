@@ -27,11 +27,11 @@ vi.mock('@twa-dev/sdk', () => ({
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function renderSheet(props: { onClose?: () => void; days?: number } = {}) {
+function renderSheet(props: { onClose?: () => void } = {}) {
   const onClose = props.onClose ?? vi.fn()
   render(
     <MemoryRouter>
-      <TrialSuccessSheet onClose={onClose} days={props.days} />
+      <TrialSuccessSheet onClose={onClose} />
     </MemoryRouter>
   )
   return { onClose }
@@ -47,16 +47,6 @@ describe('TrialSuccessSheet — рендер', () => {
   it('показывает заголовок', () => {
     renderSheet()
     expect(screen.getByText('Триал активирован!')).toBeInTheDocument()
-  })
-
-  it('показывает дефолтное количество дней (3)', () => {
-    renderSheet()
-    expect(screen.getByText(/3 дня бесплатно/)).toBeInTheDocument()
-  })
-
-  it('показывает переданное количество дней', () => {
-    renderSheet({ days: 7 })
-    expect(screen.getByText(/7 дня бесплатно/)).toBeInTheDocument()
   })
 
   it('рендерит все 4 кнопки скачивания', () => {
