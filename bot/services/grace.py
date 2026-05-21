@@ -84,6 +84,48 @@ async def try_renew_from_grace(
     )
 
     # Unthrottle на агенте — AWG-tc снять, VLESS-grace вернуть в normal inbound.
+    await unthrottle_sub_configs(sub_id, user_id, plan_key)
+
+    # Записываем платёж (для admin /payments + LTV-аналитики).
+    try:
+        await record_payment(
+            user_id=user_id, subscription_id=sub_id,
+            method=method, stars=stars, tx_id=payment_id,
+        )
+    except Exception as e:
+        # Не блокируем UX из-за ошибки записи payment'а — это «не критично».
+        logger.warning("record_payment after grace-renew failed: %s", e)
+
+    # TG-сообщение юзеру.
+    try:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>Подписка продлена!</b>\n\n"
+            f"📅 Действует до: <b>{renewed['expires_at'][:10]}</b>\n"
+            f"⚡ Полная скорость восстановлена — VPN снова работает без ограничений.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("send grace-renew confirmation to user %d: %s", user_id, e)
+
+    return True
+
+
+async def unthrottle_sub_configs(sub_id: int, user_id: int, plan_key: str) -> None:
+    """Снимает throttle с конфигов подписки после выхода из grace.
+
+    AWG  — unthrottle_peer (снимает tc-фильтр на awg0).
+    VLESS — add_peer в normal inbound + remove_peer из vless-grace.
+    Ошибки агента best-effort: не блокируем UX, scheduler sync подберёт.
+
+    Используется в try_renew_from_grace, handle_admin_sub_extend и Lava
+    recurring renewal — единственный источник правды для unthrottle-логики.
+    """
+    from services.database import (
+        get_configs_for_subscription, get_server_by_id, update_config_data,
+    )
+    from services.plans import vless_service_for_plan
+
     target_vless_svc = vless_service_for_plan(plan_key)
     try:
         configs = await get_configs_for_subscription(sub_id)
@@ -121,38 +163,11 @@ async def try_renew_from_grace(
                         await update_config_data(cfg["id"], new_peer.config)
             except VpnctlError as e:
                 logger.warning(
-                    "renew-from-grace unthrottle cfg #%d: %s",
-                    cfg["id"], e, exc_info=True,
+                    "unthrottle_sub_configs cfg #%d: %s", cfg["id"], e, exc_info=True,
                 )
     except Exception as e:
-        # Outer-catch: даже если unthrottle упал — подписка УЖЕ продлена в БД,
-        # scheduler следующим tick'ом разрулит (вернёт пиры на normal inbound).
-        # Лучше ответить юзеру «продлено» чем тихо упасть.
-        logger.error("renew-from-grace unthrottle outer: %s", e, exc_info=True)
-
-    # Записываем платёж (для admin /payments + LTV-аналитики).
-    try:
-        await record_payment(
-            user_id=user_id, subscription_id=sub_id,
-            method=method, stars=stars, tx_id=payment_id,
-        )
-    except Exception as e:
-        # Не блокируем UX из-за ошибки записи payment'а — это «не критично».
-        logger.warning("record_payment after grace-renew failed: %s", e)
-
-    # TG-сообщение юзеру.
-    try:
-        await bot.send_message(
-            user_id,
-            f"✅ <b>Подписка продлена!</b>\n\n"
-            f"📅 Действует до: <b>{renewed['expires_at'][:10]}</b>\n"
-            f"⚡ Полная скорость восстановлена — VPN снова работает без ограничений.",
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.warning("send grace-renew confirmation to user %d: %s", user_id, e)
-
-    return True
+        # Даже при ошибке — подписка уже активна в БД; scheduler sync разрулит.
+        logger.error("unthrottle_sub_configs sub=%d outer: %s", sub_id, e, exc_info=True)
 
 
 async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
@@ -168,7 +183,7 @@ async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
         update_server_peer_count, reset_config_slot,
         mark_subscription_expired_from_grace,
     )
-    from services.plans import vless_service_for_plan as _vless_svc
+    from services.revoke import current_vless_service
 
     configs = await get_configs_for_subscription(sub_id)
     for cfg in configs:
@@ -189,7 +204,7 @@ async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
                     elif protocol in ("vless", "vless-reality") and vless_uuid:
                         # peer мог быть в vless-grace или обычном inbound
                         config_data = cfg.get("config_data") or ""
-                        svc = "vless-grace" if ":9453" in config_data else _vless_svc(plan_key)
+                        svc = current_vless_service(config_data, plan_key)
                         try: await cli.remove_peer(svc, vless_uuid)
                         except VpnctlError: pass
                         await update_server_peer_count(server_id, -1)

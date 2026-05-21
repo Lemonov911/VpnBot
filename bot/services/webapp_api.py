@@ -1561,12 +1561,23 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             cur_expires = datetime.utcnow()
         base = max(cur_expires, datetime.utcnow())
         new_expires = base + timedelta(days=plan["duration_days"])
+        was_grace = sub.get("status") == "grace"
         await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+
+        # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
+        # extend_subscription_expires_at уже переключил статус в 'active' в БД.
+        if was_grace:
+            from services.grace import unthrottle_sub_configs
+            asyncio.create_task(
+                unthrottle_sub_configs(sub["id"], sub["user_id"], sub["plan"])
+            )
+
         try:
             await bot.send_message(
                 sub["user_id"],
                 f"🔁 <b>Подписка продлена автоматически</b>\n\n"
-                f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>.",
+                f"VPN {plan['name']} активен до <b>{new_expires.strftime('%d.%m.%Y')}</b>."
+                + ("\n⚡ Полная скорость восстановлена." if was_grace else ""),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -2685,15 +2696,26 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     reason = (body.get("reason") or "").strip()[:200] or None
 
     from services.database import extend_subscription, audit_log_record
+    from services.grace import unthrottle_sub_configs
     updated = await extend_subscription(sub_id, days)
     if updated is None:
         return web.json_response({"error": "sub not found"}, status=404)
+
+    was_grace = updated.pop("_was_grace", False)
 
     await audit_log_record(
         admin_id=0, action="sub_extend",
         target=f"sub:{sub_id}",
         details=f"+{days}d reason={reason or '-'} new_expiry={updated['expires_at']}",
     )
+
+    # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
+    # DB уже active; делаем в фоне чтобы не задерживать ответ admin-панели.
+    if was_grace:
+        asyncio.create_task(
+            unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"])
+        )
+
     return web.json_response({"ok": True, "subscription": updated})
 
 

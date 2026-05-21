@@ -329,19 +329,13 @@ export default function Plans() {
     try {
       const res = await changeSubscriptionPlan(plan.key)
       if (res.invoice_url) {
-        // Must use openInvoice (not openLink) so the payment callback fires
-        // inside the Mini App. openLink opens an external browser and the
-        // 'paid' status callback is never delivered.
-        let callbackFired = false
-        const guardId = setTimeout(() => {
-          if (!callbackFired) setLoading(null)
-        }, 5 * 60 * 1000)
-        WebApp.openInvoice(res.invoice_url, s => {
-          callbackFired = true
-          clearTimeout(guardId)
-          setLoading(null)
-          if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
-        })
+        // changeSubscriptionPlan returns a CryptoBot URL — must use openLink,
+        // not openInvoice (which only works with native Stars invoice links).
+        // setPostPayOpen shows "payment is processing" overlay so user knows
+        // the bot is waiting for the CryptoBot webhook.
+        setLoading(null)
+        WebApp.openLink(res.invoice_url)
+        setPostPayOpen(true)
       } else if (res.scheduled) {
         WebApp.HapticFeedback.notificationOccurred('success')
         setSub(prev => prev ? { ...prev, pending_plan: plan.key } : prev)

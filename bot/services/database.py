@@ -747,7 +747,8 @@ async def get_expired_subscriptions() -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT id, user_id, plan, expires_at, pending_plan FROM subscriptions
-            WHERE status='active' AND expires_at IS NOT NULL AND expires_at <= ?
+            WHERE status='active' AND plan != 'vpn_trial'
+              AND expires_at IS NOT NULL AND expires_at <= ?
         """, (datetime.utcnow().isoformat(),)) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -804,10 +805,12 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT id FROM subscriptions WHERE id=?", (subscription_id,)
+            "SELECT id, status FROM subscriptions WHERE id=?", (subscription_id,)
         ) as cur:
-            if not await cur.fetchone():
-                return None
+            pre = await cur.fetchone()
+        if not pre:
+            return None
+        was_grace = pre["status"] == "grace"
         await db.execute(
             """UPDATE subscriptions
                SET expires_at = CASE
@@ -815,8 +818,12 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
                        THEN datetime('now', ?)
                        ELSE datetime(expires_at, ?)
                    END,
-                   status = CASE WHEN status='grace' THEN 'active' ELSE status END,
-                   grace_until = CASE WHEN status='grace' THEN NULL ELSE grace_until END
+                   status            = CASE WHEN status='grace' THEN 'active' ELSE status END,
+                   grace_until       = CASE WHEN status='grace' THEN NULL ELSE grace_until END,
+                   reminded_3d       = 0,
+                   reminded_1d       = 0,
+                   reminded_renewal_3d = 0,
+                   reminded_grace_3d   = 0
                WHERE id=?""",
             (f"+{days} days", f"+{days} days", subscription_id),
         )
@@ -826,7 +833,11 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
             (subscription_id,),
         ) as cur:
             row = await cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            result = dict(row)
+            result["_was_grace"] = was_grace  # Internal flag for callers (unthrottle)
+            return result
 
 
 async def admin_grant_subscription(
@@ -1007,7 +1018,7 @@ async def mark_subscription_grace(subscription_id: int, grace_until: str):
     """Переводит подписку в grace-period (14 дней низкой скорости)."""
     async with _connect() as db:
         await db.execute(
-            "UPDATE subscriptions SET status='grace', grace_until=? WHERE id=?",
+            "UPDATE subscriptions SET status='grace', grace_until=? WHERE id=? AND status='active'",
             (grace_until, subscription_id),
         )
         await db.commit()

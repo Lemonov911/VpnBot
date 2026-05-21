@@ -159,6 +159,10 @@ export default function VPN() {
           clearTimeout(guardId)
           setBuyLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
+          else if (s !== 'cancelled') {
+            WebApp.HapticFeedback.notificationOccurred('error')
+            WebApp.showAlert('Ошибка оплаты. Попробуйте ещё раз.')
+          }
         })
       } else if (method === 'cryptomus') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
