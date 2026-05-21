@@ -679,7 +679,15 @@ export default function VPN() {
             </div>
           </div>
         )}
-        {sub.payment_provider === 'lavatop' && sub.parent_contract_id && !sub.auto_renew && (
+        {/* «Работает до X (без автопродления)» — показываем только если юзер
+            КОГДА-ТО имел recurring и отключил его.
+            - Lava: parent_contract_id != NULL — recurring был на момент покупки.
+            - Stars: auto_renew_disabled_at != NULL — disable_auto_renew выставил
+              маркер при отмене (для one-time Stars поле остаётся NULL → баннера нет). */}
+        {!sub.auto_renew && (
+          (sub.payment_provider === 'lavatop' && sub.parent_contract_id) ||
+          !!sub.auto_renew_disabled_at
+        ) && (
           <div className="mt-3 p-[8px_10px] rounded-lg bg-[var(--tg-theme-section-bg-color)]/60 flex items-center gap-2">
             <span className="text-sm">❎</span>
             <span className="text-[11px] text-[var(--tg-theme-hint-color)]">

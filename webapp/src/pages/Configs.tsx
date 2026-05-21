@@ -567,6 +567,19 @@ export default function Configs() {
           информации.  Если в будущем вернётся eSIM или ещё протокол —
           возвращаем legend здесь. */}
 
+      {/* Grace-баннер: подписка истекла, VPN throttled до 256 кбит/с.
+          Без него юзер видит «активные» конфиги в списке и винит сервис в
+          медленной работе вместо того чтобы продлить. */}
+      {sub?.status === 'grace' && (
+        <button
+          onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
+          className="w-full text-left rounded-xl p-3 mb-3 bg-warning/15 border border-warning/30 cursor-pointer"
+        >
+          <div className="font-medium text-[var(--tg-theme-text-color)]">{t('configs_grace_title' as never)}</div>
+          <div className="text-sm opacity-80 mt-1 text-[var(--tg-theme-hint-color)]">{t('configs_grace_sub' as never)}</div>
+        </button>
+      )}
+
       {loading && (
         <div className="flex flex-col gap-[10px]">
           {[1,2,3].map(i => (

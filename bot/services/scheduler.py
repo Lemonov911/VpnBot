@@ -69,19 +69,6 @@ logger = logging.getLogger(__name__)
 
 GRACE_DAYS = 14
 
-GRACE_NOTICE = (
-    "🐢 <b>Подписка истекла</b>\n\n"
-    "VPN работает ещё <b>14 дней</b> на скорости 256 кбит/с — "
-    "специально чтобы Telegram оставался доступным и ты мог продлить.\n\n"
-    "Видео и тяжёлые сайты тормозят. Продли сейчас — полная скорость вернётся сразу."
-)
-
-EXPIRY_NOTICE = (
-    "⚠️ <b>VPN полностью отключён</b>\n\n"
-    "Льготный период (14 дней) истёк. Для возобновления доступа "
-    "оформи новую подписку ↓"
-)
-
 CHECK_INTERVAL = 3600  # секунд (1 час)
 
 
@@ -119,13 +106,13 @@ async def _weekly_vacuum():
 _WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
 
-def _renew_kb() -> InlineKeyboardMarkup | None:
+def _renew_kb(lang: str | None = None) -> InlineKeyboardMarkup | None:
     """Inline-клавиатура с deep-link на /vpn/plans в Mini App. None если WEBAPP_URL пустой."""
     if not _WEBAPP_URL:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text="💎 Продлить подписку",
+            text=_i18n_t(lang, "bot_btn_renew_subscription"),
             web_app=WebAppInfo(url=f"{_WEBAPP_URL}/vpn/plans"),
         )
     ]])
@@ -224,7 +211,7 @@ async def _process_expired_subscriptions(bot: Bot):
                     bot, user_id,
                     _i18n_t(_lang, "bot_expiry_notice"),
                     parse_mode="HTML",
-                    reply_markup=_renew_kb(),
+                    reply_markup=_renew_kb(_lang),
                 )
             except Exception as e:
                 logger.warning("late-expire sub #%d: %s", sub_id, e, exc_info=True)
@@ -441,7 +428,7 @@ async def _process_expired_subscriptions(bot: Bot):
         await _send_throttled(
             bot, user_id, _i18n_t(_lang, "bot_grace_notice"),
             parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            reply_markup=_renew_kb(_lang),
         )
 
 
@@ -532,7 +519,7 @@ async def _process_grace_expired_subscriptions(bot: Bot):
         await _send_throttled(
             bot, user_id, _i18n_t(_lang, "bot_expiry_notice"),
             parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            reply_markup=_renew_kb(_lang),
         )
 
 
@@ -662,18 +649,14 @@ async def _process_expired_orders(bot: Bot):
         await _send_throttled(
             bot, user_id, _i18n_t(_lang, "bot_expiry_notice"),
             parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            reply_markup=_renew_kb(_lang),
         )
 
 
 # Триал-клоуз notice — не «продли», т.к. триал был бесплатный. Главное
 # CTA — выбор постоянного тарифа через inline-кнопку под сообщением
-# (см. _renew_kb()), не текстом /start.
-TRIAL_EXPIRY_NOTICE = (
-    "⏰ <b>Пробный период закончился</b>\n\n"
-    "Понравилось? Выбери постоянный тариф ↓ — "
-    "от 200 ₽/мес, та же скорость, без перерыва."
-)
+# (см. _renew_kb()), не текстом /start. Текст живёт в i18n_bot.t() как
+# bot_trial_expiry_notice.
 
 
 async def _process_expired_trials(bot: Bot):
@@ -753,7 +736,7 @@ async def _process_expired_trials(bot: Bot):
             await _send_throttled(
                 bot, user_id, _i18n_t(_lang, "bot_trial_expiry_notice"),
                 parse_mode="HTML",
-                reply_markup=_renew_kb(),
+                reply_markup=_renew_kb(_lang),
             )
 
 
@@ -891,14 +874,16 @@ async def _apply_quota_throttle(bot: Bot):
                     if not already_notified and not sent_throttle_notify:
                         sent_throttle_notify = True
                         try:
+                            _lang = await get_user_lang(cfg["user_id"])
                             await bot.send_message(
                                 cfg["user_id"],
-                                f"🐢 <b>Лимит трафика {cap_gb} GB исчерпан</b>\n\n"
-                                f"Скорость снижена до {plan.get('throttle_mbps', '?')} Mbps до конца месяца.\n"
-                                f"Если ты импортировал <b>Subscription URL</b> — конфиг обновится автоматически "
-                                f"в течение нескольких минут.\n\n"
-                                f"💎 Апгрейд тарифа в /start даёт больше квоты.",
+                                _i18n_t(
+                                    _lang, "bot_quota_throttle",
+                                    cap_gb=cap_gb,
+                                    throttle_mbps=plan.get('throttle_mbps', '?'),
+                                ),
                                 parse_mode="HTML",
+                                reply_markup=_renew_kb(_lang),
                             )
                         except Exception as e:
                             logger.warning("notify throttle user %d: %s", cfg["user_id"], e, exc_info=True)
@@ -1159,27 +1144,17 @@ async def _send_expiry_reminders(bot: Bot):
                 await mark_reminded(sub["id"], days)
                 continue
 
+            _lang = await get_user_lang(user_id)
             if is_trial:
                 # 1 день до конца триала — главный конверсионный момент.
-                text = (
-                    "⏳ <b>Пробный период заканчивается через 24 часа</b>\n\n"
-                    "Понравилось? Выбери постоянный тариф — "
-                    "от 200 ₽/мес, та же скорость, без перерыва.\n\n"
-                    "Продли сейчас — VPN продолжит работать без остановки."
-                )
+                text = _i18n_t(_lang, "bot_trial_expiry_1d")
             elif days == 3:
-                text = (
-                    "⏰ <b>Подписка истекает через 3 дня</b>\n\n"
-                    "Успей продлить, чтобы VPN не отключился."
-                )
+                text = _i18n_t(_lang, "bot_expiry_3d")
             else:
-                text = (
-                    "🚨 <b>Подписка истекает завтра!</b>\n\n"
-                    "Последний шанс продлить без перерыва в работе VPN."
-                )
+                text = _i18n_t(_lang, "bot_expiry_1d")
             sent = await _send_throttled(
                 bot, user_id, text, parse_mode="HTML",
-                reply_markup=_renew_kb(),
+                reply_markup=_renew_kb(_lang),
             )
             if sent:
                 await mark_reminded(sub["id"], days)
@@ -1191,14 +1166,11 @@ async def _send_expiry_reminders(bot: Bot):
     # loss потому что юзер чаще всего забывает что VPN на throttle.
     grace_subs = await get_subscriptions_grace_ending_soon(3)
     for sub in grace_subs:
-        text = (
-            "⏰ <b>Через 3 дня VPN отключится</b>\n\n"
-            "Подписка в режиме 256 кбит/с — а через 3 дня закроется совсем. "
-            "Продли сейчас, чтобы вернуть полную скорость и не остаться без VPN."
-        )
+        _lang = await get_user_lang(sub["user_id"])
         sent = await _send_throttled(
-            bot, sub["user_id"], text, parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            bot, sub["user_id"], _i18n_t(_lang, "bot_grace_3d"),
+            parse_mode="HTML",
+            reply_markup=_renew_kb(_lang),
         )
         if sent:
             await mark_grace_reminded(sub["id"])
@@ -1267,21 +1239,24 @@ async def _send_renewal_reminders(bot: Bot):
                 plan=plan_name, date=cur_expires.strftime("%d.%m.%Y"),
             )
             text = head + body
-        else:  # stars — оставляем RU как было (Stars-юзеры почти все RU)
-            day_word_ru = plural_ru(days_left, DAYS)
+        else:  # stars
+            date_str = cur_expires.strftime('%d.%m.%Y')
             if days_left == 0:
-                when_text = "Сегодня"
+                text = _i18n_t(
+                    user_lang, "bot_stars_renewal_today",
+                    stars=stars, plan=plan_name, date=date_str,
+                )
             elif days_left == 1:
-                when_text = "Завтра"
+                text = _i18n_t(
+                    user_lang, "bot_stars_renewal_tomorrow",
+                    stars=stars, plan=plan_name, date=date_str,
+                )
             else:
-                when_text = f"Через {days_left} {day_word_ru}"
-            text = (
-                f"🔁 <b>{when_text} Telegram спишет {stars} ⭐ за продление</b>\n\n"
-                f"Тариф: <b>{plan_name}</b>\n"
-                f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
-                f"Если не хочешь продлевать — отмени в Telegram: "
-                f"Настройки → Звёзды → Подписки → выбери MAX VPN → Cancel."
-            )
+                text = _i18n_t(
+                    user_lang, "bot_stars_renewal_in",
+                    n=days_left, day_word=day_w,
+                    stars=stars, plan=plan_name, date=date_str,
+                )
 
         sent = await _send_throttled(bot, user_id, text, parse_mode="HTML")
         if sent:
@@ -1299,16 +1274,11 @@ async def _send_trial_nudge(bot: Bot):
         return
     logger.info("trial nudge: %d кандидатов", len(candidates))
     for sub in candidates:
-        text = (
-            "👋 <b>Как VPN?</b>\n\n"
-            "Ты уже сутки пользуешься пробным периодом.\n\n"
-            "Если что-то не работает или есть вопросы — напиши нам, "
-            "быстро разберёмся. Если всё ок — выбери постоянный тариф "
-            "прямо сейчас, не придётся настраивать заново."
-        )
+        _lang = await get_user_lang(sub["user_id"])
         sent = await _send_throttled(
-            bot, sub["user_id"], text, parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            bot, sub["user_id"], _i18n_t(_lang, "bot_trial_nudge"),
+            parse_mode="HTML",
+            reply_markup=_renew_kb(_lang),
         )
         if sent:
             await mark_trial_nudge_sent(sub["id"])
@@ -1331,17 +1301,11 @@ async def _winback_campaign(bot: Bot):
     for sub in candidates:
         user_id = sub["user_id"]
         sub_id  = sub["id"]
-        text = (
-            "👋 <b>Скучаем без тебя!</b>\n\n"
-            "Прошла неделя, а VPN всё ещё выключен.\n\n"
-            "Возможно, что-то не устроило — напиши нам в поддержку, "
-            "разберёмся. Или просто продли — тарифы с 200 ₽/мес, "
-            "без контракта, отмена в любой момент.\n\n"
-            "Будем рады видеть тебя снова 🙂"
-        )
+        _lang = await get_user_lang(user_id)
         sent = await _send_throttled(
-            bot, user_id, text, parse_mode="HTML",
-            reply_markup=_renew_kb(),
+            bot, user_id, _i18n_t(_lang, "bot_winback"),
+            parse_mode="HTML",
+            reply_markup=_renew_kb(_lang),
         )
         if sent:
             await mark_winback_sent(sub_id)

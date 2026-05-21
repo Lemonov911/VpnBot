@@ -497,6 +497,13 @@ async def _migrate(db: aiosqlite.Connection):
     # При отмене из Lava-кабинета или нашего UI — ставится в 0, существующий период дослужит.
     if "auto_renew" not in sub_cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 0")
+    # auto_renew_disabled_at — timestamp когда auto_renew был отключён.
+    # Нужен фронту для гейтинга «VPN работает до X (без автопродления)»-баннера:
+    # для Stars one-time покупок payment_provider='stars' и auto_renew=0, но баннер
+    # показывать не надо. Этот столбец = «был ли когда-то включён auto-renew».
+    # NULL → юзер никогда не имел recurring; non-NULL → отменён в указанный момент.
+    if "auto_renew_disabled_at" not in sub_cols:
+        await db.execute("ALTER TABLE subscriptions ADD COLUMN auto_renew_disabled_at TIMESTAMP")
     # payment_provider — 'stars' | 'cryptobot' | 'cryptomus' | 'lavatop' | 'trial' | 'gift'.
     # Для аналитики + чтобы знать какой refund-API использовать.
     if "payment_provider" not in sub_cols:
@@ -1621,7 +1628,9 @@ async def disable_auto_renew(sub_id: int) -> bool:
     """
     async with _connect() as db:
         cur = await db.execute(
-            "UPDATE subscriptions SET auto_renew=0 WHERE id=? AND auto_renew=1",
+            "UPDATE subscriptions SET auto_renew=0, "
+            "auto_renew_disabled_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND auto_renew=1",
             (sub_id,),
         )
         await db.commit()

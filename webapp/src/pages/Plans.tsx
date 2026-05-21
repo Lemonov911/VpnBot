@@ -217,6 +217,11 @@ export default function Plans() {
   // (handleChange — downgrade/cancel/upgrade без инвойса). Без флага юзер
   // при downgrade видел бы «Открываем оплату», что неверно.
   const [isPaymentOp, setIsPaymentOp] = useState(false)
+  // Pending-payment placeholder — параллель VPN.tsx flow.
+  // Если юзер закрыл PostPayOnboarding и вернулся в /vpn/plans без active sub,
+  // мы показываем «Проверяем оплату…» вместо повторного списка планов, чтобы
+  // он не запутался и не попытался купить ещё раз.
+  const [pendingPayment, setPendingPayment] = useState<{plan_key: string, method: string, started_at: number} | null>(null)
 
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
@@ -239,6 +244,20 @@ export default function Plans() {
     // Защита от unmount-race: если юзер быстро уходит со страницы,
     // pending fetch не должен setState на unmounted component.
     let cancelled = false
+    // Pending-payment flag — выставляется после openLink на внешний инвойс
+    // (Lava / CryptoBot / OxaPay). Если юзер вернулся в /vpn/plans до прихода
+    // вебхука, показываем placeholder вместо обычного списка планов.
+    try {
+      const raw = localStorage.getItem('pending_payment')
+      if (raw) {
+        const pp = JSON.parse(raw)
+        if (Date.now() - pp.started_at < 15 * 60 * 1000) {
+          setPendingPayment(pp)
+        } else {
+          localStorage.removeItem('pending_payment')
+        }
+      }
+    } catch { /* localStorage may be unavailable */ }
     getActiveSubscription().then(sub => {
       if (cancelled) return
       setSub(sub)
@@ -253,6 +272,32 @@ export default function Plans() {
       WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack)
     }
   }, [nav, location.state])
+
+  // Cleanup: когда sub стал active — снимаем pending-флаг.
+  useEffect(() => {
+    if (sub && sub.status === 'active' && pendingPayment) {
+      try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+      setPendingPayment(null)
+    }
+  }, [sub, pendingPayment])
+
+  // Polling: пока pendingPayment висит — каждые 8с refresh subscription.
+  // Стопаем по timeout 15 мин или когда sub активен.
+  useEffect(() => {
+    if (!pendingPayment) return
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getActiveSubscription()
+        if (fresh && fresh.status === 'active') {
+          if (mountedRef.current) setSub(fresh)
+        } else if (Date.now() - pendingPayment.started_at > 15 * 60 * 1000) {
+          try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+          if (mountedRef.current) setPendingPayment(null)
+        }
+      } catch { /* network blip — retry next tick */ }
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [pendingPayment])
 
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     if (loading) {
@@ -291,12 +336,18 @@ export default function Plans() {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
         setLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else if (method === 'lavatop') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceLavatop(planKey)
         setLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else {
@@ -304,6 +355,9 @@ export default function Plans() {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceCrypto(planKey, 'RUB')
         setLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       }
@@ -458,6 +512,16 @@ export default function Plans() {
   return (
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
+        {/* Pending-payment placeholder — юзер ушёл на внешний инвойс, вебхук
+            ещё не вернулся, sub === null. Сидим в «Проверяем оплату…», polling
+            (useEffect выше) автоматически снимет флаг когда sub станет active. */}
+        {pendingPayment && !sub && (
+          <div className="fade-in rounded-2xl p-4 mb-2 bg-[var(--tg-theme-secondary-bg-color,#f1f1f1)] border border-[var(--card-border)] text-center">
+            <div className="text-2xl mb-2">⏳</div>
+            <div className="font-medium mb-1 text-[var(--tg-theme-text-color,#000)]">{t('vpn_payment_verifying' as never)}</div>
+            <div className="text-sm opacity-70 text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_payment_verifying_sub' as never)}</div>
+          </div>
+        )}
         {/* Триал не в PLANS (нечего покупать) → curPlan find() возвращал бы
             undefined и мы fallback'или на VISIBLE_PLANS[0] = vpn_base, что
             делало vpn_base показанным как «Ваш» а vpn_max как «+20 ₽».

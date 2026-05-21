@@ -518,7 +518,6 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     )
     await complete_order(order_id, payment_id=payment_id)
 
-    expiry_str  = expires_at.strftime("%d.%m.%Y")
     awg_slots   = plan.get("awg_slots", 1)
     vless_slots = plan.get("vless_slots", 0)
     wg_slots    = plan.get("wg_slots", 0)
@@ -550,16 +549,6 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
                 )
                 await update_server_peer_count(server["id"], +1)
                 created_wg += 1
-                flag_safe = html_escape(server.get('flag', ''))
-                name_safe = html_escape(server.get('name', ''))
-                await message.answer_document(
-                    BufferedInputFile(
-                        peer.config.encode(),
-                        filename=f"maxvpn_{i+1}.conf",
-                    ),
-                    caption=f"📁 <b>WireGuard конфиг #{i+1}</b>\nСервер: {flag_safe} {name_safe}\nIP: {html_escape(peer_ip)}",
-                    parse_mode="HTML",
-                )
             except VpnctlError as e:
                 logger.warning("vpnctl WG peer error: %s", e, exc_info=True)
 
@@ -630,15 +619,6 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         except VpnctlError as e:
             logger.warning("vpnctl plain-WG peer error: %s", e, exc_info=True)
 
-    parts_desc = []
-    if awg_slots:
-        parts_desc.append(f"{awg_slots} AmneziaWG")
-    if vless_slots:
-        parts_desc.append(f"{vless_slots} VLess")
-    if wg_slots:
-        parts_desc.append(f"{wg_slots} WireGuard")
-    slots_desc = " + ".join(parts_desc) or "0 слотов"
-
     delivered = created_wg + created_vless + created_plain_wg
     total     = awg_slots + vless_slots + wg_slots
 
@@ -706,10 +686,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         await message.answer(msg, parse_mode="HTML")
         return
 
-    if delivered == total:
-        note = "Конфиги отправлены выше 👆"
-    elif delivered > 0:
-        note = f"Часть конфигов ({delivered}/{total}) готова, остальные появятся в мини-апп позже."
+    if delivered > 0 and delivered < total:
         # Partial-delivery admin alert: юзер оплатил N слотов, получил delivered<N.
         # Refund не делаем (юзер получил часть value), но админ должен досоздать
         # остальные руками или решить про partial refund. Без алерта узнаем
@@ -730,50 +707,13 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
                 )
         except Exception as e:
             logger.warning("partial-provision admin alert failed: %s", e)
-    else:
-        note = "Конфиги появятся в мини-апп → <b>Мои конфиги</b> как только серверы будут готовы."
 
-    # Persistent subscription URL (Happ / Streisand auto-refresh при throttle)
-    sub_url = ""
-    if vless_slots > 0 and created_vless > 0:
-        try:
-            from services.database import rotate_sub_token
-            tok = await rotate_sub_token(user_id)
-            sub_url = f"https://maxvpnesim.com/sub/{tok}"
-        except Exception as e:
-            logger.warning("sub_token gen failed for user %d: %s", user_id, e, exc_info=True)
+    # Catastrophic 0/N still triggers refund/expire flow above (lines ~640-665).
+    # Reaching this point means delivered > 0.
 
-    sub_block = (
-        f"\n\n🔗 <b>Subscription URL</b> (импортируй в Happ один раз — обновляется автоматом):\n"
-        f"<code>{sub_url}</code>"
-        if sub_url else ""
-    )
-
-    # Inline-кнопки после оплаты: «Мои конфиги» + «Инструкция».
-    # Снижает friction первого подключения — новый юзер не ищет команды.
-    _webapp_url = os.getenv("WEBAPP_URL", "")
-    kb_rows = []
-    if _webapp_url:
-        kb_rows.append([
-            InlineKeyboardButton(
-                text="📁 Мои конфиги",
-                web_app=WebAppInfo(url=f"{_webapp_url}/configs"),
-            ),
-            InlineKeyboardButton(
-                text="📖 Инструкция",
-                web_app=WebAppInfo(url=f"{_webapp_url}/instructions"),
-            ),
-        ])
-    reply_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None
-
-    await message.answer(
-        f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
-        f"📅 Действует до: <b>{expiry_str}</b>\n"
-        f"🔌 Слотов: <b>{slots_desc}</b>\n\n"
-        f"{note}"
-        f"{sub_block}",
-        parse_mode="HTML",
-        reply_markup=reply_kb,
+    await send_purchase_success_message(
+        message.bot, user_id, sub_id, plan, plan_key,
+        expires_at, delivered, total,
     )
 
     # Реферальный бонус (Stars-flow). Общий helper используется и в Cryptobot/

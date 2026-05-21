@@ -59,7 +59,12 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 REFERRAL_BONUS_DAYS = 7  # дней бонуса рефереру за первую покупку реферала
 
 
-def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKeyboardMarkup:
+def _main_menu(
+    start_param: str = "",
+    trial_eligible: bool = False,
+    lang: str | None = None,
+) -> InlineKeyboardMarkup:
+    from services.i18n_bot import t as _t, day_word as _day_word
     buttons: list[list[InlineKeyboardButton]] = []
 
     # Триал — самый верх меню для тех кому он доступен. Это first-screen
@@ -68,7 +73,10 @@ def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKey
     if trial_eligible:
         buttons.append([
             InlineKeyboardButton(
-                text=f"🎁 Попробуй бесплатно — {TRIAL_DAYS} дня",
+                text=_t(
+                    lang, "bot_btn_try_free",
+                    days=TRIAL_DAYS, day_word=_day_word(lang, TRIAL_DAYS),
+                ),
                 callback_data="trial:claim",
             )
         ])
@@ -85,7 +93,7 @@ def _main_menu(start_param: str = "", trial_eligible: bool = False) -> InlineKey
 
         buttons.append([
             InlineKeyboardButton(
-                text="🚀 Открыть приложение",
+                text=_t(lang, "bot_btn_open_app"),
                 web_app=WebAppInfo(url=url),
             )
         ])
@@ -155,43 +163,36 @@ async def cmd_start(message: Message):
     # триал — нейтральное приветствие.
     trial_eligible = await can_claim_trial(user_id)
 
+    from services.i18n_bot import day_word as _day_word
     if trial_eligible:
-        text = (
-            "👋 Привет! Я помогу защитить соединение и сохранить приватность.\n\n"
-            f"🎁 <b>Первые {TRIAL_DAYS} дня бесплатно</b> — без карты, без подписки. "
-            "Просто нажми кнопку «Попробуй бесплатно» ниже, и через 30 секунд у тебя "
-            "будет личный VPN.\n\n"
-            "Дальше — тарифы от 200 ₽/мес.\n\n"
-            '<a href="https://maxvpnesim.com/privacy.html">Политика конфиденциальности</a>'
+        text = _t(
+            user_lang, "bot_start_greeting_with_trial",
+            trial_days=TRIAL_DAYS, day_word=_day_word(user_lang, TRIAL_DAYS),
         )
     elif WEBAPP_URL:
         # Текст подстраивается под feature flag — если eSIM скрыт, не упоминаем
         # его в приветствии. Юзеры приходящие за чистым VPN не должны видеть
         # «магазин eSIM» который им недоступен.
         if SHOW_ESIM:
-            text = "👋 С возвращением! Открывай магазин VPN & eSIM кнопкой ниже."
+            text = _t(user_lang, "bot_start_greeting_no_trial_shop")
         else:
-            text = "👋 С возвращением. Тарифы и подписка — в приложении ниже."
+            text = _t(user_lang, "bot_start_greeting_no_trial")
     else:
-        text = (
-            "👋 Привет! Я помогу тебе получить доступ к интернету без ограничений.\n\n"
-            "Выбери, что тебя интересует:"
-        )
+        text = _t(user_lang, "bot_start_greeting_fallback")
 
     # Сначала шлём «уже зарегистрирован» если был поздний ref-клик —
     # юзер должен понять что ссылка не применилась, чтобы не ждал бонуса.
     if ref_link_late:
         await message.answer(
-            "ℹ️ <b>Реферальная ссылка не применилась</b>\n\n"
-            "Ты уже зарегистрирован в боте — реферальные ссылки работают только "
-            "для новых юзеров. Расширенный 7-дневный триал предназначен только "
-            "для тех, кто впервые открывает бота по ссылке.",
+            _t(user_lang, "bot_start_referral_late"),
             parse_mode="HTML",
         )
 
     await message.answer(
         text,
-        reply_markup=_main_menu(start_param, trial_eligible=trial_eligible),
+        reply_markup=_main_menu(
+            start_param, trial_eligible=trial_eligible, lang=user_lang,
+        ),
         parse_mode="HTML",
     )
 

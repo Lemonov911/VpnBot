@@ -1432,9 +1432,17 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # чтобы админ мог досоздать пиры через retry. Алерт админу:
     if total > 0 and delivered == 0:
         logger.error(
-            "CryptoBot provision FAILED 0/%d user=%d sub=%d payment=%s — ADMIN ALERT",
+            "CryptoBot provision FAILED 0/%d user=%d sub=%d payment=%s — admin alert + sub expire",
             total, user_id, sub_id, payment_id,
         )
+        # Mark sub expired so user can re-buy. Admin handles refund manually
+        # (CryptoBot has no refund API — must go through their dashboard).
+        from services.database import mark_subscription_expired
+        try:
+            await mark_subscription_expired(sub_id)
+        except Exception as e:
+            logger.error("CryptoBot 0/N: mark_subscription_expired sub=%d: %s",
+                         sub_id, e, exc_info=True)
         try:
             from config import ADMIN_ID
             if ADMIN_ID:
@@ -1448,8 +1456,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                     f"Sub: #{sub_id}\n"
                     f"Plan: {plan_key}\n"
                     f"Invoice: <code>{invoice.get('invoice_id')}</code>\n\n"
-                    f"Action: проверь CryptoBot dashboard, досоздай "
-                    f"конфиги вручную ИЛИ сделай refund.",
+                    "Sub marked expired. Refund manually via CryptoBot dashboard.",
                     parse_mode="HTML",
                 )
         except Exception as e:
@@ -1713,9 +1720,17 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
 
     if total > 0 and delivered == 0:
         logger.error(
-            "OxaPay provision FAILED 0/%d user=%d sub=%d track=%s — ADMIN ALERT",
+            "OxaPay provision FAILED 0/%d user=%d sub=%d track=%s — admin alert + sub expire",
             total, user_id, sub_id, track_id,
         )
+        # Mark sub expired so user can re-buy. Admin handles refund manually
+        # via OxaPay dashboard.
+        from services.database import mark_subscription_expired
+        try:
+            await mark_subscription_expired(sub_id)
+        except Exception as e:
+            logger.error("OxaPay 0/N: mark_subscription_expired sub=%d: %s",
+                         sub_id, e, exc_info=True)
         try:
             if ADMIN_ID:
                 await bot.send_message(
@@ -1725,7 +1740,7 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
                     f"Sub: #{sub_id}\n"
                     f"Plan: {plan_key}\n"
                     f"OxaPay track_id: <code>{track_id}</code>\n\n"
-                    f"Action: досоздай конфиги вручную или сделай refund в OxaPay dashboard.",
+                    "Sub marked expired. Refund manually via OxaPay dashboard.",
                     parse_mode="HTML",
                 )
         except Exception as e:
@@ -1867,13 +1882,19 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
             logger.warning("Lava: set_user_email synthetic failed user=%d: %s", user["id"], e)
 
     from services.lavatop import create_invoice as _lava_create, LavaError
+    # F10: Lava receipt и checkout-UI берут язык из buyer_language. Используем
+    # users.lang (set при /start из Telegram language_code) — EN-юзеры видят
+    # английский checkout, остальные — русский.
+    from services.database import get_user_lang as _gul_lava
+    _u_lang = await _gul_lava(user["id"])
+    buyer_lang = "EN" if (_u_lang or "").lower().startswith("en") else "RU"
     try:
         resp = await _lava_create(
             api_key=LAVATOP_API_KEY,
             email=email,
             offer_id=offer_id,
             currency="RUB",
-            buyer_language="RU",
+            buyer_language=buyer_lang,
             periodicity=periodicity,
         )
     except LavaError as e:
@@ -1961,11 +1982,14 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         await disable_auto_renew(sub["id"])
         will_expire = payload.get("willExpireAt") or sub.get("expires_at") or ""
         try:
+            from services.database import get_user_lang as _gul_cancel
+            from services.i18n_bot import t as _i18n_t_cancel
+            _lang_cancel = await _gul_cancel(sub["user_id"])
             await bot.send_message(
                 sub["user_id"],
-                "❎ <b>Автопродление отключено</b>\n\n"
-                f"VPN продолжит работать до <b>{will_expire[:10]}</b>.\n"
-                "Чтобы вернуть автопродление — оформи новую подписку.",
+                _i18n_t_cancel(
+                    _lang_cancel, "bot_lava_cancelled", until=will_expire[:10],
+                ),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -2066,18 +2090,50 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         except Exception:
             new_expires_dt = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
+        # Renewal-success notice with full UX (inline buttons, sub URL).
+        # AWG configs не пере-отправляем — у юзера на устройстве те же файлы,
+        # они продолжают работать после продления. Sub URL включаем — юзер мог
+        # потерять ссылку, а Happ продолжает синкаться по тому же токену.
         try:
-            from services.database import get_user_lang as _gul
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+            from services.database import get_user_lang as _gul, get_or_create_sub_token
             from services.i18n_bot import t as _i18n_t
+
             _lang = await _gul(sub["user_id"])
-            _text = _i18n_t(
-                _lang, "bot_lava_renewed",
-                plan=plan["name"],
-                until=new_expires_dt.strftime("%d.%m.%Y"),
-            )
+            _until = new_expires_dt.strftime("%d.%m.%Y")
+
+            # Sub URL — idempotent get-or-create (не ротируем при продлении).
+            _sub_url = ""
+            try:
+                _tok = await get_or_create_sub_token(sub["user_id"])
+                _sub_url = f"https://maxvpnesim.com/sub/{_tok}"
+            except Exception as e:
+                logger.warning("Lava renew: sub_token user=%d: %s", sub["user_id"], e)
+
+            _parts = [_i18n_t(_lang, "bot_lava_renewed", plan=plan["name"], until=_until)]
             if was_grace:
-                _text += _i18n_t(_lang, "bot_lava_renewed_grace")
-            await bot.send_message(sub["user_id"], _text, parse_mode="HTML")
+                _parts.append(_i18n_t(_lang, "bot_lava_renewed_grace"))
+            if _sub_url:
+                _parts.append("")
+                _parts.append(_i18n_t(_lang, "bot_purchase_success_sub_url", url=_sub_url))
+
+            _kb_rows: list[list[InlineKeyboardButton]] = []
+            if WEBAPP_URL:
+                _kb_rows.append([InlineKeyboardButton(
+                    text=_i18n_t(_lang, "bot_btn_my_configs"),
+                    web_app=WebAppInfo(url=f"{WEBAPP_URL}/configs"),
+                )])
+            _kb_rows.append([InlineKeyboardButton(
+                text=_i18n_t(_lang, "bot_btn_howto"),
+                callback_data="vpn:howto",
+            )])
+
+            await bot.send_message(
+                sub["user_id"],
+                "\n".join(_parts),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=_kb_rows) if _kb_rows else None,
+            )
         except Exception as e:
             logger.warning("Lava recurring notify failed user=%d: %s", sub["user_id"], e, exc_info=True)
         return web.Response(status=200)
@@ -2256,9 +2312,30 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     if total > 0 and delivered == 0:
         logger.error(
-            "Lava provision FAILED 0/%d user=%d sub=%d contract=%s — ADMIN ALERT",
+            "Lava provision FAILED 0/%d user=%d sub=%d contract=%s — admin alert + sub expire",
             total, user_id, sub_id, contract_id,
         )
+        # Mark sub expired so user can re-buy. Admin handles refund manually.
+        from services.database import mark_subscription_expired
+        try:
+            await mark_subscription_expired(sub_id)
+        except Exception as e:
+            logger.error("Lava 0/N: mark_subscription_expired sub=%d: %s",
+                         sub_id, e, exc_info=True)
+
+        # For Lava-recurring: cancel contract so card doesn't get charged again
+        # for a sub that delivered nothing.
+        if is_subscription and contract_id and LAVATOP_API_KEY:
+            from services.database import disable_auto_renew
+            from services.lavatop import cancel_subscription as _lava_cancel
+            try:
+                await disable_auto_renew(sub_id)
+            except Exception as e:
+                logger.warning("Lava 0/N: disable_auto_renew sub=%d: %s", sub_id, e)
+            try:
+                await _lava_cancel(api_key=LAVATOP_API_KEY, contract_id=contract_id)
+            except Exception as e:
+                logger.warning("Lava cancel after 0/N failure: %s", e)
         try:
             if ADMIN_ID:
                 await bot.send_message(
@@ -2268,7 +2345,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
                     f"Sub: #{sub_id}\n"
                     f"Plan: {plan_key}\n"
                     f"Contract: <code>{contract_id}</code>\n\n"
-                    f"Action: досоздай конфиги вручную или сделай refund в Lava-кабинете.",
+                    "Sub marked expired. Refund manually via Lava-кабинет.",
                     parse_mode="HTML",
                 )
         except Exception:
@@ -2542,6 +2619,10 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         "auto_renew":      bool(sub.get("auto_renew")),
         "payment_provider": sub.get("payment_provider"),
         "parent_contract_id": sub.get("parent_contract_id"),
+        # Сигнал «у юзера КОГДА-ТО был включён auto-renew, потом отключился».
+        # Нужен фронту чтобы показывать «работает до X (без автопродления)»
+        # только тем, кто реально отменил recurring (а не one-time Stars-юзерам).
+        "auto_renew_disabled_at": sub.get("auto_renew_disabled_at"),
     })
 
 
@@ -2572,18 +2653,14 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
         # Если Telegram таки спишет ещё раз (юзер не отменил в TG), то
         # successful_payment-хендлер обработает это как свежую покупку
         # (отдельный payment_id) и создаст новую sub — это приемлемо.
-        from services.database import disable_auto_renew
+        from services.database import disable_auto_renew, get_user_lang as _gul_stars
+        from services.i18n_bot import t as _i18n_t_stars
         await disable_auto_renew(sub["id"])
+        _lang_stars = await _gul_stars(user["id"])
         return web.json_response({
             "manual_cancel": True,
             "provider": "stars",
-            "instructions": (
-                "Чтобы окончательно отменить автопродление в Telegram:\n"
-                "1. Открой Настройки в Telegram\n"
-                "2. Перейди в «Звёзды» → «Активные подписки»\n"
-                "3. Выбери MAX VPN → «Отменить»\n\n"
-                "Подписка останется активной до конца оплаченного периода."
-            ),
+            "instructions": _i18n_t_stars(_lang_stars, "bot_stars_cancel_instructions"),
         })
 
     # Дальше — Lava recurring (требует contract_id).
@@ -2672,31 +2749,34 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     if not _rate_limit_check_evict(_trial_rate, str(user["id"]), _time.monotonic(), window=60.0):
         return web.json_response({"error": "rate_limited"}, status=429)
 
+    from services.database import get_user_lang as _gul_trial_err
+    from services.i18n_bot import t as _i18n_t_err
+    _err_lang = await _gul_trial_err(user["id"])
     try:
         result = await provision_trial(user["id"])
     except TrialBlockedByActiveSub:
         return web.json_response(
             {"error": "active_subscription",
-             "message": "У тебя уже активная подписка."},
+             "message": _i18n_t_err(_err_lang, "trial_blocked_active_sub")},
             status=409,
         )
     except TrialAlreadyClaimed:
         return web.json_response(
             {"error": "already_claimed",
-             "message": "Пробный период уже использован."},
+             "message": _i18n_t_err(_err_lang, "trial_already_claimed")},
             status=409,
         )
     except TrialNoServer:
         return web.json_response(
             {"error": "no_server",
-             "message": "Серверы временно недоступны, попробуй позже."},
+             "message": _i18n_t_err(_err_lang, "trial_no_server")},
             status=503,
         )
     except VpnctlError as e:
         logger.warning("trial provision failed: %s", e, exc_info=True)
         return web.json_response(
             {"error": "provision_failed",
-             "message": "Не удалось создать конфиг. Попробуй позже."},
+             "message": _i18n_t_err(_err_lang, "trial_provision_error", error=str(e))},
             status=500,
         )
 
@@ -2707,31 +2787,24 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
         expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
         has_awg = bool(result.get("awg_config"))
 
-        win_note = "💻 <b>Windows</b>: качай <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a>, не WireGuard.exe"
-        if has_awg:
-            msg = (
-                f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
-                f"📅 До: <b>{expires_str}</b>\n"
-                f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
-                f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
-                f"   Открой Configs (📁 в Mini App) → скачай AWG-конфиг\n\n"
-                f"<b>2) VLESS Subscription URL</b> (для Happ / Amnezia VPN):\n"
-                f"<code>{result['sub_url']}</code>\n\n"
-                f"{win_note}\n"
-                f"📖 Полная инструкция: /howto\n"
-                f"💎 После trial — выбери постоянный тариф в /start"
-            )
-        else:
-            msg = (
-                f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
-                f"📅 До: <b>{expires_str}</b>\n"
-                f"🚀 Скорость: 60 Mbps\n\n"
-                f"<b>Subscription URL</b> (импортируй в Happ / Amnezia VPN один раз):\n"
-                f"<code>{result['sub_url']}</code>\n\n"
-                f"{win_note}\n"
-                f"📖 Полная инструкция: /howto\n"
-                f"💎 После trial — выбери постоянный тариф в /start"
-            )
+        from services.database import get_user_lang as _gul_trial
+        from services.i18n_bot import t as _i18n_t_trial, day_word as _dw_trial
+        _lang_trial = await _gul_trial(user["id"])
+        is_en = (_lang_trial or "").lower().startswith("en")
+        win_note = (
+            "💻 <b>Windows</b>: download <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a>, not WireGuard.exe"
+            if is_en else
+            "💻 <b>Windows</b>: качай <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a>, не WireGuard.exe"
+        )
+        duration_days = result['duration_days']
+        day_w = _dw_trial(_lang_trial, duration_days)
+        key = "trial_success_awg" if has_awg else "trial_success_vless"
+        msg = _i18n_t_trial(
+            _lang_trial, key,
+            days=duration_days, day_word=day_w,
+            expires=expires_str, sub_url=result['sub_url'],
+        )
+        msg += f"\n\n{win_note}"
         await bot.send_message(user["id"], msg, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         logger.warning("trial notify failed for user=%d: %s", user["id"], e, exc_info=True)

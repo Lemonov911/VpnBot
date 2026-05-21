@@ -202,6 +202,11 @@ export interface Subscription {
   auto_renew?:           boolean
   payment_provider?:     string | null
   parent_contract_id?:   string | null
+  // Timestamp когда auto_renew был отключён (бэк выставляет в disable_auto_renew).
+  // Используется как «был ли когда-то включён recurring» — нужен фронту чтобы
+  // показывать banner «работает до X (без автопродления)» только тем, кто реально
+  // отменил подписку (а не one-time Stars/Lava покупателям).
+  auto_renew_disabled_at?: string | null
 }
 
 export function createVpnInvoiceLavatop(

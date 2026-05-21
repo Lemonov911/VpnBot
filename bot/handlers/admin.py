@@ -149,9 +149,17 @@ async def cmd_stats(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
-async def _trial_response(user_id: int) -> tuple[str, dict]:
+async def _trial_response(
+    user_id: int, lang: str | None = None,
+) -> tuple[str, dict]:
     """Запускает provision_trial и возвращает (text, send_kwargs) для ответа юзеру.
-    Единый код для /trial команды и для callback "trial:claim" из /start меню.
+    Единый код для /trial команды и для callback "trial:claim" из /start меню,
+    плюс webapp /api/vpn/trial/claim.
+
+    `lang` — Telegram language_code юзера ('ru', 'en', ...). Если None —
+    берём из БД (users.lang). При первом /start /trial messages могут пойти
+    раньше чем upsert_user обновит lang, поэтому caller может передать
+    `message.from_user.language_code` явно.
     """
     from services.trial import (
         provision_trial,
@@ -160,49 +168,47 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
         TrialNoServer,
     )
     from services.vpnctl_client import VpnctlError
+    from services.i18n_bot import t as _t
+
+    if lang is None:
+        from services.database import get_user_lang
+        lang = await get_user_lang(user_id)
 
     try:
         result = await provision_trial(user_id)
     except TrialBlockedByActiveSub:
-        return ("У тебя уже активная подписка. Trial доступен только новым пользователям.", {})
+        return (_t(lang, "trial_blocked_active_sub"), {})
     except TrialAlreadyClaimed:
-        return ("🎁 Trial уже использован.\n\nДля продолжения — выбери тариф в /start", {})
+        return (_t(lang, "trial_already_claimed"), {})
     except TrialNoServer:
-        return ("⚠️ Серверы пока недоступны, попробуй позже", {})
+        return (_t(lang, "trial_no_server"), {})
     except VpnctlError as e:
-        return (f"⚠️ Ошибка провижининга: {e}", {})
+        return (_t(lang, "trial_provision_error", error=str(e)), {})
 
     expires_str = result["expires_at"].strftime("%d.%m.%Y %H:%M")
     has_awg = bool(result.get("awg_config"))
 
     if has_awg:
-        text = (
-            f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
-            f"📅 До: <b>{expires_str}</b>\n"
-            f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
-            f"<b>1) AmneziaWG</b> — главный обфускатор, работает на МТС\n"
-            f"   Открой Configs (/start → 📁 Конфиги) → скачай AWG-конфиг\n\n"
-            f"<b>2) VLESS Subscription URL</b> (для Happ / V2Box):\n"
-            f"<code>{result['sub_url']}</code>\n\n"
-            f"📖 Инструкция: /howto\n"
-            f"💎 После trial — выбери постоянный тариф в /start"
+        text = _t(
+            lang, "trial_success_awg",
+            days=result['duration_days'],
+            day_word=plural_ru(result['duration_days'], DAYS) if (lang or "ru").startswith("ru") else ("day" if result['duration_days'] == 1 else "days"),
+            expires=expires_str,
+            sub_url=result['sub_url'],
         )
     else:
-        # AWG-сервер недоступен — fallback на VLESS-only (старое поведение)
-        text = (
-            f"🎁 <b>Trial на {result['duration_days']} {plural_ru(result['duration_days'], DAYS)} активирован</b>\n\n"
-            f"📅 До: <b>{expires_str}</b>\n"
-            f"🚀 Скорость: 60 Mbps (как на тарифе База)\n\n"
-            f"<b>Subscription URL</b> (импортируй в Happ один раз):\n"
-            f"<code>{result['sub_url']}</code>\n\n"
-            f"📖 Инструкция: /howto\n"
-            f"💎 После trial — выбери постоянный тариф в /start"
+        text = _t(
+            lang, "trial_success_vless",
+            days=result['duration_days'],
+            day_word=plural_ru(result['duration_days'], DAYS) if (lang or "ru").startswith("ru") else ("day" if result['duration_days'] == 1 else "days"),
+            expires=expires_str,
+            sub_url=result['sub_url'],
         )
     kb = None
     if WEBAPP_URL:
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
-                text="📁 Открыть конфиги",
+                text=_t(lang, "btn_open_configs"),
                 web_app=WebAppInfo(url=f"{WEBAPP_URL}/configs"),
             )
         ]])
@@ -212,7 +218,9 @@ async def _trial_response(user_id: int) -> tuple[str, dict]:
 @router.message(Command("trial"))
 async def cmd_trial(message: Message):
     """Бесплатный пробный период — 3 дня VLESS-base."""
-    text, kwargs = await _trial_response(message.from_user.id)
+    text, kwargs = await _trial_response(
+        message.from_user.id, lang=message.from_user.language_code,
+    )
     await message.answer(text, **kwargs)
 
 
@@ -220,7 +228,9 @@ async def cmd_trial(message: Message):
 async def cb_trial_claim(callback: CallbackQuery):
     """Callback с кнопки «🎁 Попробуй бесплатно» из /start меню."""
     await callback.answer()  # снять "thinking" индикатор
-    text, kwargs = await _trial_response(callback.from_user.id)
+    text, kwargs = await _trial_response(
+        callback.from_user.id, lang=callback.from_user.language_code,
+    )
     if callback.message:
         await callback.message.answer(text, **kwargs)
 

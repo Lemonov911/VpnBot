@@ -206,24 +206,31 @@ export default function Home() {
                   <>
                     <div className="flex items-center gap-[5px] mb-[3px]">
                       <span className={`w-[7px] h-[7px] rounded-full shrink-0 block ${
-                        sub.status === 'grace' ? 'bg-amber-500'
+                        sub.status === 'expired' ? 'bg-danger'
+                        : sub.status === 'grace' ? 'bg-amber-500'
                         : sub.plan === 'vpn_trial' ? 'bg-warning'
                         : 'bg-success'
                       }`} />
                       <span className={`text-xs font-bold ${
-                        sub.status === 'grace' ? 'text-amber-500'
+                        sub.status === 'expired' ? 'text-danger'
+                        : sub.status === 'grace' ? 'text-amber-500'
                         : sub.plan === 'vpn_trial' ? 'text-warning'
                         : 'text-success'
                       }`}>
-                        {sub.status === 'grace' ? t('home_grace' as never)
+                        {sub.status === 'expired' ? t('home_expired_badge' as never)
+                          : sub.status === 'grace' ? t('home_grace' as never)
                           : sub.plan === 'vpn_trial' ? t('home_trial_badge' as never)
                           : t('home_active')}
                       </span>
                     </div>
                     <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">{planLabel(sub.plan)}</div>
                     <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
-                      {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
-                      {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}
+                      {sub.status === 'expired' ? (
+                        <>{t('home_expired_ago_prefix' as never)} {p(Math.max(1, Math.abs(sub.days_remaining)), { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })} {t('home_expired_ago_suffix' as never)}</>
+                      ) : (
+                        <>{p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
+                          {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}</>
+                      )}
                     </div>
                     <div className="flex-1 min-h-[20px]" />
                     <button
@@ -271,16 +278,19 @@ export default function Home() {
                       <>
                         <div className="flex items-center gap-[6px] mt-1">
                           <span className={`w-[8px] h-[8px] rounded-full shrink-0 ${
-                            sub.status === 'grace' ? 'bg-amber-500'
+                            sub.status === 'expired' ? 'bg-danger'
+                            : sub.status === 'grace' ? 'bg-amber-500'
                             : sub.plan === 'vpn_trial' ? 'bg-warning'
                             : 'bg-success'
                           }`} />
                           <span className={`text-[13px] font-bold ${
-                            sub.status === 'grace' ? 'text-amber-500'
+                            sub.status === 'expired' ? 'text-danger'
+                            : sub.status === 'grace' ? 'text-amber-500'
                             : sub.plan === 'vpn_trial' ? 'text-warning'
                             : 'text-success'
                           }`}>
-                            {sub.status === 'grace' ? t('home_grace' as never)
+                            {sub.status === 'expired' ? t('home_expired_badge' as never)
+                              : sub.status === 'grace' ? t('home_grace' as never)
                               : sub.plan === 'vpn_trial' ? t('home_trial_badge' as never)
                               : t('home_active')}
                           </span>
@@ -289,8 +299,12 @@ export default function Home() {
                           {planLabel(sub.plan)}
                         </div>
                         <div className="text-[12px] text-[var(--tg-theme-hint-color)] mt-0.5">
-                          {p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
-                          {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}
+                          {sub.status === 'expired' ? (
+                            <>{t('home_expired_ago_prefix' as never)} {p(Math.max(1, Math.abs(sub.days_remaining)), { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })} {t('home_expired_ago_suffix' as never)}</>
+                          ) : (
+                            <>{p(sub.days_remaining, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}
+                              {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}</>
+                          )}
                         </div>
                       </>
                     ) : (
@@ -368,6 +382,19 @@ export default function Home() {
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
             >
               {t('home_trial_buy_cta' as never)}
+            </button>
+          </div>
+        )}
+
+        {/* ── Expired → renew CTA — sub существует но истекла. Параллель trial-CTA. ── */}
+        {sub && sub.status === 'expired' && (
+          <div className="fade-in rounded-xl p-3 bg-[var(--tg-theme-secondary-bg-color)] border border-danger/30">
+            <div className="text-xs opacity-70 mb-2 text-[var(--tg-theme-text-color)]">{t('home_expired_card_note' as never)}</div>
+            <button
+              className="w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer"
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
+            >
+              {t('home_expired_buy_cta' as never)}
             </button>
           </div>
         )}
