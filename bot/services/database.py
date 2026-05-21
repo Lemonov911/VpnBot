@@ -1071,7 +1071,8 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
                    reminded_3d       = 0,
                    reminded_1d       = 0,
                    reminded_renewal_3d = 0,
-                   reminded_grace_3d   = 0
+                   reminded_grace_3d   = 0,
+                   reminded_quota_throttled = 0
                WHERE id=? AND status IN ('active', 'grace')""",
             (f"+{days} days", f"+{days} days", subscription_id),
         )
@@ -1566,6 +1567,7 @@ async def extend_subscription_expires_at(
                     grace_until=NULL,
                     reminded_3d=0, reminded_1d=0,
                     reminded_renewal_3d=0, reminded_grace_3d=0,
+                    reminded_quota_throttled=0,
                     auto_renew_disabled_at=NULL,
                     last_charge_failed_at=NULL
                     WHERE id=? AND status IN ('active', 'grace')
@@ -1584,6 +1586,7 @@ async def extend_subscription_expires_at(
                         '+{days_int} days'
                     ),
                     reminded_renewal_3d=0,
+                    reminded_quota_throttled=0,
                     auto_renew_disabled_at=NULL,
                     last_charge_failed_at=NULL
                     WHERE id=?
@@ -2286,7 +2289,8 @@ async def renew_subscription_from_grace(
                     reminded_3d=0,
                     reminded_1d=0,
                     reminded_grace_3d=0,
-                    reminded_renewal_3d=0
+                    reminded_renewal_3d=0,
+                    reminded_quota_throttled=0
                     {extra_clause}
                 WHERE id=? AND status='grace'""",
             extra_params + [sub_id],
@@ -2388,6 +2392,11 @@ async def get_all_active_servers(protocol: str) -> list[dict]:
     с capacity=0 даю́т NULL в сортировке и встают первыми. Лучше скрыть
     полностью, чем гнать туда трафик.
 
+    Для VLESS дополнительно требуем backfilled=1 — иначе provisioning
+    идёт на сервер которого нет в подписочных URL (active_vless_servers
+    фильтрует backfilled=1). Это создавало orphan-пиры: peer на агенте
+    есть, но юзер его в Happ не видит. Audit 22.05 F3.
+
     Protocol mapping явный — см. комментарий в get_best_server.
     """
     if protocol == "awg":
@@ -2399,12 +2408,13 @@ async def get_all_active_servers(protocol: str) -> list[dict]:
     else:
         logger.warning("get_all_active_servers: unknown protocol=%r", protocol)
         return []
+    backfilled_clause = " AND backfilled=1" if proto_field == "vless" else ""
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("""
+        async with db.execute(f"""
             SELECT * FROM servers
             WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
-              AND capacity > 0
+              AND capacity > 0{backfilled_clause}
             ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
         """, (proto_field,)) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -2671,11 +2681,19 @@ async def active_vless_servers() -> list[dict]:
 
 
 async def ensure_user_vless_uuid(user_id: int) -> str:
-    """Atomically allocate a canonical Reality UUID for the user.
+    """Atomically allocate or reuse a canonical Reality UUID for the user.
 
-    Если уже есть — возвращает существующий. Иначе — UPDATE ... WHERE
-    vless_uuid IS NULL фиксирует значение в одной транзакции (защита от
-    race между двумя одновременными вызовами).
+    Приоритет источников:
+      1. users.vless_uuid если уже выставлен — возвращаем.
+      2. Legacy: ищем существующий configs.vless_uuid у этой sub (active/grace,
+         любая VLESS). Если есть — реюзим как users.vless_uuid. ОЧЕНЬ ВАЖНО:
+         legacy юзеры (купившие до 2026-05-21 refactor) имеют peer'ы на агентах
+         с этим UUID — генерация свежего uuid4() вместо реюза = пир на агенте
+         не знает свежий UUID = «нет серверов» в Happ, прод-инцидент.
+      3. Иначе генерим новый uuid4.
+
+    CAS на UPDATE ... WHERE vless_uuid IS NULL защищает от race между двумя
+    одновременными вызовами.
     """
     import uuid as _uuid
     async with _connect() as db:
@@ -2685,13 +2703,32 @@ async def ensure_user_vless_uuid(user_id: int) -> str:
             row = await cur.fetchone()
         if row and row[0]:
             return row[0]
-        new_uuid = str(_uuid.uuid4())
+
+        # Legacy reuse: посмотреть configs у этого юзера. Берём самый свежий
+        # vless_uuid у активной или grace-подписки — все строки одного юзера
+        # для одной active sub имеют одинаковый vless_uuid (multi-location
+        # refactor: один UUID на юзера, реплицированный на N серверов).
+        async with db.execute(
+            """SELECT c.vless_uuid FROM configs c
+               JOIN subscriptions s ON s.id = c.subscription_id
+               WHERE c.user_id=? AND c.protocol IN ('vless','vless-reality')
+                 AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
+                 AND s.status IN ('active','grace')
+               ORDER BY s.created_at DESC, c.id DESC
+               LIMIT 1""",
+            (user_id,),
+        ) as cur:
+            legacy_row = await cur.fetchone()
+
+        candidate_uuid = (legacy_row[0] if legacy_row and legacy_row[0]
+                          else str(_uuid.uuid4()))
+
         # CAS: ставим только если ещё NULL. rowcount==0 → между SELECT и UPDATE
         # уже другой воркер записал свой UUID; в этом случае дочитываем готовое
         # значение.
         cur = await db.execute(
             "UPDATE users SET vless_uuid=? WHERE id=? AND vless_uuid IS NULL",
-            (new_uuid, user_id),
+            (candidate_uuid, user_id),
         )
         await db.commit()
         if cur.rowcount == 0:
@@ -2699,8 +2736,13 @@ async def ensure_user_vless_uuid(user_id: int) -> str:
                 "SELECT vless_uuid FROM users WHERE id=?", (user_id,)
             ) as cur2:
                 row2 = await cur2.fetchone()
-                return row2[0] if row2 else new_uuid
-        return new_uuid
+                return row2[0] if row2 else candidate_uuid
+        if legacy_row and legacy_row[0]:
+            logger.info(
+                "ensure_user_vless_uuid: reused legacy uuid %s for user %d",
+                candidate_uuid, user_id,
+            )
+        return candidate_uuid
 
 
 async def get_relevant_vless_subscription(user_id: int) -> dict | None:
