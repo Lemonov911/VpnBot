@@ -18,6 +18,7 @@ eSIM:
   В DEBUG-режиме проверка отключается.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -35,6 +36,7 @@ from config import (
     ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM, SUB_URL_BASE,
     CRYPTOMUS_MERCHANT_UUID, CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_ENABLED,
     LAVATOP_API_KEY, LAVATOP_WEBHOOK_KEY, LAVATOP_ENABLED, LAVATOP_OFFERS,
+    OXAPAY_API_KEY, OXAPAY_ENABLED,
 )
 from services.auth import verify_init_data
 import services.esim_api as esim
@@ -48,6 +50,18 @@ from services.database import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Background task registry — keeps strong references so GC can't collect tasks
+# that are still running.  Same pattern as scheduler._spawn_bg.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro, *, name: str | None = None) -> asyncio.Task:
+    task = asyncio.create_task(coro, name=name) if name else asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
 
 # Тарифы — services.plans (единственный источник истины).
 from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
@@ -443,6 +457,7 @@ _sub_rate:     dict[str, float] = {}  # rate-limit для /sub/{token}
 _invoice_rate:  dict[str, float] = {}  # /api/vpn/invoice, /api/esim/invoice
 _crypto_rate:   dict[str, float] = {}  # /api/vpn/invoice/crypto
 _cryptomus_rate: dict[str, float] = {}  # /api/vpn/invoice/cryptomus
+_oxapay_rate:    dict[str, float] = {}  # /api/vpn/invoice/oxapay
 _lavatop_rate:   dict[str, float] = {}  # /api/vpn/invoice/lavatop
 _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
@@ -456,7 +471,6 @@ async def handle_public_status(request: web.Request) -> web.Response:
     за 24h/7d/30d + 24-часовой strip + последние incidents. Probes сам
     лоит scheduler каждые 60 сек в `services/health.py`.
     """
-    import asyncio
     from datetime import datetime
     from services.health import uptime_summary, last_24h_strip, last_30d_strip, recent_incidents
 
@@ -618,7 +632,6 @@ async def handle_vpn_status(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
-    import asyncio
     import socket
 
     async def _ping(server: dict) -> dict:
@@ -1314,6 +1327,241 @@ async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
     return web.Response(status=200)
 
 
+# ── OxaPay хендлеры ───────────────────────────────────────────────────────────
+# Крипто-платёжный шлюз: USDT/BTC/ETH и другие монеты, конвертация в RUB/USD.
+# HMAC-SHA512 webhook через заголовок `HMAC`.  Идентификация по order_id (тот же
+# формат что и у Cryptomus: vpn-{user_id}-{plan_key}-{ts_min}).
+
+
+async def handle_oxapay_invoice(request: web.Request) -> web.Response:
+    """
+    POST /api/vpn/invoice/oxapay  { plan_key, currency: "RUB"|"USD" }
+    Создаёт инвойс через OxaPay и возвращает { pay_url }.
+    """
+    ip = _client_ip(request)
+    if not _rate_limit_check_evict(_oxapay_rate, ip, _time.monotonic(), window=6.0):
+        return web.json_response({"error": "rate_limited"}, status=429)
+    if not OXAPAY_ENABLED:
+        return web.json_response({"error": "OxaPay не подключён"}, status=503)
+
+    body = await request.json()
+    user = _resolve_user(request, body)
+    if user is None:
+        return _unauthorized()
+
+    plan_key = body.get("plan_key", "")
+    plan = VPN_PLANS.get(plan_key)
+    if not plan:
+        return web.json_response({"error": "Unknown plan"}, status=400)
+
+    currency = (body.get("currency") or "RUB").upper()
+    if currency not in ("RUB", "USD"):
+        return web.json_response({"error": "currency must be RUB or USD"}, status=400)
+
+    existing_sub = await get_active_subscription(user["id"])
+    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+        return web.json_response(
+            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
+            status=400,
+        )
+
+    amount = float(plan["rub"] if currency == "RUB" else plan["usd"])
+    ts_min  = int(_time.time() // 60)
+    order_id = f"vpn-{user['id']}-{plan_key}-{ts_min}"
+
+    api_origin = SUB_URL_BASE or "https://maxvpnesim.com"
+    base_url   = WEBAPP_URL or "https://maxvpnesim.com"
+    callback_url = f"{api_origin}/api/oxapay/webhook"
+    return_url   = f"{base_url}/vpn"
+
+    from services.oxapay import create_invoice as _op_create
+    try:
+        invoice = await _op_create(
+            api_key=OXAPAY_API_KEY,
+            amount=amount,
+            currency=currency,
+            order_id=order_id,
+            callback_url=callback_url,
+            return_url=return_url,
+            description=f"VPN {plan['name']} 30d",
+        )
+    except Exception as e:
+        logger.error("OxaPay invoice error: %s", e, exc_info=True)
+        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+
+    pay_url = invoice.get("payment_url") or ""
+    if not pay_url:
+        logger.error("OxaPay: no payment_url in response %r", invoice)
+        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+
+    logger.info(
+        "OxaPay invoice: user=%s plan=%s cur=%s order=%s track_id=%s",
+        user.get("id"), plan_key, currency, order_id, invoice.get("track_id"),
+    )
+    return web.json_response({"pay_url": pay_url})
+
+
+async def handle_oxapay_webhook(request: web.Request) -> web.Response:
+    """
+    POST /api/oxapay/webhook
+    OxaPay уведомляет об оплате.  HMAC-SHA512 передаётся в заголовке `HMAC`.
+    Идемпотентность: payment_id = `oxapay_{track_id}` + UNIQUE-constraint.
+    """
+    if not OXAPAY_ENABLED:
+        return web.Response(status=200)
+
+    body_bytes = await request.read()
+    try:
+        payload = json.loads(body_bytes)
+    except Exception:
+        logger.warning("OxaPay webhook: invalid JSON body")
+        return web.Response(status=400)
+    if not isinstance(payload, dict):
+        return web.Response(status=400)
+
+    received_hmac = request.headers.get("HMAC", "")
+    from services.oxapay import verify_signature as _op_verify
+    if not _op_verify(body_bytes, received_hmac, OXAPAY_API_KEY):
+        logger.warning(
+            "OxaPay webhook: BAD signature order_id=%s status=%s from=%s",
+            payload.get("order_id"), payload.get("status"), request.remote,
+        )
+        return web.Response(status=401)
+
+    status = (payload.get("status") or "").lower()
+    # OxaPay: "Paid" — подтверждено. "Paying" — ещё ждём подтверждений.
+    if status != "paid":
+        logger.info("OxaPay webhook: ignoring status=%s order_id=%s",
+                    status, payload.get("order_id"))
+        return web.Response(status=200)
+
+    track_id = str(payload.get("track_id") or "")
+    order_id  = str(payload.get("order_id") or "")
+    if not track_id or not order_id:
+        logger.warning("OxaPay webhook: missing track_id/order_id %r", payload)
+        return web.Response(status=200)
+
+    # order_id формат: "vpn-{user_id}-{plan_key}-{ts_min}"
+    parts = order_id.split("-")
+    if len(parts) != 4 or parts[0] != "vpn":
+        logger.warning("OxaPay webhook: unexpected order_id format %s", order_id)
+        return web.Response(status=200)
+    try:
+        user_id = int(parts[1])
+    except ValueError:
+        logger.warning("OxaPay webhook: bad user_id in order_id %s", order_id)
+        return web.Response(status=200)
+    plan_key = parts[2]
+    plan = VPN_PLANS.get(plan_key)
+    if not plan:
+        logger.warning("OxaPay webhook: unknown plan %s (order=%s)", plan_key, order_id)
+        return web.Response(status=200)
+
+    # Сверка суммы — защита от подделки webhook'а.
+    try:
+        invoice_amount = float(payload.get("amount") or 0)
+    except (TypeError, ValueError):
+        invoice_amount = 0.0
+    fiat = (payload.get("currency") or "").upper()
+    expected = float(plan["rub"]) if fiat == "RUB" else float(plan["usd"]) if fiat == "USD" else None
+    if expected is None or invoice_amount + 1e-6 < expected:
+        logger.error(
+            "OxaPay webhook: amount mismatch order=%s got=%.2f%s expected=%.2f — REJECTED",
+            order_id, invoice_amount, fiat, expected or 0,
+        )
+        return web.Response(status=400)
+
+    payment_id = f"oxapay_{track_id}"
+
+    from services.database import (
+        get_subscription_by_payment_id, create_subscription, create_order, complete_order,
+    )
+
+    existing = await get_subscription_by_payment_id(payment_id)
+    if existing:
+        logger.warning("OxaPay: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+
+    from services.grace import try_renew_from_grace
+    bot: Bot = request.app["bot"]
+    if await try_renew_from_grace(
+        bot, user_id, plan_key, plan, payment_id, method="oxapay",
+        amount_rub=int(float(plan.get("rub", 0))),
+    ):
+        return web.Response(status=200)
+
+    expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
+    sub_id = await create_subscription(
+        user_id=user_id,
+        plan=plan_key,
+        payment_id=payment_id,
+        stars_paid=0,
+        amount_rub=int(float(plan.get("rub", 0))),
+        expires_at=expires_at,
+    )
+    if sub_id is None:
+        logger.warning("OxaPay: payment %s TOCTOU-duplicate, ignored", payment_id)
+        return web.Response(status=200)
+
+    order_db_id = await create_order(
+        user_id=user_id, product_type="vpn", plan=plan_key,
+        stars_paid=0, expires_at=expires_at,
+    )
+    await complete_order(order_db_id, payment_id=payment_id)
+
+    try:
+        from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
+        delivered, total = await provision_vpn_slots_async(bot, user_id, sub_id, plan, plan_key)
+        await maybe_award_referral_bonus(bot, user_id, sub_id)
+    except Exception as e:
+        logger.error("OxaPay: provision crashed user=%d sub=%d: %s",
+                     user_id, sub_id, e, exc_info=True)
+        delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
+
+    if total > 0 and delivered == 0:
+        logger.error(
+            "OxaPay provision FAILED 0/%d user=%d sub=%d track=%s — ADMIN ALERT",
+            total, user_id, sub_id, track_id,
+        )
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>OxaPay provision FAIL</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Sub: #{sub_id}\n"
+                    f"Plan: {plan_key}\n"
+                    f"OxaPay track_id: <code>{track_id}</code>\n\n"
+                    f"Action: досоздай конфиги вручную или сделай refund в OxaPay dashboard.",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.error("OxaPay admin alert failed: %s", e, exc_info=True)
+        try:
+            await bot.send_message(
+                user_id,
+                "❌ <b>VPN-конфиги не создались</b>\n\n"
+                "Оплата прошла, но сервера временно недоступны. "
+                "Поддержка уже уведомлена — подключим вручную или вернём средства.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return web.Response(status=200)
+
+    try:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>Оплата получена!</b>\n\n"
+            f"VPN {plan['name']} активирован на {plan['duration_days']} дней.\n"
+            f"Открой Mini App → «Конфиги» чтобы скачать файлы подключения.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("OxaPay notify user %d: %s", user_id, e)
+    return web.Response(status=200)
+
+
 # ── Lava.top хендлеры (карты + СБП + recurring подписка) ──────────────────────
 # Auth: X-Api-Key. Email используется как primary identifier (нет custom payload).
 # Recurring: первая оплата создаёт sub с parent_contract_id; продления приходят
@@ -1561,15 +1809,17 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             cur_expires = datetime.utcnow()
         base = max(cur_expires, datetime.utcnow())
         new_expires = base + timedelta(days=plan["duration_days"])
-        was_grace = sub.get("status") == "grace"
-        await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+        # extend_subscription_expires_at переключает status grace→active атомарно
+        # и возвращает флаг — использовать его вместо pre-fetch'нутого sub.status,
+        # чтобы избежать race со scheduler'ом между чтением и записью.
+        was_grace = await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
 
         # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
-        # extend_subscription_expires_at уже переключил статус в 'active' в БД.
         if was_grace:
             from services.grace import unthrottle_sub_configs
-            asyncio.create_task(
-                unthrottle_sub_configs(sub["id"], sub["user_id"], sub["plan"])
+            _spawn_bg(
+                unthrottle_sub_configs(sub["id"], sub["user_id"], sub["plan"]),
+                name=f"unthrottle_lava_sub{sub['id']}",
             )
 
         try:
@@ -2712,8 +2962,9 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
     # DB уже active; делаем в фоне чтобы не задерживать ответ admin-панели.
     if was_grace:
-        asyncio.create_task(
-            unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"])
+        _spawn_bg(
+            unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"]),
+            name=f"unthrottle_admin_sub{updated['id']}",
         )
 
     return web.json_response({"ok": True, "subscription": updated})
@@ -2760,7 +3011,7 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     # crypto_/cryptomus_/lavatop_/free_.  Раньше `not startswith(crypto_,
     # free_)` ошибочно классифицировало `cryptomus_` и `lavatop_` как Stars
     # → bot.refund_star_payment получал чужой charge_id → Telegram 400.
-    _NON_STARS_PREFIXES = ("crypto_", "cryptomus_", "lavatop_", "free_")
+    _NON_STARS_PREFIXES = ("crypto_", "cryptomus_", "oxapay_", "lavatop_", "free_")
     is_stars = payment_id and not payment_id.startswith(_NON_STARS_PREFIXES)
     stars_refund_done = False
 
@@ -2800,6 +3051,7 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     payment_source = "stars"
     if payment_id:
         if payment_id.startswith("cryptomus_"): payment_source = "cryptomus"
+        elif payment_id.startswith("oxapay_"): payment_source = "oxapay"
         elif payment_id.startswith("lavatop_"): payment_source = "lavatop"
         elif payment_id.startswith("crypto_"): payment_source = "cryptobot"
         elif payment_id.startswith("free_"): payment_source = "free"
@@ -3224,6 +3476,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "esim":      SHOW_ESIM,
             "cryptobot": bool(CRYPTOBOT_TOKEN),
             "cryptomus": CRYPTOMUS_ENABLED,
+            "oxapay":    OXAPAY_ENABLED,
             "lavatop":   LAVATOP_ENABLED,
         },
     })
@@ -3274,6 +3527,11 @@ def create_api_app(bot: Bot) -> web.Application:
     # logic), но они отдают 503 пока CRYPTOMUS_ENABLED=false.
     app.router.add_post("/api/vpn/invoice/cryptomus",      handle_cryptomus_invoice)
     app.router.add_post("/api/cryptomus/webhook",          handle_cryptomus_webhook)
+
+    # OxaPay — крипто-шлюз, HMAC-SHA512. То же правило: endpoint'ы всегда
+    # зарегистрированы, без OXAPAY_ENABLED отдают 503.
+    app.router.add_post("/api/vpn/invoice/oxapay",         handle_oxapay_invoice)
+    app.router.add_post("/api/oxapay/webhook",             handle_oxapay_webhook)
 
     # Lava.top — карты/СБП + recurring подписка. То же — endpoint'ы всегда
     # зарегистрированы, без LAVATOP_ENABLED отдают 503.

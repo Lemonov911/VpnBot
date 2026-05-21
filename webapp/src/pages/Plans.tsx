@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceOxapay, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
@@ -214,6 +214,17 @@ export default function Plans() {
   // чтобы он не запутался при возврате.
   const [postPayOpen, setPostPayOpen] = useState(false)
 
+  // Computed once per sub.plan change — not inside .map() on every render.
+  const curPlan = useMemo(() => {
+    if (!sub || sub.plan === 'vpn_trial' || sub.status === 'expired') return null
+    return PLANS.find(p => p.key === sub.plan) ?? {
+      ...VISIBLE_PLANS[0],
+      key:   sub.plan,
+      stars: LEGACY_PLAN_PRICES[sub.plan]?.stars ?? VISIBLE_PLANS[0].stars,
+      rub:   LEGACY_PLAN_PRICES[sub.plan]?.rub   ?? VISIBLE_PLANS[0].rub,
+    }
+  }, [sub])
+
   useEffect(() => {
     WebApp.BackButton.show()
     const goBack = () => nav('/vpn')
@@ -265,6 +276,12 @@ export default function Plans() {
       } else if (method === 'cryptomus') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
+        setLoading(null)
+        WebApp.openLink(pay_url)
+        setPostPayOpen(true)
+      } else if (method === 'oxapay') {
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
         setLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
@@ -441,49 +458,40 @@ export default function Plans() {
               onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); setSheetPlan(plan) }} />
           ))
         ) : (
-          (() => {
-            const curPlan = PLANS.find(p => p.key === sub.plan) ?? {
-              ...VISIBLE_PLANS[0],
-              key:   sub.plan,
-              stars: LEGACY_PLAN_PRICES[sub.plan]?.stars ?? VISIBLE_PLANS[0].stars,
-              rub:   LEGACY_PLAN_PRICES[sub.plan]?.rub   ?? VISIBLE_PLANS[0].rub,
-            }
-            const planList = VISIBLE_PLANS
-            const inGrace = sub.status === 'grace'
-            return planList.map((plan, i) => {
-              const isPending = sub.pending_plan === plan.key
-              let mode: 'current' | 'renew' | 'upgrade' | 'downgrade' | 'pending'
-              // Юзер в grace на текущем плане → показываем «Продлить N₽» вместо «Ваш».
-              // Иначе grace-юзер не имеет способа выйти из throttle на тот же тариф.
-              if (plan.key === curPlan.key && inGrace) mode = 'renew'
-              else if (plan.key === curPlan.key) mode = 'current'
-              else if (plan.stars > curPlan.stars) mode = 'upgrade'
-              else if (isPending) mode = 'pending'
-              else mode = 'downgrade'
+          VISIBLE_PLANS.map((plan, i) => {
+            const inGrace = sub!.status === 'grace'
+            const isPending = sub!.pending_plan === plan.key
+            let mode: 'current' | 'renew' | 'upgrade' | 'downgrade' | 'pending'
+            // Юзер в grace на текущем плане → показываем «Продлить N₽» вместо «Ваш».
+            // Иначе grace-юзер не имеет способа выйти из throttle на тот же тариф.
+            if (plan.key === curPlan!.key && inGrace) mode = 'renew'
+            else if (plan.key === curPlan!.key) mode = 'current'
+            else if (plan.stars > curPlan!.stars) mode = 'upgrade'
+            else if (isPending) mode = 'pending'
+            else mode = 'downgrade'
 
-              return (
-                <PlanCard key={plan.key} plan={plan} mode={mode}
-                  upgradePrice={mode === 'upgrade' ? calcUpgradePrice(curPlan.rub, plan.rub, sub.days_remaining) : 0}
-                  loading={loading === plan.key} isPending={isPending} animDelay={i + 1}
-                  /* renew (юзер в grace на том же плане) идёт через обычный
-                     buy-flow с PaymentSheet, не через changeSubscriptionPlan.
-                     Backend _deliver_vpn детектит grace + same plan и продлевает
-                     существующую sub + делает unthrottle на агенте. */
-                  onClick={() => {
-                    if (mode === 'renew') {
-                      WebApp.HapticFeedback.impactOccurred('light')
-                      setSheetPlan(plan)
-                    } else if (mode === 'pending') {
-                      handleChange(plan, 'cancel')
-                    } else if (mode === 'upgrade') {
-                      handleChange(plan, 'upgrade')
-                    } else {
-                      handleChange(plan, 'downgrade')
-                    }
-                  }} />
-              )
-            })
-          })()
+            return (
+              <PlanCard key={plan.key} plan={plan} mode={mode}
+                upgradePrice={mode === 'upgrade' ? calcUpgradePrice(curPlan!.rub, plan.rub, sub!.days_remaining) : 0}
+                loading={loading === plan.key} isPending={isPending} animDelay={i + 1}
+                /* renew (юзер в grace на том же плане) идёт через обычный
+                   buy-flow с PaymentSheet, не через changeSubscriptionPlan.
+                   Backend _deliver_vpn детектит grace + same plan и продлевает
+                   существующую sub + делает unthrottle на агенте. */
+                onClick={() => {
+                  if (mode === 'renew') {
+                    WebApp.HapticFeedback.impactOccurred('light')
+                    setSheetPlan(plan)
+                  } else if (mode === 'pending') {
+                    handleChange(plan, 'cancel')
+                  } else if (mode === 'upgrade') {
+                    handleChange(plan, 'upgrade')
+                  } else {
+                    handleChange(plan, 'downgrade')
+                  }
+                }} />
+            )
+          })
         )}
 
         {pageStatus === 'error' && (
@@ -521,7 +529,7 @@ export default function Plans() {
           onPay={(method, period, recurring) => handleBuy(sheetPlan, method, period, recurring)}
           /* Юзер кликнул кнопку с ценой в ₽ — preselect ₽-метод чтобы не было
              когнитивного диссонанса «нажал 200 ₽, открылось 145 ⭐». */
-          defaultMethod="crypto"
+          defaultMethod="oxapay"
           hasActiveTrial={sub?.plan === 'vpn_trial'}
         />
       )}

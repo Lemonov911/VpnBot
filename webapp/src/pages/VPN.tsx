@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceLavatop, cancelLavatopRenewal,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceOxapay, createVpnInvoiceLavatop, cancelLavatopRenewal,
   getActiveSubscription, getUserConfigs, getVpnStatus,
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
@@ -164,6 +164,12 @@ export default function VPN() {
             WebApp.showAlert('Ошибка оплаты. Попробуйте ещё раз.')
           }
         })
+      } else if (method === 'oxapay') {
+        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
+        const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
+        setBuyLoading(null)
+        WebApp.openLink(pay_url)
+        setPostPayOpen(true)
       } else if (method === 'cryptomus') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
@@ -177,7 +183,7 @@ export default function VPN() {
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else {
-        // CryptoBot (method='crypto') — multi-period one-time invoice
+        // Fallback: legacy CryptoBot (method='crypto')
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceCrypto(planKey, 'RUB')
         setBuyLoading(null)
@@ -307,7 +313,7 @@ export default function VPN() {
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
             hasActiveTrial={false}
-            defaultMethod="crypto"
+            defaultMethod="oxapay"
           />
         )}
 
@@ -420,7 +426,7 @@ export default function VPN() {
                sub.status==='expired' — триал-юзеру они недоступны
                (триал имеет status='active'). Hardcode false. */
             hasActiveTrial={false}
-            defaultMethod="crypto"
+            defaultMethod="oxapay"
           />
         )}
 

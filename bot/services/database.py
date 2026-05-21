@@ -1190,13 +1190,23 @@ async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
             return dict(row) if row else None
 
 
-async def extend_subscription_expires_at(sub_id: int, new_expires_at: str, *, reset_status: bool = True):
-    """Продлевает подписку (Lava recurring success). Сбрасывает status='active'
+async def extend_subscription_expires_at(
+    sub_id: int, new_expires_at: str, *, reset_status: bool = True
+) -> bool:
+    """Продлевает подписку (Lava recurring success).  Сбрасывает status='active'
     если он был 'grace' — recurring деньги пришли вовремя или с задержкой,
-    значит юзер хочет оставаться на VPN. Сбрасываются все reminded_*
-    флаги — следующий цикл начнётся с чистого листа.
+    значит юзер хочет оставаться на VPN.  Сбрасываются все reminded_* флаги.
+
+    Возвращает True если sub находилась в статусе 'grace' до продления (caller
+    должен снять throttle на агентах).  Чтение + запись в одной транзакции —
+    атомарнее, чем отдельный SELECT до вызова.
     """
     async with _connect() as db:
+        async with db.execute(
+            "SELECT status FROM subscriptions WHERE id=?", (sub_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        was_grace = bool(row and row[0] == "grace")
         if reset_status:
             await db.execute(
                 "UPDATE subscriptions SET expires_at=?, status='active', "
@@ -1211,6 +1221,7 @@ async def extend_subscription_expires_at(sub_id: int, new_expires_at: str, *, re
                 (new_expires_at, sub_id),
             )
         await db.commit()
+    return was_grace
 
 
 async def get_recurring_renewal_due_soon(days_before: int = 3) -> list[dict]:

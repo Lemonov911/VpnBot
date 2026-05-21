@@ -3,7 +3,7 @@ import WebApp from '@twa-dev/sdk'
 import { useT } from '../i18n'
 import { getFeatures } from '../api'
 
-export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'lavatop'
+export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'oxapay' | 'lavatop'
 export type PayPeriod = '1m' | '3m' | '6m' | '12m'
 
 // Multi-period цены — синхронизировано с bot/services/plans.py.
@@ -58,7 +58,7 @@ export const PLANS: Plan[] = [
 export const VISIBLE_PLANS: Plan[] = PLANS
 
 export default function PaymentSheet({
-  plan, onClose, onPay, defaultMethod = 'crypto', hasActiveTrial = false,
+  plan, onClose, onPay, defaultMethod = 'oxapay', hasActiveTrial = false,
 }: {
   plan: Plan
   onClose: () => void
@@ -155,7 +155,7 @@ export default function PaymentSheet({
               ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${rubPrice} ₽`]]
               : []),
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
-            ['crypto',   '💎', t('pay_method_crypto'),    `${rubPrice} ₽`],
+            ['oxapay',   '🪙', 'OxaPay',                 `${rubPrice} ₽`],
             ...(showCryptomus
               ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${rubPrice} ₽`]]
               : []),

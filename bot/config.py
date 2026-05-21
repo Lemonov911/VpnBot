@@ -73,6 +73,12 @@ LAVATOP_OFFERS: dict[str, str] = {
     "vpn_max":  LAVATOP_OFFER_VPN_MAX,
 }
 
+# OxaPay — крипто-платёжный провайдер (USDT/BTC/etc), one-time invoices.
+# API ключ из дашборда https://app.oxapay.com → Merchant → API keys.
+OXAPAY_API_KEY = os.getenv("OXAPAY_API_KEY", "")
+OXAPAY_ENABLED = bool(OXAPAY_API_KEY) and \
+                 os.getenv("OXAPAY_ENABLED", "false").lower() == "true"
+
 # Shared secret для admin API (Next.js админка → bot REST).
 # Админка проксирует write-операции через бота (reply на тикет, etc) чтобы не
 # открывать write-доступ к SQLite + чтоб бот мог отправлять сообщения юзерам.

@@ -19,8 +19,8 @@ Grace renewal helper — общая логика «юзер в grace плати�
 
 Если grace не обнаружен — возвращает False, обычный create-flow.
 """
+import asyncio
 import logging
-from typing import Any
 
 from aiogram import Bot
 
@@ -127,44 +127,47 @@ async def unthrottle_sub_configs(sub_id: int, user_id: int, plan_key: str) -> No
     from services.plans import vless_service_for_plan
 
     target_vless_svc = vless_service_for_plan(plan_key)
+
+    async def _one(cfg: dict) -> None:
+        server_id = cfg.get("server_id")
+        if not server_id:
+            return
+        server = await get_server_by_id(server_id)
+        if not server or not server.get("agent_url"):
+            return
+        client = client_for_server(server)
+        proto = cfg.get("protocol", "")
+        peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+        assigned_ip = cfg.get("assigned_ip") or ""
+        try:
+            if proto == "awg" and peer_id and assigned_ip:
+                await client.unthrottle_peer("awg", peer_id, assigned_ip)
+            elif proto in ("vless", "vless-reality") and peer_id:
+                normal_added = False
+                try:
+                    new_peer = await client.add_peer(
+                        target_vless_svc, f"u{user_id}_c{cfg['id']}",
+                        peer_id=peer_id,
+                    )
+                    normal_added = True
+                    await client.remove_peer("vless-grace", peer_id)
+                except VpnctlError:
+                    if normal_added:
+                        try:
+                            await client.remove_peer(target_vless_svc, peer_id)
+                        except Exception:
+                            pass
+                    raise
+                if new_peer.config:
+                    await update_config_data(cfg["id"], new_peer.config)
+        except VpnctlError as e:
+            logger.warning(
+                "unthrottle_sub_configs cfg #%d: %s", cfg["id"], e, exc_info=True,
+            )
+
     try:
         configs = await get_configs_for_subscription(sub_id)
-        for cfg in configs:
-            server_id = cfg.get("server_id")
-            if not server_id:
-                continue
-            server = await get_server_by_id(server_id)
-            if not server or not server.get("agent_url"):
-                continue
-            client = client_for_server(server)
-            proto = cfg.get("protocol", "")
-            peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-            assigned_ip = cfg.get("assigned_ip") or ""
-            try:
-                if proto == "awg" and peer_id and assigned_ip:
-                    await client.unthrottle_peer("awg", peer_id, assigned_ip)
-                elif proto in ("vless", "vless-reality") and peer_id:
-                    normal_added = False
-                    try:
-                        new_peer = await client.add_peer(
-                            target_vless_svc, f"u{user_id}_c{cfg['id']}",
-                            peer_id=peer_id,
-                        )
-                        normal_added = True
-                        await client.remove_peer("vless-grace", peer_id)
-                    except VpnctlError:
-                        if normal_added:
-                            try:
-                                await client.remove_peer(target_vless_svc, peer_id)
-                            except Exception:
-                                pass
-                        raise
-                    if new_peer.config:
-                        await update_config_data(cfg["id"], new_peer.config)
-            except VpnctlError as e:
-                logger.warning(
-                    "unthrottle_sub_configs cfg #%d: %s", cfg["id"], e, exc_info=True,
-                )
+        await asyncio.gather(*[_one(cfg) for cfg in configs])
     except Exception as e:
         # Даже при ошибке — подписка уже активна в БД; scheduler sync разрулит.
         logger.error("unthrottle_sub_configs sub=%d outer: %s", sub_id, e, exc_info=True)

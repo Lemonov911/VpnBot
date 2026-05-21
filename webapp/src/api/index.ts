@@ -61,20 +61,28 @@ export function createVpnInvoiceCryptomus(
   return post('/api/vpn/invoice/cryptomus', { plan_key: planKey, currency })
 }
 
+export function createVpnInvoiceOxapay(
+  planKey: string,
+  currency: 'RUB' | 'USD',
+): Promise<{ pay_url: string }> {
+  return post('/api/vpn/invoice/oxapay', { plan_key: planKey, currency })
+}
+
 // Feature flags из /api/health — кэшируем на сессию.
 let _featuresCache: Promise<Features> | null = null
 export interface Features {
   esim: boolean
   cryptobot: boolean
   cryptomus: boolean
+  oxapay: boolean
   lavatop: boolean
 }
 export function getFeatures(): Promise<Features> {
   if (_featuresCache) return _featuresCache
   _featuresCache = fetch(API_BASE + '/api/health')
     .then(r => r.json())
-    .then(d => (d.features as Features) ?? { esim: false, cryptobot: false, cryptomus: false, lavatop: false })
-    .catch(() => ({ esim: false, cryptobot: false, cryptomus: false, lavatop: false }))
+    .then(d => (d.features as Features) ?? { esim: false, cryptobot: false, cryptomus: false, oxapay: false, lavatop: false })
+    .catch(() => ({ esim: false, cryptobot: false, cryptomus: false, oxapay: false, lavatop: false }))
   return _featuresCache
 }
 
