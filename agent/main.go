@@ -27,6 +27,11 @@ func main() {
 
 	services := make(map[string]service.Service)
 
+	// Ensure state directory exists for persistent agent state (suspended VLESS peers).
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		log.Printf("warn: cannot create state dir %s: %v", cfg.StateDir, err)
+	}
+
 	var wgMgr *wgpkg.Manager
 
 	for _, svcName := range cfg.Services {
@@ -82,6 +87,7 @@ func main() {
 				tier.InboundPort,
 				flow,
 			)
+			statePath := cfg.StateDir + "/suspended-" + svcName + ".json"
 			services[svcName] = service.NewVLESSService(xrayMgr, service.VLESSConnection{
 				Host:      cfg.XrayPublicHost,
 				Port:      tier.InboundPort,
@@ -91,7 +97,7 @@ func main() {
 				FP:        cfg.XrayFingerprint,
 				Flow:      flow,
 				PeerLabel: cfg.XrayPeerLabel,
-			})
+			}, statePath)
 			log.Printf("service: %s (built-in, inbound=%s, port=%d, host=%s, flow=%q)",
 				svcName, tier.InboundTag, tier.InboundPort, cfg.XrayPublicHost, flow)
 

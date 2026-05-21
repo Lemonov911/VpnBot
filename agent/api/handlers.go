@@ -181,10 +181,15 @@ func (s *Server) handleServiceResumePeer(svc service.Service) http.HandlerFunc {
 }
 
 // handleServiceThrottlePeer applies a tc bandwidth limit (kbps) to an AWG peer
-// by its assigned IP on the awg0 interface. For non-AWG services this is a no-op
-// (VLESS grace is handled via inbound routing at the Xray level).
+// by its assigned IP on the service's WireGuard interface.
+// iface="" means the service doesn't use tc throttling (VLESS uses inbound routing).
 func (s *Server) handleServiceThrottlePeer(iface string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if iface == "" {
+			// VLESS grace is handled by inbound switching at the Xray level, not tc.
+			jsonOK(w, map[string]string{"status": "ok"})
+			return
+		}
 		id := peerID(r)
 		if id == "" {
 			jsonError(w, "missing peer id", http.StatusBadRequest)
@@ -234,8 +239,13 @@ func (s *Server) handleServiceThrottlePeer(iface string) http.HandlerFunc {
 }
 
 // handleServiceUnthrottlePeer removes tc bandwidth limit for a peer IP.
+// iface="" means the service doesn't use tc throttling — no-op.
 func (s *Server) handleServiceUnthrottlePeer(iface string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if iface == "" {
+			jsonOK(w, map[string]string{"status": "ok"})
+			return
+		}
 		var req struct {
 			IP string `json:"ip"`
 		}

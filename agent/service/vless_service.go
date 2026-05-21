@@ -1,9 +1,11 @@
 package service
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 
@@ -25,8 +27,9 @@ type VLESSConnection struct {
 
 // VLESSService implements service.Service on top of xray.Manager + Reality URL builder.
 type VLESSService struct {
-	mgr  *xray.Manager
-	conn VLESSConnection
+	mgr       *xray.Manager
+	conn      VLESSConnection
+	statePath string // persisted suspended-peers state; empty = no persistence
 
 	mu        sync.Mutex
 	suspended map[string]VLESSSuspended // key = uuid
@@ -37,16 +40,62 @@ type VLESSSuspended struct {
 	Email string
 }
 
-func NewVLESSService(mgr *xray.Manager, conn VLESSConnection) *VLESSService {
+// NewVLESSService creates a VLESS service. statePath is the path to a JSON file
+// used to persist suspended-peer state across restarts; pass "" to disable.
+func NewVLESSService(mgr *xray.Manager, conn VLESSConnection, statePath string) *VLESSService {
 	if conn.FP == "" {
 		conn.FP = "chrome"
 	}
 	// Note: empty conn.Flow is intentional — vless-max / vless-max-slow run
 	// plain VLESS without xtls-rprx-vision. Don't set a default here.
-	return &VLESSService{
+	svc := &VLESSService{
 		mgr:       mgr,
 		conn:      conn,
+		statePath: statePath,
 		suspended: make(map[string]VLESSSuspended),
+	}
+	svc.loadState()
+	return svc
+}
+
+// loadState reads persisted suspended-peer state from disk (best-effort).
+func (s *VLESSService) loadState() {
+	if s.statePath == "" {
+		return
+	}
+	data, err := os.ReadFile(s.statePath)
+	if err != nil {
+		return // file may not exist yet — normal on first run
+	}
+	var m map[string]VLESSSuspended
+	if err := json.Unmarshal(data, &m); err != nil {
+		log.Printf("vless: failed to parse state file %s: %v", s.statePath, err)
+		return
+	}
+	s.mu.Lock()
+	s.suspended = m
+	s.mu.Unlock()
+	log.Printf("vless: loaded %d suspended peers from %s", len(m), s.statePath)
+}
+
+// saveState persists the suspended-peer map to disk atomically.
+func (s *VLESSService) saveState() {
+	if s.statePath == "" {
+		return
+	}
+	s.mu.Lock()
+	data, err := json.Marshal(s.suspended)
+	s.mu.Unlock()
+	if err != nil {
+		return
+	}
+	tmp := s.statePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		log.Printf("vless: failed to write state file %s: %v", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, s.statePath); err != nil {
+		log.Printf("vless: failed to rename state file: %v", err)
 	}
 }
 
@@ -178,7 +227,15 @@ func (s *VLESSService) SuspendPeer(id string) error {
 	s.suspended[id] = VLESSSuspended{UUID: id, Email: email}
 	s.mu.Unlock()
 
-	return s.mgr.RemoveUser(id)
+	if err := s.mgr.RemoveUser(id); err != nil {
+		// Roll back the in-memory record — the peer is still live
+		s.mu.Lock()
+		delete(s.suspended, id)
+		s.mu.Unlock()
+		return err
+	}
+	s.saveState()
+	return nil
 }
 
 func (s *VLESSService) ResumePeer(id string) error {
@@ -186,17 +243,20 @@ func (s *VLESSService) ResumePeer(id string) error {
 	susp, ok := s.suspended[id]
 	s.mu.Unlock()
 	if !ok {
-		return errors.New("peer is not suspended (or vpnctl was restarted; resume needs restart-resilient state)")
+		// Suspended map is empty after a restart but the user was already removed
+		// from Xray config. Re-add with best-effort email; stats reset but access
+		// is restored. Bot has the real UUID, which is what matters for routing.
+		susp = VLESSSuspended{UUID: id, Email: id + "@vpn"}
 	}
 
-	_, err := s.mgr.AddUserWithUUID(susp.UUID, susp.Email)
-	if err != nil {
+	if _, err := s.mgr.AddUserWithUUID(susp.UUID, susp.Email); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
 	delete(s.suspended, id)
 	s.mu.Unlock()
+	s.saveState()
 	return nil
 }
 

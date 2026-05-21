@@ -274,9 +274,9 @@ func (m *Manager) addUserAPI(uuidStr, email string) error {
 	if err != nil {
 		return fmt.Errorf("adu: %s: %w", out, err)
 	}
-	if !strings.Contains(string(out), "Added 1") {
-		return fmt.Errorf("adu unexpected output: %s", out)
-	}
+	// Don't check "Added 1" — xray reports "Added 0" when the user is already
+	// live (idempotent re-add after restart), which was incorrectly treated as
+	// an error. Exit code is the reliable signal.
 	return nil
 }
 

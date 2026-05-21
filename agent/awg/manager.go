@@ -245,6 +245,9 @@ func (m *Manager) RemovePeer(pubkey string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if _, ok := m.peers[pubkey]; !ok {
+		return nil // not tracked by agent — already removed, idempotent
+	}
 	if err := m.awgSetPeer(pubkey, "remove"); err != nil {
 		return err
 	}

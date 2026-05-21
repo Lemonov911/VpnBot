@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	awgpkg "vpnctl/awg"
 	"vpnctl/service"
 	"vpnctl/wg"
 )
@@ -49,6 +50,14 @@ func (s *Server) Handler() http.Handler {
 			svcName := name
 			svcRef := svc
 			isWG := name == "wg"
+			// Resolve tc interface: AWG services expose Manager().Interface().
+			// Non-AWG services (VLESS) pass "" → throttle handler is a no-op.
+			type awgIfacer interface{ Manager() *awgpkg.Manager }
+			tcIface := ""
+			if a, ok := svcRef.(awgIfacer); ok {
+				tcIface = a.Manager().Interface()
+			}
+
 			r.Route("/services/"+svcName, func(r chi.Router) {
 				r.Post("/peers", s.handleServiceAddPeer(svcRef, false))
 				r.Get("/peers", s.handleServiceListPeers(svcRef, false))
@@ -57,8 +66,8 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/peers/{id}/resume", s.handleServiceResumePeer(svcRef))
 				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, false))
 				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, false))
-				r.Post("/peers/{id}/throttle", s.handleServiceThrottlePeer("awg0"))
-				r.Delete("/peers/{id}/throttle", s.handleServiceUnthrottlePeer("awg0"))
+				r.Post("/peers/{id}/throttle", s.handleServiceThrottlePeer(tcIface))
+				r.Delete("/peers/{id}/throttle", s.handleServiceUnthrottlePeer(tcIface))
 				r.Post("/sync", s.handleServiceSync(svcRef))
 				r.Get("/info", s.handleServiceInfo(svcRef))
 			})

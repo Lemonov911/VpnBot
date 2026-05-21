@@ -26,6 +26,7 @@ type Config struct {
 	TelegramAdminIDs []int64
 
 	ScriptsDir string // base directory for script-based services
+	StateDir   string // directory for persistent agent state (suspended VLESS peers)
 
 	// Xray / VLESS-Reality (used when "vless"/"vless-base"/"vless-max" appears in Services).
 	XrayConfigPath  string // /usr/local/etc/xray/config.json
@@ -77,6 +78,7 @@ func Load() *Config {
 		TelegramBotToken:     env("BOT_TOKEN", ""),
 		TelegramAdminIDs:     adminIDs,
 		ScriptsDir:           env("SCRIPTS_DIR", "/opt/vpnbot/scripts"),
+		StateDir:             env("VPNCTL_STATE_DIR", "/var/lib/vpnctl"),
 
 		XrayConfigPath:  env("XRAY_CONFIG_PATH", "/usr/local/etc/xray/config.json"),
 		XrayAPIAddr:     env("XRAY_API_ADDR", "127.0.0.1:10085"),
