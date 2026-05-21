@@ -135,6 +135,10 @@ T: dict[str, dict[str, str]] = {
             "Если ты импортировал <b>Subscription URL</b> — конфиг обновится автоматически "
             "в течение нескольких минут.\n\n"
             "💎 Апгрейд тарифа даёт больше квоты.",
+        "bot_quota_restore":
+            "⚡ <b>Скорость восстановлена</b>\n\n"
+            "Квота обновилась — VPN снова работает на полной скорости.",
+        "bot_sub_expired_title":          "❌ MAX VPN — подписка истекла",
         # Lava cancel webhook
         "bot_lava_cancelled":
             "❎ <b>Автопродление отключено</b>\n\n"
@@ -386,6 +390,10 @@ T: dict[str, dict[str, str]] = {
             "If you imported the <b>Subscription URL</b> — the config will update automatically "
             "in a few minutes.\n\n"
             "💎 Upgrade your plan for more quota.",
+        "bot_quota_restore":
+            "⚡ <b>Speed restored</b>\n\n"
+            "Quota reset — VPN works at full speed again.",
+        "bot_sub_expired_title":          "❌ MAX VPN — subscription expired",
         # Lava cancel webhook
         "bot_lava_cancelled":
             "❎ <b>Auto-renewal disabled</b>\n\n"

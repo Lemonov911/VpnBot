@@ -3143,6 +3143,8 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
         # that no longer applies and may confuse other parsers (sing-box
         # reads total=1 with download=0 as «1 byte cap, 0 used» — a data
         # anomaly, not «expired»).
+        from services.i18n_bot import t as _i18n_t_local
+        _exp_lang = (user.get("lang") or "ru")[:2].lower()
         return web.Response(
             text="",
             headers={
@@ -3150,7 +3152,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 "Cache-Control":          "no-cache, no-store, must-revalidate",
                 "Subscription-Userinfo":  f"download=0; upload=0; expire={int(_t.time()) - 1}",
                 "Profile-Update-Interval": "12",
-                "Profile-Title":          _safe_header("❌ MAX VPN — подписка истекла"),
+                "Profile-Title":          _safe_header(_i18n_t_local(_exp_lang, "bot_sub_expired_title")),
                 "Profile-Web-Page-Url":   "https://t.me/maxvpnesim_bot",
                 "Support-Url":            "https://t.me/maxvpnesim_bot",
             },

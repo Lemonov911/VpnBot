@@ -918,10 +918,10 @@ async def _apply_quota_throttle(bot: Bot):
                     if already_notified and not sent_restore_notify:
                         sent_restore_notify = True
                         try:
+                            _restore_lang = await get_user_lang(cfg["user_id"]) or "ru"
                             await bot.send_message(
                                 cfg["user_id"],
-                                "⚡ <b>Скорость восстановлена</b>\n\n"
-                                "Квота обновилась — VPN снова работает на полной скорости.",
+                                _i18n_t(_restore_lang, "bot_quota_restore"),
                                 parse_mode="HTML",
                             )
                         except Exception as e:
