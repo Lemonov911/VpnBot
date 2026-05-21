@@ -2642,6 +2642,12 @@ async def active_vless_servers() -> list[dict]:
         backfilled=1 автоматически при миграции.
     Сортируем по id для детерминированного порядка в подписке.
 
+    NB: ранее тут стоял фильтр `xray_sni IS NOT NULL`, который ломал legacy
+    серверы где SNI хранился ТОЛЬКО в `/opt/vpnctl/.env` агента (XRAY_SNI),
+    а в БД был NULL. Существующие юзеры внезапно получали пустой
+    subscription URL в Happ. Теперь фильтр снят — `_resolve_vless_urls`
+    применяет fallback на дефолтный SNI (`www.microsoft.com` или env).
+
     NB: ordering by `id` is stable in steady state but jumps if a server is
     DELETEd and re-INSERTed (new id == max+1, jumps to end of subscription
     list — Happ shows it as a "new" server). A proper fix would be a
@@ -2658,7 +2664,6 @@ async def active_vless_servers() -> list[dict]:
             FROM servers
             WHERE protocol='vless' AND is_active=1
               AND xray_pubkey IS NOT NULL AND xray_pubkey != ''
-              AND xray_sni IS NOT NULL AND xray_sni != ''
               AND backfilled=1
             ORDER BY id
         """) as cur:

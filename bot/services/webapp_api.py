@@ -221,18 +221,22 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
                     )
                     port = fallback
                 # Reality REQUIRES sni — without it client TLS hello mismatches
-                # server's `serverNames` and connection drops. Fail-fast at URL
-                # build time (rather than silently serving a broken URL); the
-                # DB filter in active_vless_servers() already drops sni-less
-                # rows, so this is double protection for prod misconfig.
+                # server's `serverNames` and connection drops. Раньше тут
+                # стоял `continue` если sni пустой + жёсткий фильтр в БД —
+                # это ломало legacy серверы где SNI хранился ТОЛЬКО в
+                # `/opt/vpnctl/.env` агента (XRAY_SNI), а в БД был NULL.
+                # Live юзеры внезапно получали пустой subscription URL.
+                # Теперь — fallback на default-sni из env или прод-константу
+                # ("www.microsoft.com", см. CLAUDE.md). Логируем WARNING
+                # чтобы admin заполнил DB-колонку (для consistency).
                 sni = s.get("xray_sni") or ""
                 if not sni:
-                    logger.error(
-                        "Skipping server %d in /sub/ — xray_sni is NULL/empty. "
-                        "Reality REQUIRES sni; serving this URL would break the client.",
-                        s.get("id"),
+                    sni = os.getenv("XRAY_DEFAULT_SNI") or "www.microsoft.com"
+                    logger.warning(
+                        "_resolve_vless_urls: server %d xray_sni NULL/empty in DB — "
+                        "fallback to %s. Заполни servers.xray_sni через admin.",
+                        s.get("id"), sni,
                     )
-                    continue
                 # vless:// URL — sni обязателен; pbk/sid тоже.
                 params = [
                     "encryption=none",
