@@ -212,7 +212,7 @@ async def pre_checkout(query: PreCheckoutQuery):
 
     payload = query.invoice_payload or ""
     if not payload:
-        await query.answer(ok=False, error_message="Некорректный payload — попробуй создать платёж заново.")
+        await query.answer(ok=False, error_message=_i18n_t(_lang, "bot_precheckout_bad_payload"))
         return
     # Валидация по payload-type. Stars-invoice payload:
     #   "vpn_base" / "vpn_max"            — обычная покупка
@@ -232,7 +232,7 @@ async def pre_checkout(query: PreCheckoutQuery):
                 "pre_checkout SECURITY: payload=%s total_amount=%d < expected=%d user=%d",
                 payload, query.total_amount, expected, query.from_user.id,
             )
-            await query.answer(ok=False, error_message="Неверная сумма платежа.")
+            await query.answer(ok=False, error_message=_i18n_t(_lang, "bot_precheckout_bad_amount"))
             return
 
         # Audit 17.05 #11: re-check active sub.  Между invoice gen и
@@ -794,10 +794,7 @@ async def send_purchase_success_message(
                     cfg["config_data"].encode(),
                     filename=f"maxvpn_{plan_key}_{i}.conf",
                 ),
-                caption=(
-                    f"📁 <b>WireGuard конфиг #{i}</b>\n"
-                    f"Импортируй в AmneziaWG / WireGuard"
-                ),
+                caption=_i18n_t(user_lang, "bot_purchase_success_awg_caption", n=i),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -823,7 +820,7 @@ async def send_purchase_success_message(
     ]
     if delivered < total:
         msg_parts.append(
-            f"⚙️ Слотов готово: {delivered}/{total} (остальные подтянутся)"
+            _i18n_t(user_lang, "bot_purchase_success_partial", delivered=delivered, total=total)
         )
     if sub_url:
         msg_parts.extend([
@@ -1216,10 +1213,14 @@ async def _apply_plan_upgrade(message: Message, payment):
         tx_id=payment_id,
     )
 
+    from services.database import get_user_lang as _get_user_lang_up
+    from services.i18n_bot import t as _i18n_t_up
+    _user_lang_up = await _get_user_lang_up(user_id)
+    _plan_name_up = plan_display_name(plan, _user_lang_up or "ru")
     await message.answer(
-        f"✅ <b>Тариф изменён на «{plan['name']}»!</b>\n\n"
-        f"🔌 Теперь у тебя: <b>{slots_desc}</b>\n\n"
-        "Открой <b>Мои конфиги</b> — новые пустые слоты уже там.",
+        _i18n_t_up(_user_lang_up, "bot_upgrade_success_title", plan=_plan_name_up) + "\n\n"
+        + _i18n_t_up(_user_lang_up, "bot_upgrade_success_slots", slots=slots_desc) + "\n\n"
+        + _i18n_t_up(_user_lang_up, "bot_upgrade_success_check"),
         parse_mode="HTML",
     )
 

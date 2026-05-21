@@ -1308,11 +1308,17 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
 
             bot_up: Bot = request.app["bot"]
             try:
+                from services.database import get_user_lang as _get_user_lang_cb
+                from services.i18n_bot import t as _i18n_t_cb
+                _user_lang_cb = await _get_user_lang_cb(up_user_id)
+                _plan_name_cb = plan_display_name(up_plan, _user_lang_cb or "ru")
+                _paid_amount = invoice.get("paid_amount", "")
+                _paid_asset = invoice.get("paid_asset", "")
                 await bot_up.send_message(
                     up_user_id,
-                    f"✅ <b>Тариф изменён на «{up_plan['name']}»!</b>\n\n"
-                    f"💎 Оплата: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
-                    "Открой <b>Мои конфиги</b> — новые слоты уже там.",
+                    _i18n_t_cb(_user_lang_cb, "bot_upgrade_success_title", plan=_plan_name_cb) + "\n\n"
+                    + _i18n_t_cb(_user_lang_cb, "bot_upgrade_success_paid", amount=_paid_amount, asset=_paid_asset) + "\n\n"
+                    + _i18n_t_cb(_user_lang_cb, "bot_upgrade_success_check"),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -3176,7 +3182,8 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 # активная подписка в Happ-Profile-Title должен выглядеть
                 # узнаваемо, а не как «VPN» (default).
                 if sub["plan"] == "vpn_trial":
-                    plan_name = "Пробный 🎁"
+                    _user_lang_pt = (user.get("lang") or "ru")[:2].lower()
+                    plan_name = "Trial 🎁" if _user_lang_pt == "en" else "Пробный 🎁"
                 else:
                     plan_name = plan.get("name", "VPN")
                 # В grace юзер видит, что подписка истекла, но всё ещё работает
