@@ -54,7 +54,9 @@ from services.database import (
     get_trial_nudge_candidates,
     mark_trial_nudge_sent,
     set_quota_throttled_flag,
+    get_user_lang,
 )
+from services.i18n_bot import t as _i18n_t
 import services.esim_api as esim_api
 from services.vpnctl_client import client_for_server, VpnctlError
 from services.plans import (
@@ -77,8 +79,7 @@ GRACE_NOTICE = (
 EXPIRY_NOTICE = (
     "⚠️ <b>VPN полностью отключён</b>\n\n"
     "Льготный период (14 дней) истёк. Для возобновления доступа "
-    "оформи новую подписку.\n\n"
-    "/start — открыть меню"
+    "оформи новую подписку ↓"
 )
 
 CHECK_INTERVAL = 3600  # секунд (1 час)
@@ -218,8 +219,13 @@ async def _process_expired_subscriptions(bot: Bot):
                 )
                 await mark_subscription_expired(sub_id)
                 # Уведомление юзеру
-                await _send_throttled(bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
-                                       reply_markup=_renew_kb())
+                _lang = await get_user_lang(user_id)
+                await _send_throttled(
+                    bot, user_id,
+                    _i18n_t(_lang, "bot_expiry_notice"),
+                    parse_mode="HTML",
+                    reply_markup=_renew_kb(),
+                )
             except Exception as e:
                 logger.warning("late-expire sub #%d: %s", sub_id, e, exc_info=True)
             continue
@@ -431,8 +437,10 @@ async def _process_expired_subscriptions(bot: Bot):
             continue
         logger.info("Подписка #%d → grace (до %s)", sub_id, grace_until[:10])
 
+        _lang = await get_user_lang(user_id)
         await _send_throttled(
-            bot, user_id, GRACE_NOTICE, parse_mode="HTML",
+            bot, user_id, _i18n_t(_lang, "bot_grace_notice"),
+            parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
 
@@ -520,8 +528,10 @@ async def _process_grace_expired_subscriptions(bot: Bot):
             logger.info("Конфиг #%d отозван (grace истёк, sub=%d)", cfg_id, sub_id)
 
         logger.info("Подписка #%d → expired (post-grace)", sub_id)
+        _lang = await get_user_lang(user_id)
         await _send_throttled(
-            bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
+            bot, user_id, _i18n_t(_lang, "bot_expiry_notice"),
+            parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
 
@@ -648,17 +658,20 @@ async def _process_expired_orders(bot: Bot):
         await mark_order_expired(order_id)
         logger.info("Order #%d истёк, пир удалён: %s", order_id, vpn_username)
 
+        _lang = await get_user_lang(user_id)
         await _send_throttled(
-            bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
+            bot, user_id, _i18n_t(_lang, "bot_expiry_notice"),
+            parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
 
 
 # Триал-клоуз notice — не «продли», т.к. триал был бесплатный. Главное
-# CTA — выбор постоянного тарифа в /start (там Mini App с планами).
+# CTA — выбор постоянного тарифа через inline-кнопку под сообщением
+# (см. _renew_kb()), не текстом /start.
 TRIAL_EXPIRY_NOTICE = (
     "⏰ <b>Пробный период закончился</b>\n\n"
-    "Понравилось? Выбери постоянный тариф в /start — "
+    "Понравилось? Выбери постоянный тариф ↓ — "
     "от 200 ₽/мес, та же скорость, без перерыва."
 )
 
@@ -736,8 +749,10 @@ async def _process_expired_trials(bot: Bot):
             await mark_subscription_expired(sub_id)
             logger.info("Триал #%d → expired (user=%d)", sub_id, user_id)
 
+            _lang = await get_user_lang(user_id)
             await _send_throttled(
-                bot, user_id, TRIAL_EXPIRY_NOTICE, parse_mode="HTML",
+                bot, user_id, _i18n_t(_lang, "bot_trial_expiry_notice"),
+                parse_mode="HTML",
                 reply_markup=_renew_kb(),
             )
 
@@ -1228,22 +1243,40 @@ async def _send_renewal_reminders(bot: Bot):
         plan_name = plan.get("name", plan_key)
         amount_rub = sub.get("amount_rub") or int(float(plan.get("rub", 0)))
         stars = plan.get("stars", 0)
-        day_word = plural_ru(days_left, DAYS)
+
+        # F12: для Lava (RU/EN бирюль рынка) — берём из i18n_bot. Stars-recurring
+        # пока только RU — отдельной локализации не требует, оставляем строку.
+        user_lang = await get_user_lang(user_id)
+        from services.i18n_bot import day_word as _day_word
+
+        # Edge case: "через 0/1 дней" звучит криво — для 0/1 отдельные ключи.
+        day_w = _day_word(user_lang, days_left)
 
         if provider == "lavatop":
-            text = (
-                f"🔁 <b>Через {days_left} {day_word} "
-                f"спишется {amount_rub} ₽ с твоей карты</b>\n\n"
-                f"Тариф: <b>{plan_name}</b>\n"
-                f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
-                f"Если не хочешь продлевать — отмени в Mini App "
-                f"(VPN → кнопка «Отменить автопродление»). "
-                f"VPN продолжит работать до конца оплаченного периода."
+            if days_left == 0:
+                head = _i18n_t(user_lang, "bot_renewal_reminder_today", amount=amount_rub)
+            elif days_left == 1:
+                head = _i18n_t(user_lang, "bot_renewal_reminder_tomorrow", amount=amount_rub)
+            else:
+                head = _i18n_t(
+                    user_lang, "bot_renewal_reminder_in",
+                    n=days_left, day_word=day_w, amount=amount_rub,
+                )
+            body = _i18n_t(
+                user_lang, "bot_renewal_reminder_body",
+                plan=plan_name, date=cur_expires.strftime("%d.%m.%Y"),
             )
-        else:  # stars
+            text = head + body
+        else:  # stars — оставляем RU как было (Stars-юзеры почти все RU)
+            day_word_ru = plural_ru(days_left, DAYS)
+            if days_left == 0:
+                when_text = "Сегодня"
+            elif days_left == 1:
+                when_text = "Завтра"
+            else:
+                when_text = f"Через {days_left} {day_word_ru}"
             text = (
-                f"🔁 <b>Через {days_left} {day_word} "
-                f"Telegram спишет {stars} ⭐ за продление</b>\n\n"
+                f"🔁 <b>{when_text} Telegram спишет {stars} ⭐ за продление</b>\n\n"
                 f"Тариф: <b>{plan_name}</b>\n"
                 f"Дата списания: <b>{cur_expires.strftime('%d.%m.%Y')}</b>\n\n"
                 f"Если не хочешь продлевать — отмени в Telegram: "

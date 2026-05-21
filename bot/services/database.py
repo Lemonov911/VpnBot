@@ -446,6 +446,11 @@ async def _migrate(db: aiosqlite.Connection):
     # NULL пока юзер не платил через Lava. Используем для recurring сверки.
     if "email" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+    # users.lang — Telegram language_code (например 'ru', 'en', 'en-US').
+    # Заполняется из message.from_user.language_code при /start. NULL/неизвестный
+    # → бот шлёт RU. См. services/i18n_bot.py.
+    if "lang" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN lang TEXT")
     # traffic_source — first-touch attribution: utm:<code>, referral:<id>, direct.
     # Заполняется один раз на первый /start, дальше не перезаписывается. Источник
     # правды для метрик «откуда платящий пришёл» в админке /attribution.
@@ -707,6 +712,7 @@ async def upsert_user(
     username: str | None,
     first_name: str,
     traffic_source: str | None = None,
+    lang: str | None = None,
 ):
     """Создаёт user-row или no-op если уже есть.
 
@@ -714,20 +720,41 @@ async def upsert_user(
     INSERT. Повторный /start с другим utm-кодом не перезатрёт исходный
     источник — иначе реклама бы крала зачёт у другого канала при повторном
     клике юзера.
+
+    `lang`: Telegram language_code. В отличие от traffic_source — обновляется
+    при каждом /start (юзер может сменить язык в Telegram-клиенте, мы должны
+    подхватить). NULL значения не перезатирают существующий язык.
     """
     async with _connect() as db:
         if traffic_source is not None:
             await db.execute(
-                "INSERT OR IGNORE INTO users (id, username, first_name, "
-                "traffic_source, traffic_source_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                (user_id, username, first_name, traffic_source),
+                "INSERT INTO users (id, username, first_name, "
+                "traffic_source, traffic_source_at, lang) "
+                "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "  lang = COALESCE(excluded.lang, users.lang)",
+                (user_id, username, first_name, traffic_source, lang),
             )
         else:
             await db.execute(
-                "INSERT OR IGNORE INTO users (id, username, first_name) VALUES (?, ?, ?)",
-                (user_id, username, first_name),
+                "INSERT INTO users (id, username, first_name, lang) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "  lang = COALESCE(excluded.lang, users.lang)",
+                (user_id, username, first_name, lang),
             )
         await db.commit()
+
+
+async def get_user_lang(user_id: int) -> str | None:
+    """Возвращает users.lang (Telegram language_code) или None если не задан.
+
+    Используется в services/i18n_bot.py:t() — там же None → fallback 'ru'.
+    """
+    async with _connect() as db:
+        async with db.execute("SELECT lang FROM users WHERE id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return row[0] if row and row[0] else None
 
 
 # ── orders ─────────────────────────────────────────────────────────────────────
@@ -2094,16 +2121,26 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
     как ISO с 'T'-разделителем (`2026-05-19T00:42:00.x`), а `datetime('now', …)`
     возвращает с пробелом (`2026-05-19 00:42:00`).  Без normalization строковое
     сравнение ломалось на дне-граничном времени (T=0x54 > space=0x20).
+
+    F3 fix: для 1-дневного reminder верхняя граница окна расширена до 30ч
+    (вместо 24ч). При hourly tick это гарантирует, что юзер увидит уведомление
+    минимум за 24ч до истечения. Без этого worst case был ~14 мин — юзер
+    пересекал порог сразу после tick и ждал следующего часа.
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         col = "reminded_3d" if days >= 2 else "reminded_1d"
+        # Верхняя граница окна (в часах). Для 1d — 30ч вместо 24ч.
+        upper_hours = days * 24 + (6 if days == 1 else 0)
+        # Нижняя граница: предыдущий «слой» — для 1d это 0ч (всё что ближе
+        # 30ч но ещё активно), для 3d — 2 дня (как раньше).
+        lower_modifier = "0 hours" if days == 1 else f"+{days-1} days"
         async with db.execute(
             f"""SELECT * FROM subscriptions
                 WHERE status='active'
                 AND {col}=0
-                AND datetime(expires_at) > datetime('now', '+{days-1} days')
-                AND datetime(expires_at) < datetime('now', '+{days} days')""",
+                AND datetime(expires_at) > datetime('now', '{lower_modifier}')
+                AND datetime(expires_at) < datetime('now', '+{int(upper_hours)} hours')""",
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -2120,7 +2157,10 @@ async def mark_reminded(sub_id: int, days: int) -> bool:
     (caller может проигнорировать — reminder следующего цикла теперь сработает).
     """
     col = "reminded_3d" if days >= 2 else "reminded_1d"
-    modifier = f"+{int(days)} days"  # int() — защита от SQL-injection через days
+    # F3: верхняя граница должна совпадать с get_subscriptions_expiring_soon —
+    # для 1d это 30ч, для 3d — 3 дня.
+    upper_hours = days * 24 + (6 if days == 1 else 0)
+    modifier = f"+{int(upper_hours)} hours"  # int() — защита от SQL-injection
     async with _connect() as db:
         cur = await db.execute(
             f"""UPDATE subscriptions SET {col}=1

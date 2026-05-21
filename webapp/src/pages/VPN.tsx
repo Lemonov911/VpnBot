@@ -112,6 +112,7 @@ export default function VPN() {
   const [cancelLoading, setCancelLoading]   = useState(false)
   const [postPayOpen, setPostPayOpen]       = useState(false)
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
+  const [pendingPayment, setPendingPayment] = useState<{plan_key: string, method: string, started_at: number} | null>(null)
 
   const doCancelRenewal = async () => {
     if (cancelLoading || !sub) return
@@ -149,6 +150,22 @@ export default function VPN() {
     const goBack = () => nav('/')
     WebApp.BackButton.onClick(goBack)
     let cancelled = false
+    // Pending-payment flag — выставляется после openLink на внешний инвойс
+    // (Lava / CryptoBot / OxaPay). Если юзер закрыл PostPayOnboarding и
+    // вернулся в VPN.tsx до прихода вебхука, показываем "Verifying payment…"
+    // вместо списка планов (иначе кажется что платёж не прошёл).
+    try {
+      const raw = localStorage.getItem('pending_payment')
+      if (raw) {
+        const p = JSON.parse(raw)
+        // Авто-протухание через 15 мин — Lava инвойс обычно живёт меньше.
+        if (Date.now() - p.started_at < 15 * 60 * 1000) {
+          setPendingPayment(p)
+        } else {
+          localStorage.removeItem('pending_payment')
+        }
+      }
+    } catch { /* localStorage may be unavailable */ }
     Promise.all([
       getActiveSubscription().catch(() => null),
       getUserConfigs().catch(() => [] as VpnConfig[]),
@@ -158,6 +175,32 @@ export default function VPN() {
     })
     return () => { cancelled = true; WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
+
+  // Cleanup: когда sub стал active — снимаем pending-флаг.
+  useEffect(() => {
+    if (sub && sub.status === 'active' && pendingPayment) {
+      try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+      setPendingPayment(null)
+    }
+  }, [sub, pendingPayment])
+
+  // Polling: пока pendingPayment висит — каждые 8с refresh subscription.
+  // Стопаем по timeout 15 мин или когда sub активен.
+  useEffect(() => {
+    if (!pendingPayment) return
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getActiveSubscription()
+        if (fresh && fresh.status === 'active') {
+          setSub(fresh)  // триггерит cleanup useEffect выше
+        } else if (Date.now() - pendingPayment.started_at > 15 * 60 * 1000) {
+          try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+          setPendingPayment(null)
+        }
+      } catch { /* network blip — retry next tick */ }
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [pendingPayment])
 
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     setSheetPlan(null)
@@ -194,6 +237,9 @@ export default function VPN() {
         const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
         buyBusyRef.current = false
         setBuyLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else if (method === 'lavatop') {
@@ -201,6 +247,9 @@ export default function VPN() {
         const { pay_url } = await createVpnInvoiceLavatop(planKey)
         buyBusyRef.current = false
         setBuyLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else {
@@ -209,6 +258,9 @@ export default function VPN() {
         const { pay_url } = await createVpnInvoiceCrypto(planKey, 'RUB')
         buyBusyRef.current = false
         setBuyLoading(null)
+        const flag = { plan_key: plan.key, method, started_at: Date.now() }
+        try { localStorage.setItem('pending_payment', JSON.stringify(flag)) } catch { /* noop */ }
+        setPendingPayment(flag)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       }
@@ -376,6 +428,14 @@ export default function VPN() {
     return (
       <>
         <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
+
+          {pendingPayment && (
+            <div className="fade-in rounded-2xl p-4 bg-[var(--tg-theme-secondary-bg-color,#f1f1f1)] border border-[var(--card-border)] text-center">
+              <div className="text-2xl mb-2">⏳</div>
+              <div className="font-medium mb-1 text-[var(--tg-theme-text-color,#000)]">{t('vpn_payment_verifying' as never)}</div>
+              <div className="text-sm opacity-70 text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_payment_verifying_sub' as never)}</div>
+            </div>
+          )}
 
           <div className="section-title">
             {t('vpn_choose')}
@@ -623,7 +683,7 @@ export default function VPN() {
           <div className="mt-3 p-[8px_10px] rounded-lg bg-[var(--tg-theme-section-bg-color)]/60 flex items-center gap-2">
             <span className="text-sm">❎</span>
             <span className="text-[11px] text-[var(--tg-theme-hint-color)]">
-              {t('vpn_autorenew_off' as never)}
+              {(t('vpn_autorenew_off_until' as never)).replace('{date}', formatDate(sub.expires_at, lang))}
             </span>
           </div>
         )}

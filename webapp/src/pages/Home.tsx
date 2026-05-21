@@ -205,9 +205,19 @@ export default function Home() {
                 {sub ? (
                   <>
                     <div className="flex items-center gap-[5px] mb-[3px]">
-                      <span className={`w-[7px] h-[7px] rounded-full shrink-0 block ${sub.status === 'grace' ? 'bg-amber-500' : 'bg-success'}`} />
-                      <span className={`text-xs font-bold ${sub.status === 'grace' ? 'text-amber-500' : 'text-success'}`}>
-                        {sub.status === 'grace' ? t('home_grace' as never) : t('home_active')}
+                      <span className={`w-[7px] h-[7px] rounded-full shrink-0 block ${
+                        sub.status === 'grace' ? 'bg-amber-500'
+                        : sub.plan === 'vpn_trial' ? 'bg-warning'
+                        : 'bg-success'
+                      }`} />
+                      <span className={`text-xs font-bold ${
+                        sub.status === 'grace' ? 'text-amber-500'
+                        : sub.plan === 'vpn_trial' ? 'text-warning'
+                        : 'text-success'
+                      }`}>
+                        {sub.status === 'grace' ? t('home_grace' as never)
+                          : sub.plan === 'vpn_trial' ? t('home_trial_badge' as never)
+                          : t('home_active')}
                       </span>
                     </div>
                     <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">{planLabel(sub.plan)}</div>
@@ -260,9 +270,19 @@ export default function Home() {
                     {sub ? (
                       <>
                         <div className="flex items-center gap-[6px] mt-1">
-                          <span className={`w-[8px] h-[8px] rounded-full shrink-0 ${sub.status === 'grace' ? 'bg-amber-500' : 'bg-success'}`} />
-                          <span className={`text-[13px] font-bold ${sub.status === 'grace' ? 'text-amber-500' : 'text-success'}`}>
-                            {sub.status === 'grace' ? t('home_grace' as never) : t('home_active')}
+                          <span className={`w-[8px] h-[8px] rounded-full shrink-0 ${
+                            sub.status === 'grace' ? 'bg-amber-500'
+                            : sub.plan === 'vpn_trial' ? 'bg-warning'
+                            : 'bg-success'
+                          }`} />
+                          <span className={`text-[13px] font-bold ${
+                            sub.status === 'grace' ? 'text-amber-500'
+                            : sub.plan === 'vpn_trial' ? 'text-warning'
+                            : 'text-success'
+                          }`}>
+                            {sub.status === 'grace' ? t('home_grace' as never)
+                              : sub.plan === 'vpn_trial' ? t('home_trial_badge' as never)
+                              : t('home_active')}
                           </span>
                         </div>
                         <div className="text-[18px] font-extrabold text-[var(--tg-theme-text-color)] mt-1 leading-tight">
@@ -337,6 +357,20 @@ export default function Home() {
           </div>
           )}
         </div>
+
+        {/* ── Trial → upgrade CTA — отдельная панель чтобы триал-юзер видел
+            urgency и кнопку купить, пока триал ещё активен. ── */}
+        {sub && sub.plan === 'vpn_trial' && (
+          <div className="fade-in rounded-xl p-3 bg-[var(--tg-theme-section-bg-color,#f1f1f1)] border border-warning/30">
+            <div className="text-xs opacity-70 mb-2 text-[var(--tg-theme-text-color)]">{t('home_trial_card_note' as never)}</div>
+            <button
+              className="w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer"
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn/plans') }}
+            >
+              {t('home_trial_buy_cta' as never)}
+            </button>
+          </div>
+        )}
 
         {/* ── Quick actions ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>

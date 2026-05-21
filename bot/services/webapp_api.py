@@ -1467,25 +1467,18 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             pass
         return web.Response(status=200)
 
-    # Happy path — уведомляем юзера
+    # Happy path — full UX (AWG configs as documents + sub URL + buttons).
     try:
-        paid_amount = invoice.get("paid_amount", "")
-        paid_asset  = invoice.get("paid_asset", "")
-        note = (
-            "Открой мини-апп → <b>Мои конфиги</b>."
-            if delivered == total
-            else f"Часть конфигов ({delivered}/{total}) готова. Остальные появятся в мини-апп."
-        )
-        await bot.send_message(
-            user_id,
-            f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
-            f"💎 Оплата: {paid_amount} {paid_asset}\n"
-            f"📅 Действует до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
-            f"{note}",
-            parse_mode="HTML",
+        from handlers.vpn import send_purchase_success_message
+        await send_purchase_success_message(
+            bot, user_id, sub_id, plan, plan_key, expires_at,
+            delivered, total,
         )
     except Exception as e:
-        logger.warning("CryptoBot: failed to notify user %d: %s", user_id, e, exc_info=True)
+        logger.warning(
+            "CryptoBot: send_purchase_success_message failed user=%d: %s",
+            user_id, e, exc_info=True,
+        )
 
     return web.Response(status=200)
 
@@ -1750,15 +1743,16 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         return web.Response(status=200)
 
     try:
-        await bot.send_message(
-            user_id,
-            f"✅ <b>Оплата получена!</b>\n\n"
-            f"VPN {plan['name']} активирован на {plan['duration_days']} {plural_ru(plan['duration_days'], DAYS)}.\n"
-            f"Открой Mini App → «Конфиги» чтобы скачать файлы подключения.",
-            parse_mode="HTML",
+        from handlers.vpn import send_purchase_success_message
+        await send_purchase_success_message(
+            bot, user_id, sub_id, plan, plan_key, expires_at,
+            delivered, total,
         )
     except Exception as e:
-        logger.warning("OxaPay notify user %d: %s", user_id, e)
+        logger.warning(
+            "OxaPay: send_purchase_success_message failed user=%d: %s",
+            user_id, e, exc_info=True,
+        )
     return web.Response(status=200)
 
 
@@ -1831,6 +1825,11 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
         email = raw_email  # юзер сам ввёл — используем (для receipt'а Lava)
     else:
         email = f"tg-{user['id']}@maxvpnesim.com"
+        logger.info(
+            "Lava invoice: synthetic email %s for user_id=%d (frontend did not "
+            "collect email). User cannot self-service refund via Lava cabinet.",
+            email, user["id"],
+        )
 
     existing_sub = await get_active_subscription(user["id"])
     # Триал — не платная подписка, юзер должен иметь возможность купить
@@ -1844,11 +1843,28 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
 
     # Сохраняем email юзера — пригодится для recurring webhook'ов
     # (если parent_contract_id не нашли — fallback по email).
-    try:
-        from services.database import set_user_email
-        await set_user_email(user["id"], email)
-    except Exception as e:
-        logger.warning("Lava: set_user_email failed user=%d: %s", user["id"], e, exc_info=True)
+    from services.database import set_user_email
+    if not email.startswith(f"tg-{user['id']}@"):
+        # Реальный user-provided email. Должен персистить для webhook lookup —
+        # иначе recurring charge не свяжется обратно с юзером.
+        try:
+            await set_user_email(user["id"], email)
+        except Exception as e:
+            logger.error(
+                "Lava invoice: set_user_email FAILED for real email %s user=%d: %s — "
+                "ABORTING invoice creation",
+                email, user["id"], e,
+            )
+            return web.json_response(
+                {"error": "Failed to register email. Try again or contact support."},
+                status=503,
+            )
+    else:
+        # Synthetic email — set_user_email best-effort
+        try:
+            await set_user_email(user["id"], email)
+        except Exception as e:
+            logger.warning("Lava: set_user_email synthetic failed user=%d: %s", user["id"], e)
 
     from services.lavatop import create_invoice as _lava_create, LavaError
     try:
@@ -2051,30 +2067,32 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             new_expires_dt = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
         try:
-            await bot.send_message(
-                sub["user_id"],
-                f"🔁 <b>Подписка продлена автоматически</b>\n\n"
-                f"VPN {plan['name']} активен до <b>{new_expires_dt.strftime('%d.%m.%Y')}</b>."
-                + ("\n⚡ Полная скорость восстановлена." if was_grace else ""),
-                parse_mode="HTML",
+            from services.database import get_user_lang as _gul
+            from services.i18n_bot import t as _i18n_t
+            _lang = await _gul(sub["user_id"])
+            _text = _i18n_t(
+                _lang, "bot_lava_renewed",
+                plan=plan["name"],
+                until=new_expires_dt.strftime("%d.%m.%Y"),
             )
+            if was_grace:
+                _text += _i18n_t(_lang, "bot_lava_renewed_grace")
+            await bot.send_message(sub["user_id"], _text, parse_mode="HTML")
         except Exception as e:
             logger.warning("Lava recurring notify failed user=%d: %s", sub["user_id"], e, exc_info=True)
         return web.Response(status=200)
 
     # ── 3. Recurring неудача (нет денег и т.д.) ─────────────────────────────
     if event == "subscription.recurring.payment.failed":
-        from services.database import get_subscription_by_parent_contract
+        from services.database import get_subscription_by_parent_contract, get_user_lang as _gul
+        from services.i18n_bot import t as _i18n_t
         sub = await get_subscription_by_parent_contract(parent_id or contract_id)
         if sub:
             try:
+                _lang = await _gul(sub["user_id"])
                 await bot.send_message(
                     sub["user_id"],
-                    "⚠️ <b>Не удалось продлить подписку</b>\n\n"
-                    "Lava не смогла списать оплату с твоей карты. "
-                    "Lava попробует ещё раз через сутки. Если не получится — VPN перейдёт "
-                    "в режим медленной скорости (256 кбит/с) на 14 дней.\n\n"
-                    "Проверь баланс карты или оплати вручную через меню.",
+                    _i18n_t(_lang, "bot_lava_charge_failed"),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -2092,12 +2110,12 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             _maybe_user = await get_user_id_by_email(email)
         if _maybe_user is not None:
             try:
+                from services.database import get_user_lang as _gul
+                from services.i18n_bot import t as _i18n_t
+                _lang = await _gul(_maybe_user)
                 await bot.send_message(
                     _maybe_user,
-                    "⚠️ <b>Оплата не прошла</b>\n\n"
-                    "Lava не смогла списать с карты. Возможные причины:\n"
-                    "• недостаточно средств\n• 3DS не пройден\n• карта заблокирована для онлайн-оплат\n\n"
-                    "Попробуй оплатить ещё раз или выбери другой способ.",
+                    _i18n_t(_lang, "bot_payment_failed"),
                     parse_mode="HTML",
                 )
             except Exception as e:
@@ -2267,19 +2285,30 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             pass
         return web.Response(status=200)
 
-    renew_note = ("\n\n🔁 Автопродление включено — продляется автоматически "
-                  "каждый месяц. Отменить можно в разделе VPN.") if is_subscription else ""
+    # Full purchase-success UX (AWG configs as documents + sub URL +
+    # inline buttons). Shared с CryptoBot/OxaPay path'ами — единый код.
     try:
-        await bot.send_message(
-            user_id,
-            f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
-            f"📅 Действует до: <b>{expires_at.strftime('%d.%m.%Y')}</b>"
-            f"{renew_note}\n\n"
-            f"Конфиги доступны в Mini App.",
-            parse_mode="HTML",
+        from handlers.vpn import send_purchase_success_message
+        await send_purchase_success_message(
+            bot, user_id, sub_id, plan, plan_key, expires_at,
+            delivered, total,
         )
     except Exception as e:
-        logger.warning("Lava: failed to notify user %d: %s", user_id, e, exc_info=True)
+        logger.warning(
+            "Lava: send_purchase_success_message failed user=%d: %s",
+            user_id, e, exc_info=True,
+        )
+
+    if is_subscription:
+        try:
+            await bot.send_message(
+                user_id,
+                "🔁 Автопродление включено — продляется автоматически "
+                "каждый месяц. Отменить можно в разделе VPN.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("Lava: renew_note failed user=%d: %s", user_id, e)
 
     return web.Response(status=200)
 
@@ -2537,11 +2566,19 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
     # Возвращаем manual_cancel=true чтобы фронт показал инструкцию вместо
     # успешной отмены (раньше тут был 400 — кнопка ломалась с ошибкой).
     if sub.get("payment_provider") == "stars":
+        # Telegram не даёт API отменить Stars-recurring — юзер делает это сам в
+        # TG → Настройки → Звёзды → Подписки. Но мы ВСЁ РАВНО ставим auto_renew=0,
+        # чтобы наши UI/reminders перестали говорить «спишется в след. месяце».
+        # Если Telegram таки спишет ещё раз (юзер не отменил в TG), то
+        # successful_payment-хендлер обработает это как свежую покупку
+        # (отдельный payment_id) и создаст новую sub — это приемлемо.
+        from services.database import disable_auto_renew
+        await disable_auto_renew(sub["id"])
         return web.json_response({
             "manual_cancel": True,
             "provider": "stars",
             "instructions": (
-                "Чтобы отменить автопродление через Telegram Stars:\n"
+                "Чтобы окончательно отменить автопродление в Telegram:\n"
                 "1. Открой Настройки в Telegram\n"
                 "2. Перейди в «Звёзды» → «Активные подписки»\n"
                 "3. Выбери MAX VPN → «Отменить»\n\n"

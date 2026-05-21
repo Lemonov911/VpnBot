@@ -102,6 +102,9 @@ async def cmd_start(message: Message):
     user_id    = message.from_user.id
     username   = message.from_user.username
     first_name = message.from_user.first_name
+    # Telegram language_code: 'ru', 'en', 'en-US', etc. None для legacy клиентов.
+    # i18n_bot.t() сам нормализует → ru/en.
+    user_lang  = message.from_user.language_code or None
 
     # Парсим start param ДО upsert — нужен для first-touch attribution.
     # /start ref_123456789, /start plan_vpn_popular, /start utm_tg_pythonist_jul
@@ -109,22 +112,22 @@ async def cmd_start(message: Message):
     start_param = args[1].strip() if len(args) > 1 else ""
 
     # First-touch attribution: запишется только при первом INSERT, у уже
-    # существующего юзера НЕ перетрётся.
+    # существующего юзера НЕ перетрётся. `lang` обновляется при каждом /start
+    # (см. upsert_user — для traffic_source first-touch, для lang last-seen).
     await upsert_user(
         user_id=user_id,
         username=username,
         first_name=first_name,
         traffic_source=_derive_source(start_param),
+        lang=user_lang,
     )
 
     # Ban-гейт: silent-ish reject.  Юзер не видит меню/триал/реф-ссылки,
     # но получает один читаемый текст чтобы понимал что произошло.
     from services.database import is_user_banned
+    from services.i18n_bot import t as _t
     if await is_user_banned(user_id):
-        await message.answer(
-            "🚫 Доступ ограничен.\n\n"
-            "Если считаешь это ошибкой — напиши на support@maxvpnesim.com",
-        )
+        await message.answer(_t(user_lang, "bot_ban_message"))
         return
 
     # Реферальный код. Логика:

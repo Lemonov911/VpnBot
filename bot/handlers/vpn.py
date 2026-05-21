@@ -781,6 +781,112 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     await maybe_award_referral_bonus(message.bot, user_id, sub_id)
 
 
+async def send_purchase_success_message(
+    bot: Bot,
+    user_id: int,
+    sub_id: int,
+    plan: dict,
+    plan_key: str,
+    expires_at,
+    delivered: int,
+    total: int,
+) -> None:
+    """Полный UX после оплаты: AWG-конфиги документами, Subscription URL +
+    inline-кнопки. Shared между Stars `_deliver_vpn` и webhook-driven
+    provider'ами (Lava / CryptoBot / OxaPay). Stars-flow исторически
+    использует `message.answer_document` через свой path — мы не трогаем
+    его, чтобы не регрессить. Эта функция — для webhook путей, где у нас
+    есть только Bot-объект, без `message`.
+    """
+    from services.database import (
+        get_configs_for_subscription,
+        get_or_create_sub_token,
+        get_user_lang,
+    )
+    from services.i18n_bot import t as _i18n_t
+
+    user_lang = await get_user_lang(user_id)
+
+    # AWG-конфиги — отправляем как документы (один на слот)
+    try:
+        configs = await get_configs_for_subscription(sub_id)
+    except Exception as e:
+        logger.warning("send_purchase_success: get_configs sub=%d: %s", sub_id, e)
+        configs = []
+
+    awg_configs = [
+        c for c in configs
+        if c.get("protocol") == "awg" and c.get("config_data")
+    ]
+    for i, cfg in enumerate(awg_configs, 1):
+        try:
+            await bot.send_document(
+                user_id,
+                BufferedInputFile(
+                    cfg["config_data"].encode(),
+                    filename=f"maxvpn_{plan_key}_{i}.conf",
+                ),
+                caption=(
+                    f"📁 <b>WireGuard конфиг #{i}</b>\n"
+                    f"Импортируй в AmneziaWG / WireGuard"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("send AWG #%d to user %d: %s", i, user_id, e)
+
+    # Subscription URL — только если есть VLESS-слоты, импортируется в
+    # Happ / Streisand / Amnezia VPN. Используем get_or_create_sub_token,
+    # чтобы повторные покупки не инвалидировали уже работающую ссылку.
+    sub_url = ""
+    has_vless = any(c.get("protocol") == "vless" for c in configs)
+    if has_vless:
+        try:
+            token = await get_or_create_sub_token(user_id)
+            sub_url = f"https://maxvpnesim.com/sub/{token}"
+        except Exception as e:
+            logger.warning("sub_token for user %d: %s", user_id, e)
+
+    expiry_str = expires_at.strftime("%d.%m.%Y") if expires_at else ""
+    msg_parts = [
+        _i18n_t(user_lang, "bot_purchase_success_title", plan=plan["name"]),
+        "",
+        _i18n_t(user_lang, "bot_purchase_success_until", until=expiry_str),
+    ]
+    if delivered < total:
+        msg_parts.append(
+            f"⚙️ Слотов готово: {delivered}/{total} (остальные подтянутся)"
+        )
+    if sub_url:
+        msg_parts.extend([
+            "",
+            _i18n_t(user_lang, "bot_purchase_success_sub_url", url=sub_url),
+        ])
+
+    webapp_url = os.getenv("WEBAPP_URL", "")
+    kb_rows: list[list[InlineKeyboardButton]] = []
+    if webapp_url:
+        kb_rows.append([InlineKeyboardButton(
+            text=_i18n_t(user_lang, "bot_btn_my_configs"),
+            web_app=WebAppInfo(url=f"{webapp_url}/configs"),
+        )])
+    kb_rows.append([InlineKeyboardButton(
+        text=_i18n_t(user_lang, "bot_btn_howto"), callback_data="vpn:howto",
+    )])
+
+    try:
+        await bot.send_message(
+            user_id,
+            "\n".join(msg_parts),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None,
+        )
+    except Exception as e:
+        logger.warning(
+            "send_purchase_success: send_message user=%d: %s", user_id, e,
+        )
+
+
 # Per-user lock — защита от race между _close_trial_on_paid_purchase и
 # scheduler'ом который параллельно может перевести триал в grace.
 # Без лока: trial-active → юзер платит → запускается close → одновременно

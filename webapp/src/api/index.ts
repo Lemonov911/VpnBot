@@ -207,8 +207,10 @@ export interface Subscription {
 export function createVpnInvoiceLavatop(
   planKey: string,
 ): Promise<{ pay_url: string; contract_id?: string }> {
-  // Email не запрашиваем — бэкенд сам генерит синтетический tg-{id}@maxvpnesim.local
-  // для Lava (Lava требует поле, но не валидирует домен; user_id парсится в webhook)
+  // Backend generates tg-{user_id}@maxvpnesim.com if email missing.
+  // User won't be able to self-service refund via Lava-кабинет — they'll
+  // need to contact us. To improve, add an email field to the Lava plan
+  // selector before openLink.
   return post('/api/vpn/invoice/lavatop', { plan_key: planKey })
 }
 
