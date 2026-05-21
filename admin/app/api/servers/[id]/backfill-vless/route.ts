@@ -15,12 +15,16 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const { id } = await ctx.params
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
+
   // Может занять минуты при большом числе подписок: provision_peer на агент
-  // ~200-500ms × N слотов. Bot-side таймаута нет, держим клиента открытым.
-  const upstream = await fetch(`${BOT_API_BASE}/api/admin/servers/${id}/backfill-vless`, {
+  // ~200-500ms × N слотов. Даём 5 минут — если backfill дольше, что-то не так.
+  const upstream = await fetch(`${BOT_API_BASE}/api/admin/servers/${numId}/backfill-vless`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
     body: '{}',
+    signal: AbortSignal.timeout(300_000),
   })
   const data = await upstream.json().catch(() => ({}))
   return NextResponse.json(data, { status: upstream.status })

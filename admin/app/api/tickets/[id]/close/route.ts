@@ -16,9 +16,13 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   }
 
   const { id } = await ctx.params
-  const upstream = await fetch(`${BOT_API_BASE}/api/admin/tickets/${id}/close`, {
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
+
+  const upstream = await fetch(`${BOT_API_BASE}/api/admin/tickets/${numId}/close`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET },
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await upstream.json().catch(() => ({}))
   return NextResponse.json(data, { status: upstream.status })

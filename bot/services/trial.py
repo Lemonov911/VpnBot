@@ -207,6 +207,13 @@ async def _provision_trial_locked(user_id: int) -> dict:
             except VpnctlError as e:
                 logger.warning("trial vless server=%s slot=%d: %s",
                                 server.get("id"), cfg_id, e, exc_info=True)
+                # Удаляем orphan config-запись (status='empty') созданную
+                # выше — peer не поднялся, слот не нужен.
+                try:
+                    from services.database import delete_config_record
+                    await delete_config_record(cfg_id)
+                except Exception as rb_err:
+                    logger.warning("trial vless cleanup cfg #%d: %s", cfg_id, rb_err)
         if vless_provisioned == 0:
             # Ни одна локация не запровижилась → триал не выдан
             raise TrialNoServer()

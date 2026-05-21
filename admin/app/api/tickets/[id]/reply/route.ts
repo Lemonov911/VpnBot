@@ -24,6 +24,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
 
   const { id } = await ctx.params
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
+
   let body: { text?: string; close?: boolean }
   try {
     body = await req.json()
@@ -34,13 +37,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const text = (body.text ?? '').trim()
   if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
-  const upstream = await fetch(`${BOT_API_BASE}/api/admin/tickets/${id}/reply`, {
+  const upstream = await fetch(`${BOT_API_BASE}/api/admin/tickets/${numId}/reply`, {
     method: 'POST',
     headers: {
       'Content-Type':    'application/json',
       'X-Admin-Secret':  ADMIN_API_SECRET,
     },
     body: JSON.stringify({ text, close: body.close ?? true }),
+    signal: AbortSignal.timeout(15_000),
   })
   const data = await upstream.json().catch(() => ({}))
   return NextResponse.json(data, { status: upstream.status })

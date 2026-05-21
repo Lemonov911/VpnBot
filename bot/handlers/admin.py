@@ -2,8 +2,11 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -20,6 +23,7 @@ from services.database import (
     get_referral_stats,
     get_servers_by_protocol,
     get_active_vless_configs_with_plan,
+    upsert_user,
 )
 from services.vpnctl_client import client_for_server, VpnctlError
 from handlers.vpn import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan
@@ -499,6 +503,11 @@ async def _deliver_free_vpn(
     Создаёт бесплатную подписку с пустыми слотами.
     Пользователь активирует конфиги сам в мини-апп → Мои конфиги.
     """
+    # Гарантируем запись в users — FK в subscriptions требует user_id.
+    # Если юзер ещё не /start'нул бота, upsert создаёт минимальный ряд;
+    # при первом /start он перезапишется реальными данными.
+    await upsert_user(user_id, None, f"gift_{user_id}")
+
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
     # Уникальный payment_id для бесплатных выдач
@@ -538,17 +547,23 @@ async def _deliver_free_vpn(
     expiry_str = expires_at.strftime("%d.%m.%Y")
     bot = message.bot
 
-    await bot.send_message(
-        user_id,
-        f"🎁 <b>Бесплатный VPN · {plan['name']}</b>\n\n"
-        f"📅 Действует до: <b>{expiry_str}</b>\n"
-        f"🔌 Слотов: <b>{slots_desc}</b>\n\n"
-        "Открой мини-апп → <b>Мои конфиги</b> и активируй нужные слоты.",
-        parse_mode="HTML",
-    )
+    notified = False
+    try:
+        await bot.send_message(
+            user_id,
+            f"🎁 <b>Бесплатный VPN · {plan['name']}</b>\n\n"
+            f"📅 Действует до: <b>{expiry_str}</b>\n"
+            f"🔌 Слотов: <b>{slots_desc}</b>\n\n"
+            "Открой мини-апп → <b>Мои конфиги</b> и активируй нужные слоты.",
+            parse_mode="HTML",
+        )
+        notified = True
+    except Exception as tg_err:
+        logger.warning("_deliver_free_vpn: send_message to %d failed: %s", user_id, tg_err)
 
     if notify_admin:
+        note = "" if notified else "\n⚠️ Сообщение не доставлено (юзер не запускал бота?)"
         await message.answer(
             f"✅ Подписка #{sub_id} создана → user {user_id}\n"
-            f"Тариф: {plan['name']} · {slots_desc} · до {expiry_str}"
+            f"Тариф: {plan['name']} · {slots_desc} · до {expiry_str}{note}"
         )
