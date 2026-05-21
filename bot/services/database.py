@@ -1694,7 +1694,8 @@ async def get_referral_stats(referrer_id: int) -> dict:
         async with db.execute(
             """SELECT COUNT(DISTINCT u.id) FROM users u
                JOIN subscriptions s ON s.user_id=u.id
-               WHERE u.referred_by=? AND s.status IN ('active','expired')""",
+               WHERE u.referred_by=? AND s.status IN ('active','expired')
+                 AND s.plan != 'vpn_trial'""",
             (referrer_id,),
         ) as cur:
             converted = (await cur.fetchone())[0]

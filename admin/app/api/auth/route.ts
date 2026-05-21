@@ -8,8 +8,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid auth data' }, { status: 401 })
   }
 
-  const userId = parseInt(data.id)
-  if (!isAdmin(userId)) {
+  const userId = parseInt(data.id, 10)
+  if (!Number.isFinite(userId) || !isAdmin(userId)) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 })
   }
 

@@ -839,8 +839,18 @@ async def _apply_plan_upgrade(message: Message, payment):
                             # Вернуть из vless-grace в нормальный inbound по тарифу
                             from services.plans import vless_service_for_plan
                             target_svc = vless_service_for_plan(plan_key)
-                            new_peer = await client.add_peer(target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id)
-                            await client.remove_peer("vless-grace", peer_id)
+                            normal_added = False
+                            try:
+                                new_peer = await client.add_peer(target_svc, f"u{user_id}_c{cfg['id']}", peer_id=peer_id)
+                                normal_added = True
+                                await client.remove_peer("vless-grace", peer_id)
+                            except Exception:
+                                if normal_added:
+                                    try:
+                                        await client.remove_peer(target_svc, peer_id)
+                                    except Exception:
+                                        pass
+                                raise
                             if new_peer.config:
                                 await update_config_data(cfg["id"], new_peer.config)
                     except Exception as e:

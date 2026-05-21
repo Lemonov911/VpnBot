@@ -9,7 +9,11 @@ export async function GET(req: NextRequest) {
   const q  = searchParams.get('q')
   const id = searchParams.get('id')
 
-  if (id) return NextResponse.json(userFull(parseInt(id)))
+  if (id) {
+    const numId = parseInt(id, 10)
+    if (!Number.isFinite(numId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+    return NextResponse.json(userFull(numId))
+  }
   if (q)  return NextResponse.json(searchUsers(q))
   return NextResponse.json([])
 }

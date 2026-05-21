@@ -104,9 +104,11 @@ export async function DELETE(req: NextRequest) {
 
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'No id' }, { status: 400 })
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const db = writeDb()
-  db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(id)
+  db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(numId)
   db.close()
   return NextResponse.json({ ok: true })
 }
@@ -122,6 +124,8 @@ export async function PATCH(req: NextRequest) {
 
   const id = new URL(req.url).searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'No id' }, { status: 400 })
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   let body: { is_active?: number; capacity?: number } = {}
   try { body = await req.json() } catch {}
@@ -140,7 +144,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
   }
 
-  args.push(id)
+  args.push(numId)
   const db = writeDb()
   const result = db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id=?`).run(...args)
   db.close()

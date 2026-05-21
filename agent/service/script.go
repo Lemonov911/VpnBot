@@ -20,6 +20,11 @@ func NewScriptService(name, dir string) *ScriptService {
 }
 
 func (s *ScriptService) run(op string, input any) ([]byte, error) {
+	for _, c := range op {
+		if !('a' <= c && c <= 'z') && c != '_' {
+			return nil, fmt.Errorf("invalid script operation %q", op)
+		}
+	}
 	scriptPath := filepath.Join(s.dir, op)
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("script %s/%s not found", s.name, op)

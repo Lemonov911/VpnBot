@@ -51,10 +51,10 @@ type TierConfig struct {
 
 func Load() *Config {
 	adminIDs := parseAdminIDs(env("ADMIN_IDS", ""))
-	port, _ := strconv.Atoi(env("WG_PORT", "51820"))
-	totalBW, _ := strconv.Atoi(env("TOTAL_BANDWIDTH_MBIT", "1000"))
-	minBW, _ := strconv.Atoi(env("MIN_PER_PEER_MBIT", "50"))
-	fsInterval, _ := strconv.Atoi(env("FAIRSHARE_INTERVAL_SEC", "120"))
+	port := envInt("WG_PORT", 51820)
+	totalBW := envInt("TOTAL_BANDWIDTH_MBIT", 1000)
+	minBW := envInt("MIN_PER_PEER_MBIT", 50)
+	fsInterval := envInt("FAIRSHARE_INTERVAL_SEC", 120)
 
 	services := parseServices(env("SERVICES", "wg"))
 
@@ -193,4 +193,17 @@ func parseServices(s string) []string {
 		}
 	}
 	return services
+}
+
+func envInt(key string, fallback int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		log.Printf("config: invalid %s=%q, using default %d", key, s, fallback)
+		return fallback
+	}
+	return v
 }

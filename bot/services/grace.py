@@ -102,11 +102,21 @@ async def try_renew_from_grace(
                 if proto == "awg" and peer_id and assigned_ip:
                     await client.unthrottle_peer("awg", peer_id, assigned_ip)
                 elif proto in ("vless", "vless-reality") and peer_id:
-                    new_peer = await client.add_peer(
-                        target_vless_svc, f"u{user_id}_c{cfg['id']}",
-                        peer_id=peer_id,
-                    )
-                    await client.remove_peer("vless-grace", peer_id)
+                    normal_added = False
+                    try:
+                        new_peer = await client.add_peer(
+                            target_vless_svc, f"u{user_id}_c{cfg['id']}",
+                            peer_id=peer_id,
+                        )
+                        normal_added = True
+                        await client.remove_peer("vless-grace", peer_id)
+                    except VpnctlError:
+                        if normal_added:
+                            try:
+                                await client.remove_peer(target_vless_svc, peer_id)
+                            except Exception:
+                                pass
+                        raise
                     if new_peer.config:
                         await update_config_data(cfg["id"], new_peer.config)
             except VpnctlError as e:

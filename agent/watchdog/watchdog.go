@@ -45,9 +45,18 @@ func (w *Watchdog) Run() {
 
 func (w *Watchdog) check() {
 	resp, err := w.client.Get(w.checkAddr)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		if !w.wasDown {
 			msg := fmt.Sprintf("🚨 *VPN Agent DOWN*\n`%s`\nError: `%v`", w.checkAddr, err)
+			w.notify(msg)
+			w.wasDown = true
+		}
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if !w.wasDown {
+			msg := fmt.Sprintf("🚨 *VPN Agent DOWN*\n`%s`\nStatus: `%d`", w.checkAddr, resp.StatusCode)
 			w.notify(msg)
 			w.wasDown = true
 		}

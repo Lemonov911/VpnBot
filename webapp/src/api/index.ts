@@ -23,8 +23,9 @@ async function post<T>(path: string, body: object): Promise<T> {
     // init_data в теле — для backward compatibility
     body: JSON.stringify({ ...body, init_data: WebApp.initData }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  let data: Record<string, unknown>
+  try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
+  if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)
   return data as T
 }
 
@@ -32,8 +33,9 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   const url = new URL(API_BASE + path, window.location.origin)
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   const res = await fetch(url.toString(), { headers: authHeaders() })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+  let data: Record<string, unknown>
+  try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
+  if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)
   return data as T
 }
 

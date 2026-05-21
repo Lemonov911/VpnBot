@@ -409,9 +409,16 @@ async def _process_grace_expired_subscriptions(bot: Bot):
 
                         if protocol == "awg":
                             if assigned_ip and peer_name:
-                                await client.unthrottle_peer("awg", peer_name, assigned_ip)
-                            await client.remove_peer("awg", peer_name)
-                            await update_server_peer_count(server_id, -1)
+                                try:
+                                    await client.unthrottle_peer("awg", peer_name, assigned_ip)
+                                except VpnctlError as unthrottle_err:
+                                    logger.warning(
+                                        "AWG unthrottle failed cfg #%d (continuing to remove): %s",
+                                        cfg_id, unthrottle_err,
+                                    )
+                            if peer_name:
+                                await client.remove_peer("awg", peer_name)
+                                await update_server_peer_count(server_id, -1)
 
                         elif protocol in ("vless", "vless-reality"):
                             if vless_uuid:
@@ -542,9 +549,21 @@ async def _apply_quota_throttle(bot: Bot):
 
         try:
             if should_throttle and not is_throttled:
-                # Move into throttled tier: add to slow, remove from normal
-                slow_peer = await client.add_peer(slow_svc, label, peer_id=uuid)
-                await client.remove_peer(normal_svc, uuid)
+                # Move into throttled tier: add to slow, remove from normal.
+                # Compensating rollback: if remove fails after add, undo the add
+                # to avoid split-brain (UUID in both inbounds simultaneously).
+                slow_added = False
+                try:
+                    slow_peer = await client.add_peer(slow_svc, label, peer_id=uuid)
+                    slow_added = True
+                    await client.remove_peer(normal_svc, uuid)
+                except VpnctlError:
+                    if slow_added:
+                        try:
+                            await client.remove_peer(slow_svc, uuid)
+                        except Exception:
+                            pass
+                    raise
                 await update_config_data(cfg["config_id"], slow_peer.config)
                 logger.info(
                     "throttled config #%d (used %.1f GB > %d GB cap)",
@@ -563,9 +582,20 @@ async def _apply_quota_throttle(bot: Bot):
                 except Exception as e:
                     logger.warning("notify throttle user %d: %s", cfg["user_id"], e, exc_info=True)
             elif is_throttled and not should_throttle:
-                # Restore: re-add to normal, remove from slow
-                normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
-                await client.remove_peer(slow_svc, uuid)
+                # Restore: re-add to normal, remove from slow.
+                # Same compensating rollback pattern.
+                restore_added = False
+                try:
+                    normal_peer = await client.add_peer(normal_svc, label, peer_id=uuid)
+                    restore_added = True
+                    await client.remove_peer(slow_svc, uuid)
+                except VpnctlError:
+                    if restore_added:
+                        try:
+                            await client.remove_peer(normal_svc, uuid)
+                        except Exception:
+                            pass
+                    raise
                 await update_config_data(cfg["config_id"], normal_peer.config)
                 logger.info("throttle restored on config #%d", cfg["config_id"])
         except VpnctlError as e:
@@ -574,9 +604,21 @@ async def _apply_quota_throttle(bot: Bot):
             logger.warning("throttle change error for config #%d: %s", cfg["config_id"], e, exc_info=True)
 
 
+_VLESS_SYNC_SERVICES = [
+    "vless",           # legacy single-tier (kept for backward compat)
+    "vless-base", "vless-max",
+    "vless-base-slow", "vless-max-slow",
+    "vless-grace",
+]
+
+
 async def _sync_vless_active_uuids():
     """Sends the list of currently-active UUIDs to each VLESS server.
-    Agent removes any UUID not in the list — stops users without a paid subscription."""
+    Agent removes any UUID not in the list — stops users without a paid subscription.
+
+    Syncs all known VLESS tier services.  Each call is best-effort: a 404
+    for a service that doesn't exist on this server is silently skipped.
+    """
     servers = await get_servers_by_protocol("vless")
     for server in servers:
         if not server.get("agent_url") or not server.get("agent_token"):
@@ -584,16 +626,22 @@ async def _sync_vless_active_uuids():
         try:
             client = client_for_server(server)
             valid = await get_active_vless_uuids_by_server(server["id"])
-            result = await client.sync_active_ids("vless", valid)
+            total_kept = 0
+            total_removed: list[str] = []
+            for svc in _VLESS_SYNC_SERVICES:
+                try:
+                    result = await client.sync_active_ids(svc, valid)
+                    total_kept += result.get("kept", 0)
+                    total_removed += result.get("removed", []) or []
+                except VpnctlError:
+                    pass  # service not present on this server — skip
             logger.info(
                 "vless sync: server=%s, valid=%d, kept=%d, removed=%d",
                 server.get("name"),
                 len(valid),
-                result.get("kept", 0),
-                len(result.get("removed", []) or []),
+                total_kept,
+                len(total_removed),
             )
-        except VpnctlError as e:
-            logger.warning("vless uuid sync skipped server=%s: %s", server.get("name"), e, exc_info=True)
         except Exception as e:
             logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e, exc_info=True)
 
