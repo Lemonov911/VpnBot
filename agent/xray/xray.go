@@ -109,7 +109,11 @@ func (m *Manager) saveConfig(cfg *xrayConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.confPath, data, 0o644)
+	tmp := m.confPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.confPath)
 }
 
 func (m *Manager) findVLESSInbound(cfg *xrayConfig) (int, *inbound, error) {
@@ -377,13 +381,16 @@ func (m *Manager) GetUserStats(email string) (*UserStats, error) {
 	}
 	stats := &UserStats{}
 
-	upCmd := exec.Command(m.xrayBin, "api", "stats", "--server="+m.apiAddr, "-name",
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	upCmd := exec.CommandContext(ctx, m.xrayBin, "api", "stats", "--server="+m.apiAddr, "-name",
 		fmt.Sprintf("user>>>%s>>>traffic>>>uplink", email))
 	if out, err := upCmd.CombinedOutput(); err == nil {
 		stats.Uplink = parseStatValue(out)
 	}
 
-	dnCmd := exec.Command(m.xrayBin, "api", "stats", "--server="+m.apiAddr, "-name",
+	dnCmd := exec.CommandContext(ctx, m.xrayBin, "api", "stats", "--server="+m.apiAddr, "-name",
 		fmt.Sprintf("user>>>%s>>>traffic>>>downlink", email))
 	if out, err := dnCmd.CombinedOutput(); err == nil {
 		stats.Downlink = parseStatValue(out)

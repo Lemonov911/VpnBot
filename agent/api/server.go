@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -49,7 +50,6 @@ func (s *Server) Handler() http.Handler {
 		for name, svc := range s.services {
 			svcName := name
 			svcRef := svc
-			isWG := name == "wg"
 			// Resolve tc interface: AWG services expose Manager().Interface().
 			// Non-AWG services (VLESS) pass "" → throttle handler is a no-op.
 			type awgIfacer interface{ Manager() *awgpkg.Manager }
@@ -71,16 +71,17 @@ func (s *Server) Handler() http.Handler {
 				r.Post("/sync", s.handleServiceSync(svcRef, svcName))
 				r.Get("/info", s.handleServiceInfo(svcRef))
 			})
+		}
 
-			if isWG {
-				r.Post("/peers", s.handleServiceAddPeer(svcRef, true))
-				r.Get("/peers", s.handleServiceListPeers(svcRef, true))
-				r.Delete("/peers/{pubkey}", s.handleServiceRemovePeer(svcRef))
-				r.Put("/peers/{pubkey}/suspend", s.handleServiceSuspendPeer(svcRef))
-				r.Put("/peers/{pubkey}/resume", s.handleServiceResumePeer(svcRef))
-				r.Post("/peers/suspend-all", s.handleServiceSuspendAll(svcRef, true))
-				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, true))
-			}
+		// Legacy wg-compat routes — explicit lookup, no map-iteration dependency.
+		if wgSvc, ok := s.services["wg"]; ok {
+			r.Post("/peers", s.handleServiceAddPeer(wgSvc, true))
+			r.Get("/peers", s.handleServiceListPeers(wgSvc, true))
+			r.Delete("/peers/{pubkey}", s.handleServiceRemovePeer(wgSvc))
+			r.Put("/peers/{pubkey}/suspend", s.handleServiceSuspendPeer(wgSvc))
+			r.Put("/peers/{pubkey}/resume", s.handleServiceResumePeer(wgSvc))
+			r.Post("/peers/suspend-all", s.handleServiceSuspendAll(wgSvc, true))
+			r.Post("/peers/resume-all", s.handleServiceResumeAll(wgSvc, true))
 		}
 	})
 
@@ -120,8 +121,13 @@ func (s *Server) verifyHMAC(r *http.Request, sig string) bool {
 		return false // replay window: ±5 min
 	}
 
-	body, _ := io.ReadAll(r.Body)
-	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	const maxBodySize = 1 << 20 // 1 MiB — больше нам не надо, защита от RAM-DoS
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodySize))
+	if err != nil {
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	mac := hmac.New(sha256.New, []byte(s.token))
 	mac.Write([]byte(tsStr))

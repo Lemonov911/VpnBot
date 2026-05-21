@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getReferralStats, redeemReferralBonus, type ReferralStats } from '../api'
@@ -26,10 +26,13 @@ export default function Referral() {
   // приглашений если юзер быстро тапает 5 раз.
   const [shareLock, setShareLock] = useState(false)
 
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+
   const refreshStats = () => {
     return getReferralStats()
-      .then(setStats)
-      .catch(() => setStats(null))
+      .then(s => { if (mountedRef.current) setStats(s) })
+      .catch(() => { if (mountedRef.current) setStats(null) })
   }
 
   const handleRedeem = async () => {
@@ -56,7 +59,7 @@ export default function Referral() {
       WebApp.HapticFeedback.notificationOccurred('error')
       WebApp.showAlert(t('ref_redeem_err' as never))
     } finally {
-      setRedeemLoading(false)
+      if (mountedRef.current) setRedeemLoading(false)
     }
   }
 
@@ -65,7 +68,7 @@ export default function Referral() {
     const goBack = () => nav('/')
     WebApp.BackButton.onClick(goBack)
     refreshStats()
-      .finally(() => setLoading(false))
+      .finally(() => { if (mountedRef.current) setLoading(false) })
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 

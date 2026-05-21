@@ -365,6 +365,17 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         await _deliver_vpn(message, payment, plan, plan_key, auto_renew=True)
         return
 
+    # Sub was in grace → unthrottle peers (AWG tc + VLESS inbound move).
+    # Mirrors Lava recurring handler — without this, DB shows active but
+    # peers stay 256kbps until manual support intervention.
+    if extended is True:
+        from services.scheduler import _spawn_bg
+        from services.grace import unthrottle_sub_configs
+        _spawn_bg(
+            unthrottle_sub_configs(sub["id"], user_id, plan_key),
+            name=f"unthrottle_stars_sub{sub['id']}",
+        )
+
     try:
         await bot.send_message(
             user_id,
@@ -398,7 +409,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     bot_obj = message.bot
     if await try_renew_from_grace(
         bot_obj, user_id, plan_key, plan, payment_id,
-        method="stars" if not payment_id.startswith("crypto_") else "crypto",
+        method="stars",
         stars=payment.total_amount,
         auto_renew=auto_renew,
     ):
@@ -823,7 +834,10 @@ async def _apply_plan_upgrade(message: Message, payment):
     # Lock per sub_id — защита от race с scheduler'ом который может в это
     # же время grace-expire-нуть подписку и удалить пиры пока идёт unthrottle.
     async with _sub_lifecycle_lock(sub_id):
-        await change_subscription_plan(sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta)
+        await change_subscription_plan(
+            sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta,
+            duration_days=plan["duration_days"],
+        )
 
         # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
         # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что

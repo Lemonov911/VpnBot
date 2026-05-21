@@ -41,7 +41,8 @@ from services.database import (
     get_servers_by_protocol,
     update_server_peer_count,
     update_config_traffic,
-    get_config_id_by_vless_uuid,
+    get_config_id_by_vless_uuid,  # legacy, single-server lookup
+    get_config_id_by_vless_uuid_and_server,
     get_active_vless_uuids_by_server,
     get_active_vless_configs_with_plan,
     update_config_data,
@@ -494,7 +495,7 @@ async def _sync_vless_stats():
             last_seen = peer.get("last_seen")
             if last_seen and last_seen.startswith("0001"):
                 last_seen = None
-            cfg_id = await get_config_id_by_vless_uuid(uuid)
+            cfg_id = await get_config_id_by_vless_uuid_and_server(uuid, server["id"])
             if cfg_id:
                 await update_config_traffic(cfg_id, rx, tx, last_seen)
 
@@ -797,11 +798,12 @@ async def _send_expiry_reminders(bot: Bot):
                     "🚨 <b>Подписка истекает завтра!</b>\n\n"
                     "Последний шанс продлить без перерыва в работе VPN."
                 )
-            await _send_throttled(
+            sent = await _send_throttled(
                 bot, user_id, text, parse_mode="HTML",
                 reply_markup=_renew_kb(),
             )
-            await mark_reminded(sub["id"], days)
+            if sent:
+                await mark_reminded(sub["id"], days)
 
     # ── Grace reminder: 3 дня до полного закрытия доступа ─────────────────
     # Юзер в grace ловит throttle 256 кбит/с и через 14 дней теряет доступ
@@ -815,11 +817,12 @@ async def _send_expiry_reminders(bot: Bot):
             "Подписка в режиме 256 кбит/с — а через 3 дня закроется совсем. "
             "Продли сейчас, чтобы вернуть полную скорость и не остаться без VPN."
         )
-        await _send_throttled(
+        sent = await _send_throttled(
             bot, sub["user_id"], text, parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
-        await mark_grace_reminded(sub["id"])
+        if sent:
+            await mark_grace_reminded(sub["id"])
 
 
 async def _send_renewal_reminders(bot: Bot):

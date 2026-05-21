@@ -1481,15 +1481,17 @@ async def get_last_expired_subscription(user_id: int) -> dict | None:
 
 async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                                     awg_delta: int, vless_delta: int,
-                                    wg_delta: int = 0):
+                                    wg_delta: int = 0,
+                                    duration_days: int = 30):
     """
     Немедленно меняет план подписки (апгрейд).
     Добавляет новые пустые слоты если awg_delta/vless_delta/wg_delta > 0.
     Снимает pending_plan если он был.
 
     Если подписка в grace (256 кбит/с после истечения) — возвращает её в active
-    с продлением expires_at на 30 дней. Иначе апгрейд из grace оставил бы юзера
-    на 256 кбит/с с новым планом — UI «Plan: Max», фактически throttle.
+    с продлением expires_at на duration_days дней. Иначе апгрейд из grace
+    оставил бы юзера на 256 кбит/с с новым планом — UI «Plan: Max», фактически
+    throttle.
 
     Sec/edge audit C4 (15.05): caller'у (handlers/vpn.py:_apply_plan_upgrade)
     после этого вызова нужно отдельно вызвать unthrottle на vpnctl_client
@@ -1497,20 +1499,26 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
     обратно в vless-base/max — это делается там, потому что требует agent_url.
     """
     async with _connect() as db:
-        # Если был в grace — продлеваем active на полные 30 дней от now
+        # Если был в grace — продлеваем active на полные duration_days от now
         await db.execute(
             """UPDATE subscriptions
                SET plan=?, pending_plan=NULL,
                    status='active',
                    grace_until=NULL,
                    expires_at = CASE
-                       WHEN status='grace' THEN datetime('now', '+30 days')
+                       WHEN status='grace' THEN datetime('now', ?)
                        ELSE expires_at
                    END
                WHERE id=?""",
-            (new_plan, sub_id),
+            (new_plan, f"+{duration_days} days", sub_id),
         )
         for proto, delta in (("awg", awg_delta), ("vless", vless_delta), ("wg", wg_delta)):
+            if delta < 0:
+                logger.warning(
+                    "change_subscription_plan: negative %s_delta=%d for sub=%d plan=%s — "
+                    "slot count decrease not supported, surplus configs remain active",
+                    proto, delta, sub_id, new_plan,
+                )
             for _ in range(max(0, delta)):
                 await db.execute(
                     "INSERT INTO configs (subscription_id, user_id, protocol, status) "
@@ -1829,6 +1837,22 @@ async def get_config_id_by_vless_uuid(vless_uuid: str) -> int | None:
     async with _connect() as db:
         async with db.execute(
             "SELECT id FROM configs WHERE vless_uuid=? LIMIT 1", (vless_uuid,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+
+async def get_config_id_by_vless_uuid_and_server(vless_uuid: str, server_id: int) -> int | None:
+    """Like get_config_id_by_vless_uuid but for a specific server.
+
+    Multi-location: один UUID реплицируется на N серверов → N configs rows.
+    Прежний `get_config_id_by_vless_uuid` возвращал первую попавшуюся → stats
+    одного сервера затирали другого. Используем server-specific lookup.
+    """
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT id FROM configs WHERE vless_uuid=? AND server_id=? LIMIT 1",
+            (vless_uuid, server_id),
         ) as cur:
             row = await cur.fetchone()
             return row[0] if row else None

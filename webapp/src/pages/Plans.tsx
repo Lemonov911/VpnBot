@@ -213,6 +213,10 @@ export default function Plans() {
   // юзер ушёл в браузер платить, мы показываем «что произойдёт дальше»
   // чтобы он не запутался при возврате.
   const [postPayOpen, setPostPayOpen] = useState(false)
+  // Различаем оверлей «открываем оплату» (handleBuy) и «обновляем подписку»
+  // (handleChange — downgrade/cancel/upgrade без инвойса). Без флага юзер
+  // при downgrade видел бы «Открываем оплату», что неверно.
+  const [isPaymentOp, setIsPaymentOp] = useState(false)
 
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
@@ -251,9 +255,15 @@ export default function Plans() {
   }, [nav, location.state])
 
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
+    if (loading) {
+      // Sheet остаётся открытым, чтобы юзер мог дождаться завершения текущей
+      // операции и повторить тап. Haptic = ack что нажатие зарегистрировано.
+      WebApp.HapticFeedback.notificationOccurred('warning')
+      return
+    }
     setSheetPlan(null)
-    if (loading) return
     WebApp.HapticFeedback.impactOccurred('light')
+    setIsPaymentOp(true)
     setLoading(plan.key); setPageStatus('idle')
     try {
       if (method === 'stars') {
@@ -340,6 +350,7 @@ export default function Plans() {
     }
 
     WebApp.HapticFeedback.impactOccurred('light')
+    setIsPaymentOp(false)
     setLoading(plan.key); setPageStatus('idle')
     try {
       const res = await changeSubscriptionPlan(plan.key)
@@ -362,7 +373,9 @@ export default function Plans() {
       } else {
         // Immediate upgrade applied on the server side — no invoice, not scheduled.
         WebApp.HapticFeedback.notificationOccurred('success')
-        getActiveSubscription().then(setSub).catch(() => {})
+        getActiveSubscription()
+          .then(s => { if (mountedRef.current) setSub(s) })
+          .catch(() => {})
         setLoading(null)
       }
     } catch (e) {
@@ -402,9 +415,9 @@ export default function Plans() {
               // setPageStatus('idle') в .finally(), чтобы даже на ошибке
               // юзер не застрял на success-экране. Catch на null → SkeletonPage.
               getActiveSubscription()
-                .then(setSub)
-                .catch(() => setSub(null))
-                .finally(() => setPageStatus('idle'))
+                .then(s => { if (mountedRef.current) setSub(s) })
+                .catch(() => { if (mountedRef.current) setSub(null) })
+                .finally(() => { if (mountedRef.current) setPageStatus('idle') })
             }}>
             {t('plans_back')}
           </button>
@@ -430,7 +443,7 @@ export default function Plans() {
             {t('plans_gated_sub')}
           </div>
           <a
-            href="https://t.me/maxvpnesim_bot"
+            href={`https://t.me/${import.meta.env.VITE_BOT_USERNAME ?? 'maxvpnesim_bot'}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block px-5 py-2.5 rounded-[12px] bg-gradient-to-br from-primary to-[#5856d6] text-white text-sm font-bold no-underline"
@@ -512,7 +525,7 @@ export default function Plans() {
           <div className="bg-[var(--tg-theme-bg-color,#fff)] rounded-2xl py-7 px-8 flex flex-col items-center gap-3 max-w-[280px]">
             <div className="w-9 h-9 rounded-full border-[3px] border-[var(--tg-theme-button-color,#2481cc)] border-t-transparent animate-spin" />
             <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color,#000)] text-center">
-              {t('pay_loading' as never)}
+              {isPaymentOp ? t('pay_loading' as never) : t('plans_updating' as never)}
             </div>
           </div>
         </div>

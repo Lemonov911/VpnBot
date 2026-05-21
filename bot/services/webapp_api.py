@@ -934,7 +934,10 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             return web.Response(status=200)
 
         was_grace_up = up_sub.get("status") == "grace"
-        await change_subscription_plan(up_sub_id, up_plan_key, up_user_id, up_awg, up_vless, up_wg)
+        await change_subscription_plan(
+            up_sub_id, up_plan_key, up_user_id, up_awg, up_vless, up_wg,
+            duration_days=up_plan["duration_days"],
+        )
         await _rp(user_id=up_user_id, subscription_id=up_sub_id, method="crypto", tx_id=payment_id)
 
         if was_grace_up:

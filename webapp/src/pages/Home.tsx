@@ -39,6 +39,8 @@ export default function Home() {
   const [trialSheet, setTrialSheet] = useState(false)
 
   const busyRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -60,7 +62,7 @@ export default function Home() {
       setTrialDone(true)
       setTrialSheet(true)
       // refresh subscription card — теперь юзер с активным trial
-      getActiveSubscription().catch(() => null).then(setSub)
+      getActiveSubscription().catch(() => null).then(s => { if (mountedRef.current) setSub(s) })
       setTrial({ eligible: false, duration_days: trial?.duration_days ?? 3 })
     } catch (e: unknown) {
       WebApp.HapticFeedback.notificationOccurred('error')

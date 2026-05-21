@@ -499,11 +499,10 @@ export default function Configs() {
     setErrMsg('')
     try {
       await revokeConfig(configId)
-      setSlots(prev => prev.map(s =>
-        s.id === configId
-          ? { ...s, status: 'empty', peer_name: null, vless_url: null }
-          : s
-      ))
+      // Полный reload: revoke последнего VLESS-слота инвалидирует sub.sub_url
+      // (бэк больше не возвращает Subscription URL), а оптимистичный локальный
+      // апдейт slots оставлял stale-карточку «Ссылка для Happ».
+      load()
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : t('configs_err_revoke'))
     }

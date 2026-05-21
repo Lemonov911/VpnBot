@@ -116,6 +116,23 @@ async def try_renew_from_grace(
     except Exception as e:
         logger.warning("send grace-renew confirmation to user %d: %s", user_id, e)
 
+    # Если у юзера ещё есть active/grace trial sub — закрываем её сейчас.
+    # Без этого Happ загружает оба VLESS-пира (платный + trial), и trial
+    # через сутки уйдёт в grace на 256 кбит/с — юзер "оплатил, но тормозит".
+    # Те же грабли что _deliver_vpn fix'ил на новой sub, но grace-renew path
+    # их обходил.
+    try:
+        from services.database import get_user_subscriptions_by_plan
+        from handlers.vpn import _close_trial_on_paid_purchase
+        trials = await get_user_subscriptions_by_plan(
+            user_id, "vpn_trial", status=("active", "grace"),
+        )
+        for trial_sub in trials:
+            if trial_sub["id"] != sub_id:
+                await _close_trial_on_paid_purchase(trial_sub["id"], user_id)
+    except Exception as e:
+        logger.warning("trial close on grace-renew sub=%d: %s", sub_id, e, exc_info=True)
+
     return True
 
 
@@ -210,16 +227,20 @@ async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
                 try:
                     cli = client_for_server(server)
                     if protocol == "awg" and peer_name:
-                        try: await cli.remove_peer("awg", peer_name)
-                        except VpnctlError: pass
-                        await update_server_peer_count(server_id, -1)
+                        try:
+                            await cli.remove_peer("awg", peer_name)
+                            await update_server_peer_count(server_id, -1)
+                        except VpnctlError as e:
+                            logger.warning("remove_peer awg failed in _close_dangling_grace: %s", e)
                     elif protocol in ("vless", "vless-reality") and vless_uuid:
                         # peer мог быть в vless-grace или обычном inbound
                         config_data = cfg.get("config_data") or ""
                         svc = current_vless_service(config_data, plan_key)
-                        try: await cli.remove_peer(svc, vless_uuid)
-                        except VpnctlError: pass
-                        await update_server_peer_count(server_id, -1)
+                        try:
+                            await cli.remove_peer(svc, vless_uuid)
+                            await update_server_peer_count(server_id, -1)
+                        except VpnctlError as e:
+                            logger.warning("remove_peer vless failed in _close_dangling_grace: %s", e)
                 except Exception as e:
                     logger.warning("close_dangling_grace cfg #%d: %s", cfg_id, e)
         await reset_config_slot(cfg_id)
