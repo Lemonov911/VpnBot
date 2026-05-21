@@ -1,0 +1,78 @@
+name: Deploy Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/deploy-agent.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      # Статический анализ до сборки — ловит очевидные ошибки типа
+      # неиспользуемых переменных, подозрительных вызовов и пустых ошибок.
+      - name: go vet
+        run: cd agent && go vet ./...
+
+      # Компилируем статический бинарь под linux/amd64.
+      # CGO_ENABLED=0 — нет зависимостей от glibc, бинарь переносим.
+      # -trimpath -ldflags="-s -w" — убираем debug-символы (−30% размера).
+      - name: Build (linux/amd64)
+        run: |
+          cd agent
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" -o vpnctl_awg .
+
+      # ── Деплой: rsync бинаря → swap → restart ───────────────────────────
+      # Требуется один раз вручную на 68.183.15.95:
+      #   mkdir -p /opt/vpnctl/deploy
+      #   chmod 700 /opt/vpnctl/deploy
+      #   # в ~/.ssh/authorized_keys для deploy-юзера (или root):
+      #   # command="sudo /opt/vpnctl/deploy-agent.sh",no-pty,no-port-forwarding ssh-ed25519 AAAA...
+      #
+      # /opt/vpnctl/deploy-agent.sh:
+      #   #!/bin/bash
+      #   set -e
+      #   install -m 755 /opt/vpnctl/deploy/vpnctl_awg /usr/local/bin/vpnctl_awg
+      #   systemctl restart vpnctl-awg.service
+      #   systemctl is-active vpnctl-awg.service
+      #
+      # Secrets в GitHub (Settings → Secrets → Actions):
+      #   AGENT_DEPLOY_SSH_KEY  — приватный ключ для deploy-юзера на 68.183.15.95
+      #   AGENT_DEPLOY_HOST     — 68.183.15.95
+      #   AGENT_DEPLOY_USER     — deploy (или root)
+      #   AGENT_RSYNC_SSH_KEY   — ключ с rrsync forced-command к /opt/vpnctl/deploy/
+
+      - name: Upload binary (rsync)
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AGENT_RSYNC_SSH_KEY }}" > ~/.ssh/agent_rsync
+          chmod 600 ~/.ssh/agent_rsync
+          ssh-keyscan -H "${{ secrets.AGENT_DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # rrsync-ключ ограничен /opt/vpnctl/deploy/ — клиент видит "./"
+          rsync -avz \
+            -e "ssh -i ~/.ssh/agent_rsync -o StrictHostKeyChecking=yes" \
+            agent/vpnctl_awg \
+            "${{ secrets.AGENT_DEPLOY_USER }}@${{ secrets.AGENT_DEPLOY_HOST }}:./"
+
+      - name: Swap binary + restart service
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AGENT_DEPLOY_SSH_KEY }}" > ~/.ssh/agent_deploy
+          chmod 600 ~/.ssh/agent_deploy
+          # forced-command на этом ключе запускает /opt/vpnctl/deploy-agent.sh
+          ssh -i ~/.ssh/agent_deploy \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              "${{ secrets.AGENT_DEPLOY_USER }}@${{ secrets.AGENT_DEPLOY_HOST }}" \
+              true
