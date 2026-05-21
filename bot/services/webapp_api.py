@@ -1134,6 +1134,34 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     ):
         return web.Response(status=200)
 
+    # Cross-method dedup: invoice creation проверяла active sub, но между этим
+    # моментом и приходом webhook'а юзер мог завершить параллельную оплату
+    # другим методом (Stars/Lava/OxaPay) → теперь sub существует. Создадим
+    # вторую → 2 active row в БД, занятый слот, неправильная аналитика.
+    # Crypto refund невозможен через API — алертим админа для ручного возврата.
+    _racing = await get_active_subscription(user_id)
+    if _racing and _racing.get("plan") != "vpn_trial" and _racing.get("status") == "active":
+        logger.error(
+            "CryptoBot cross-method duplicate: user=%d already has sub=%d plan=%s, "
+            "received payment=%s for plan=%s — manual refund needed",
+            user_id, _racing["id"], _racing.get("plan"), payment_id, plan_key,
+        )
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>CryptoBot dup payment</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Existing sub: #{_racing['id']} ({_racing.get('plan')})\n"
+                    f"New invoice: <code>{payment_id}</code> ({plan_key})\n"
+                    f"Paid: {invoice.get('paid_amount', '?')} {invoice.get('paid_asset', '')}\n\n"
+                    "Нужно вернуть юзеру вручную через CryptoBot.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+        return web.Response(status=200)
+
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
     sub_id = await create_subscription(
         user_id=user_id,
@@ -1410,6 +1438,30 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         bot, user_id, plan_key, plan, payment_id, method="oxapay",
         amount_rub=int(float(plan.get("rub", 0))),
     ):
+        return web.Response(status=200)
+
+    # Cross-method dedup (см. CryptoBot handler выше для контекста).
+    _racing_ox = await get_active_subscription(user_id)
+    if _racing_ox and _racing_ox.get("plan") != "vpn_trial" and _racing_ox.get("status") == "active":
+        logger.error(
+            "OxaPay cross-method duplicate: user=%d already has sub=%d plan=%s, "
+            "received payment=%s for plan=%s — manual refund needed",
+            user_id, _racing_ox["id"], _racing_ox.get("plan"), payment_id, plan_key,
+        )
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>OxaPay dup payment</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Existing sub: #{_racing_ox['id']} ({_racing_ox.get('plan')})\n"
+                    f"New track: <code>{payment_id}</code> ({plan_key})\n"
+                    f"Paid: {invoice_amount:.2f} {fiat}\n\n"
+                    "Refund вручную через OxaPay dashboard.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
         return web.Response(status=200)
 
     from datetime import datetime, timedelta
@@ -1800,9 +1852,32 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
                 logger.warning("Lava recurring fail notify err user=%d: %s", sub["user_id"], e, exc_info=True)
         return web.Response(status=200)
 
+    # ── 3b. Первая оплата не прошла (payment.failed) ───────────────────────
+    # Карту отбили или 3DS не пройден. Юзер видел "Оплачено?" на стороне Lava
+    # без подтверждения → надо явно сказать что не получилось, иначе пойдёт
+    # в саппорт с "оплатил, ничего не дали".
+    if event == "payment.failed":
+        _maybe_user = _parse_user_id_from_email(email) if email else None
+        if _maybe_user is None and email:
+            from services.database import get_user_id_by_email
+            _maybe_user = await get_user_id_by_email(email)
+        if _maybe_user is not None:
+            try:
+                await bot.send_message(
+                    _maybe_user,
+                    "⚠️ <b>Оплата не прошла</b>\n\n"
+                    "Lava не смогла списать с карты. Возможные причины:\n"
+                    "• недостаточно средств\n• 3DS не пройден\n• карта заблокирована для онлайн-оплат\n\n"
+                    "Попробуй оплатить ещё раз или выбери другой способ.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.warning("Lava payment.failed notify err user=%d: %s", _maybe_user, e)
+        return web.Response(status=200)
+
     # ── 4. Первая оплата (payment.success) ─────────────────────────────────
     if event != "payment.success":
-        # payment.failed, unknown events — лог + 200, чтобы Lava не ретраила
+        # unknown events — лог + 200, чтобы Lava не ретраила
         logger.info("Lava webhook: ignoring event=%s", event)
         return web.Response(status=200)
 
@@ -1857,6 +1932,39 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         bot, user_id, plan_key, plan, payment_id, method="lavatop",
         amount_rub=int(round(amount)),
     ):
+        return web.Response(status=200)
+
+    # Cross-method dedup. Если уже есть active non-trial sub — параллельная
+    # оплата другим методом успела создать sub. Lava-recurring контракт уже
+    # привязан к карте, нужно отменить иначе будет повторно списывать.
+    _racing_lv = await get_active_subscription(user_id)
+    if _racing_lv and _racing_lv.get("plan") != "vpn_trial" and _racing_lv.get("status") == "active":
+        logger.error(
+            "Lava cross-method duplicate: user=%d already has sub=%d plan=%s, "
+            "received contract=%s for plan=%s — cancelling Lava + admin alert",
+            user_id, _racing_lv["id"], _racing_lv.get("plan"), contract_id, plan_key,
+        )
+        # Если это recurring контракт — сразу отменяем чтобы Lava не списывала.
+        if status == "subscription-active" and contract_id and LAVATOP_API_KEY:
+            from services.lavatop import cancel_subscription as _lava_cancel
+            try:
+                await _lava_cancel(api_key=LAVATOP_API_KEY, contract_id=contract_id)
+            except Exception as e:
+                logger.warning("Lava dup cancel failed: %s", e)
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>Lava dup payment</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Existing sub: #{_racing_lv['id']} ({_racing_lv.get('plan')})\n"
+                    f"New contract: <code>{contract_id}</code> ({plan_key})\n"
+                    f"Paid: {amount:.2f} {currency}\n\n"
+                    "Refund вручную через Lava-кабинет.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
         return web.Response(status=200)
 
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
@@ -2401,13 +2509,13 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         new_rub = int(new_plan.get("rub", new_plan["stars"]))
 
         # Pricing зависит от статуса sub:
-        # - Active: pro-rated delta `(new - cur) × remaining_days / 30`.
+        # - Active с remaining > 0: pro-rated delta `(new - cur) × remaining_days / 30`.
         #   Юзер платит за «улучшение оставшегося периода».
-        # - Grace: full new-plan цена.  Юзер уже в просрочке (плата за
-        #   старый период истекла), upgrade = новый период с 0.  Раньше
-        #   `remaining_days=0` → rub_price=1 → юзер платил 1₽ и получал
-        #   30 дней нового плана. Audit 17.05 #4.
-        if sub.get("status") == "grace":
+        # - Grace ИЛИ active с remaining_days_f <= 0 (only-just expired, ждёт
+        #   scheduler tick): full new-plan цена. Без второй ветки между
+        #   expires_at и тиком scheduler'а юзер апгрейдил vpn_base→vpn_max
+        #   за 1₽ (audit 17.05 #4, расширенный аналог для not-yet-grace окна).
+        if sub.get("status") == "grace" or remaining_days_f <= 0:
             rub_price = new_rub
             upgrade_desc = f"Подписка «{new_plan['name']}»"
         else:
@@ -3017,6 +3125,32 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     await mark_subscription_refunded(sub_id)
     # Откат реф-бонуса если он был начислен на эту подписку
     await rollback_referral_bonus(sub_id)
+
+    # Lava-recurring: вырубаем auto_renew в нашей БД + дёргаем Lava cancel API.
+    # Без этого Lava продолжает списывать с карты раз в месяц → webhook'и
+    # приходят → бот создаёт новые sub'ы. Админ "вернул деньги", а они дальше
+    # снимаются с юзера. Прод-инцидент: P1 round 8 audit.
+    if sub.get("auto_renew") and sub.get("payment_provider") == "lavatop":
+        from services.database import disable_auto_renew
+        await disable_auto_renew(sub_id)
+        if sub.get("parent_contract_id") and LAVATOP_API_KEY:
+            from services.lavatop import cancel_subscription as _lava_cancel
+            try:
+                ok = await _lava_cancel(
+                    api_key=LAVATOP_API_KEY,
+                    contract_id=sub["parent_contract_id"],
+                )
+                if not ok:
+                    logger.warning(
+                        "admin refund sub=%d: Lava cancel API returned non-2xx; "
+                        "auto_renew=0 set locally but contract may still charge",
+                        sub_id,
+                    )
+            except Exception as e:
+                logger.error(
+                    "admin refund sub=%d: Lava cancel call failed: %s",
+                    sub_id, e, exc_info=True,
+                )
 
     # Revoke active configs: peer'ы на агенте + reset БД.  БЕЗ ЭТОГО ЮЗЕР
     # ПРОДОЛЖАЕТ ПОЛЬЗОВАТЬСЯ VPN после refund'а — handler раньше делал

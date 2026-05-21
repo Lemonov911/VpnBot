@@ -415,6 +415,55 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     ):
         return
 
+    # Cross-method dedup: pre_checkout уже отбивает purchase когда есть active
+    # sub, но race window — пока юзер тапает Pay, через другую вкладку могла
+    # завершиться OxaPay/Lava оплата того же тарифа. В этот момент pre_checkout
+    # уже прошёл (status был active=0/grace на момент проверки), сейчас active.
+    # Без проверки получим 2 active sub + 1 серверный слот съеден впустую.
+    # Возвращаем Stars и алертим админа.
+    from services.database import get_active_subscription as _get_active
+    racing = await _get_active(user_id)
+    if racing and racing.get("plan") != "vpn_trial" and racing.get("status") == "active":
+        logger.error(
+            "Stars cross-method duplicate: user=%d already has active sub=%d plan=%s, "
+            "refunding new charge=%s for plan=%s",
+            user_id, racing["id"], racing.get("plan"), payment_id, plan_key,
+        )
+        from services.database import (
+            is_payment_refunded, mark_payment_refunded,
+        )
+        if not await is_payment_refunded(payment_id):
+            try:
+                await message.bot.refund_star_payment(user_id, payment_id)
+                await mark_payment_refunded(payment_id)
+            except Exception as e:
+                logger.error(
+                    "Stars dedup refund failed user=%d charge=%s: %s",
+                    user_id, payment_id, e, exc_info=True,
+                )
+                try:
+                    from config import ADMIN_ID
+                    if ADMIN_ID:
+                        await message.bot.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>Stars cross-method dedup refund FAILED</b>\n\n"
+                            f"User: <code>{user_id}</code>\n"
+                            f"Existing sub: #{racing['id']} ({racing.get('plan')})\n"
+                            f"New charge: <code>{payment_id}</code>\n"
+                            f"Stars: {payment.total_amount}\n"
+                            f"Error: <code>{e}</code>",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
+        try:
+            await message.answer(
+                "⚠️ У тебя уже активная подписка. Платёж возвращён — открой Mini App.",
+            )
+        except Exception:
+            pass
+        return
+
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
     sub_id = await create_subscription(
@@ -649,6 +698,26 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         note = "Конфиги отправлены выше 👆"
     elif delivered > 0:
         note = f"Часть конфигов ({delivered}/{total}) готова, остальные появятся в мини-апп позже."
+        # Partial-delivery admin alert: юзер оплатил N слотов, получил delivered<N.
+        # Refund не делаем (юзер получил часть value), но админ должен досоздать
+        # остальные руками или решить про partial refund. Без алерта узнаем
+        # только через тикет в саппорт.
+        try:
+            from config import ADMIN_ID as _AID
+            if _AID:
+                await message.bot.send_message(
+                    _AID,
+                    f"⚠️ <b>Partial provision</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Sub: #{sub_id}\n"
+                    f"Plan: {plan_key}\n"
+                    f"Delivered: {delivered}/{total}\n"
+                    f"Charge: <code>{payment_id}</code>\n\n"
+                    f"Досоздай недостающие слоты или сделай partial refund.",
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.warning("partial-provision admin alert failed: %s", e)
     else:
         note = "Конфиги появятся в мини-апп → <b>Мои конфиги</b> как только серверы будут готовы."
 
