@@ -33,8 +33,13 @@ export function verifyTelegramAuth(data: Record<string, string>): boolean {
   const secret = createHash('sha256').update(BOT_TOKEN).digest()
   const hmac   = createHmac('sha256', secret).update(checkString).digest()
 
-  // timing-safe сравнение чтобы не течь через timing side-channel
-  if (!timingSafeEqual(hmac, Buffer.from(hash, 'hex'))) return false
+  // timing-safe сравнение чтобы не течь через timing side-channel.
+  // Предварительная проверка длины: timingSafeEqual кидает ERR_INVALID_ARG_VALUE
+  // если буферы разной длины — невалидный hex в `hash` (напр. «x») сделает
+  // Buffer.from(hash, 'hex') нулевой длины и убьёт Next.js роут с 500.
+  const hashBuf = Buffer.from(hash, 'hex')
+  if (hashBuf.length !== hmac.length) return false
+  if (!timingSafeEqual(hmac, hashBuf)) return false
 
   // Не старше 5 минут
   const authDate = parseInt(rest.auth_date ?? '0')

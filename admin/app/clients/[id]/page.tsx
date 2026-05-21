@@ -174,7 +174,9 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
                 {subs.map((s: SubRow) => {
                   const isActive = s.status === 'active' || s.status === 'grace'
                   const isStars  = !!(s.payment_id && !s.payment_id.startsWith('crypto_')
-                                      && !s.payment_id.startsWith('free_'))
+                                      && !s.payment_id.startsWith('free_')
+                                      && !s.payment_id.startsWith('admin_grant_')
+                                      && !s.payment_id.startsWith('trial_'))
                   const alreadyRefunded = !!s.refunded_at
                   return (
                     <tr key={s.id} className="hover:bg-neutral-800/30">

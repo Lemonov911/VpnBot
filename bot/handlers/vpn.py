@@ -38,6 +38,7 @@ from services.database import (
     change_subscription_plan,
     add_referral_bonus,
     get_best_server,
+    get_all_active_servers,
     save_peer_to_config,
     update_server_peer_count,
     record_payment,
@@ -1169,21 +1170,48 @@ async def provision_vpn_slots_async(
             logger.warning("crypto-flow: WG peer error: %s", e, exc_info=True)
 
     vless_service = vless_service_for_plan(plan_key)
+    # Multi-location: один UUID на все активные VLESS-серверы — то же что
+    # Stars-путь (_deliver_vpn). Без этого CryptoBot/Lava/Cryptomus юзеры
+    # получали единственную локацию вместо всех доступных.
+    vless_servers = await get_all_active_servers("vless")
     for i in range(vless_slots):
-        config_id = await create_config_record(sub_id, user_id, protocol="vless")
-        server = await get_best_server("vless")
-        if not server:
+        if not vless_servers:
             continue
-        try:
-            label = f"user_{user_id}_vless_{i+1}"
-            peer = await provision_peer(server, label, vless_service)
-            await save_peer_to_config(
-                config_id, server["id"], peer.id, "", peer.config, label,
+        slot_uuid = str(uuid.uuid4())
+        slot_delivered = False
+        for server in vless_servers:
+            config_id = await create_config_record(
+                sub_id, user_id, protocol="vless", server_id=server["id"],
             )
-            await update_server_peer_count(server["id"], +1)
+            try:
+                flag = (server.get("flag") or "").replace(" ", "")
+                label = f"user_{user_id}_vless_{i+1}_{flag or server['id']}"
+                peer = await provision_peer(server, label, vless_service, peer_id=slot_uuid)
+                from urllib.parse import quote as _q
+                loc = " ".join(filter(None, [
+                    (server.get("flag") or "").strip(),
+                    (server.get("city") or server.get("name") or "").strip(),
+                ])).strip() or f"Server {server['id']}"
+                cfg_data = peer.config or ""
+                if cfg_data.startswith("vless://"):
+                    base = cfg_data.split("#", 1)[0]
+                    cfg_data = f"{base}#{_q(loc, safe='')}"
+                await save_peer_to_config(
+                    config_id, server["id"], peer.id, "", cfg_data, label,
+                    vless_uuid=slot_uuid,
+                )
+                await update_server_peer_count(server["id"], +1)
+                slot_delivered = True
+            except VpnctlError as e:
+                logger.warning("crypto-flow: VLESS server=%s slot=%d: %s",
+                               server.get("id"), config_id, e, exc_info=True)
+                try:
+                    from services.database import delete_config_record
+                    await delete_config_record(config_id)
+                except Exception:
+                    pass
+        if slot_delivered:
             delivered += 1
-        except VpnctlError as e:
-            logger.warning("crypto-flow: VLess peer error: %s", e, exc_info=True)
 
     for i in range(wg_slots):
         config_id = await create_config_record(sub_id, user_id, protocol="wg")

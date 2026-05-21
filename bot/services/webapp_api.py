@@ -662,8 +662,12 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     if not config or config["user_id"] != user["id"]:
         return web.json_response({"error": "Not found"}, status=404)
 
-    if config["status"] != "empty":
+    if config["status"] == "active":
         return web.json_response({"error": "Слот уже активен"}, status=400)
+    if config["status"] == "activating":
+        return web.json_response({"error": "Слот уже активируется в другой вкладке"}, status=409)
+    if config["status"] != "empty":
+        return web.json_response({"error": "Неверный статус слота"}, status=400)
 
     sub = await get_active_subscription(user["id"])
     if not sub or sub["id"] != config["subscription_id"]:
@@ -679,8 +683,12 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
             {"error": "Слот уже активируется в другой вкладке"}, status=409
         )
 
-    body = await request.json()
-    server_id = body.get("server_id")
+    try:
+        body = await request.json()
+    except Exception:
+        await reset_config_slot(config_id)
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    server_id = body.get("server_id") if isinstance(body, dict) else None
 
     # Получаем сервер из БД
     if server_id:
@@ -1442,6 +1450,8 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     Идемпотентность: contractId + UNIQUE(payment_id) для первой оплаты;
     recurring продления коррелируем по parent_contract_id.
     """
+    from datetime import datetime, timedelta  # нет module-level import — нужен локально
+
     if not LAVATOP_ENABLED:
         return web.Response(status=200)
 

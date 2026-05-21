@@ -351,7 +351,8 @@ func (m *Manager) ResumePeer(pubkeyStr string) error {
 func (m *Manager) SuspendAll(pubkeys []string) error {
 	for _, pk := range pubkeys {
 		if err := m.SuspendPeer(pk); err != nil {
-			log.Printf("wg: suspend %s: %v", pk[:8], err)
+			n := len(pk); if n > 8 { n = 8 }
+			log.Printf("wg: suspend %s: %v", pk[:n], err)
 		}
 	}
 	return nil
@@ -360,7 +361,8 @@ func (m *Manager) SuspendAll(pubkeys []string) error {
 func (m *Manager) ResumeAll(pubkeys []string) error {
 	for _, pk := range pubkeys {
 		if err := m.ResumePeer(pk); err != nil {
-			log.Printf("wg: resume %s: %v", pk[:8], err)
+			n := len(pk); if n > 8 { n = 8 }
+			log.Printf("wg: resume %s: %v", pk[:n], err)
 		}
 	}
 	return nil
@@ -409,16 +411,23 @@ func (m *Manager) ActivePeerCount() int {
 }
 
 func (m *Manager) setSuspended(pubkeyStr string, suspend bool) error {
+	n := len(pubkeyStr)
+	if n > 8 {
+		n = 8
+	}
 	p, ok := m.peers[pubkeyStr]
 	if !ok {
-		return fmt.Errorf("peer not found: %s", pubkeyStr[:8])
+		return fmt.Errorf("peer not found: %s", pubkeyStr[:n])
 	}
 
 	key, _ := wgtypes.ParseKey(pubkeyStr)
 	var allowed []net.IPNet
 
 	if !suspend {
-		_, ipNet, _ := net.ParseCIDR(p.AssignedIP)
+		_, ipNet, err := net.ParseCIDR(p.AssignedIP)
+		if err != nil || ipNet == nil {
+			return fmt.Errorf("peer %s has invalid AssignedIP %q: cannot resume", pubkeyStr[:n], p.AssignedIP)
+		}
 		allowed = []net.IPNet{*ipNet}
 	}
 

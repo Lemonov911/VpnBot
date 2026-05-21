@@ -65,7 +65,7 @@ async def _pre_migrate_snapshot():
             src.close()
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _backup_sync)
         # Ротация: оставляем только последние 5 pre-migrate snapshots
         snaps = sorted(snap_dir.glob("pre-migrate-*.db"))

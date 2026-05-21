@@ -131,8 +131,10 @@ func (s *VLESSService) ListPeers() ([]*Peer, error) {
 		stats, _ := s.mgr.GetUserStats(u.Email)
 		var rx, tx int64
 		if stats != nil {
-			rx = stats.Downlink
-			tx = stats.Uplink
+			// Xray: Uplink = bytes received FROM the client (server's rx).
+			//        Downlink = bytes sent TO the client (server's tx).
+			rx = stats.Uplink
+			tx = stats.Downlink
 		}
 		s.mu.Lock()
 		_, isSuspended := s.suspended[u.UUID]

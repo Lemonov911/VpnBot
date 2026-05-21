@@ -493,15 +493,16 @@ export function activePayingCount() {
 
 export function newSubsPerDay(days = 14) {
   const d = db()
+  const safeDays = Math.max(1, Math.min(3650, Math.floor(days)))
   return d.prepare(`
     SELECT date(created_at) as day,
       SUM(CASE WHEN plan = 'vpn_trial' THEN 1 ELSE 0 END) as trials,
       SUM(CASE WHEN plan != 'vpn_trial' THEN 1 ELSE 0 END) as paid
     FROM subscriptions
-    WHERE created_at > datetime('now', '-${days} days')
+    WHERE created_at > datetime('now', '-' || ? || ' days')
     GROUP BY day
     ORDER BY day
-  `).all() as Array<{ day: string; trials: number; paid: number }>
+  `).all(safeDays) as Array<{ day: string; trials: number; paid: number }>
 }
 
 export function latencyHistory24h() {
