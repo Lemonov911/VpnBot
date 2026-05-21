@@ -72,6 +72,7 @@ export default function PaymentSheet({
   // вызывало когнитивный mismatch: «я нажал 200₽, а тут 145⭐».
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
   const [showCryptomus, setShowCryptomus] = useState(false)
+  const [showOxapay, setShowOxapay]       = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
   const [period, setPeriod]               = useState<PayPeriod>('1m')
   // Stars 1m auto-renew (subscription_period=2592000). Только для stars+1m.
@@ -107,6 +108,10 @@ export default function PaymentSheet({
       if (cancelled) return
       setShowCryptomus(!!f.cryptomus)
       setShowLavatop(!!f.lavatop)
+      const oxapayOn = !!f.oxapay
+      setShowOxapay(oxapayOn)
+      // Если OxaPay выключен, но он сейчас дефолтный метод — откатываемся на Stars.
+      if (!oxapayOn) setMethod(m => m === 'oxapay' ? 'stars' : m)
     })
     return () => { cancelled = true }
   }, [])
@@ -155,7 +160,9 @@ export default function PaymentSheet({
               ? [['lavatop', '💳', t('pay_method_lavatop' as never), `${rubPrice} ₽`]]
               : []),
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
-            ['oxapay',   '🪙', 'OxaPay',                 `${rubPrice} ₽`],
+            ...(showOxapay
+              ? [['oxapay', '🪙', 'OxaPay', `${rubPrice} ₽`] as const]
+              : []),
             ...(showCryptomus
               ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${rubPrice} ₽`]]
               : []),

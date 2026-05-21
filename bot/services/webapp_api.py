@@ -243,7 +243,7 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     # Триал — не платная подписка, юзер должен иметь возможность купить
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
-    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
         return web.json_response(
             {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
             status=400,
@@ -828,7 +828,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     # Триал — не платная подписка, юзер должен иметь возможность купить
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
-    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
         return web.json_response(
             {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
             status=400,
@@ -1102,7 +1102,7 @@ async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
     # Триал — не платная подписка, юзер должен иметь возможность купить
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
-    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
         return web.json_response(
             {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
             status=400,
@@ -1359,7 +1359,7 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
         return web.json_response({"error": "currency must be RUB or USD"}, status=400)
 
     existing_sub = await get_active_subscription(user["id"])
-    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
         return web.json_response(
             {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
             status=400,
@@ -1636,7 +1636,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     # Триал — не платная подписка, юзер должен иметь возможность купить
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
-    if existing_sub and existing_sub.get("plan") != "vpn_trial":
+    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
         return web.json_response(
             {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
             status=400,
