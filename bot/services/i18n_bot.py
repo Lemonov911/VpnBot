@@ -167,6 +167,93 @@ T: dict[str, dict[str, str]] = {
             "📖 Инструкция: /howto\n"
             "💎 После trial — выбери постоянный тариф в /start",
         "btn_open_configs":             "📁 Открыть конфиги",
+        # User-facing API errors (webapp_api.py)
+        "bot_api_err_server_unavailable":   "Сервер недоступен",
+        "bot_api_err_no_servers":           "Нет доступных серверов",
+        "bot_api_err_server_no_agent":      "Сервер не настроен (нет агента)",
+        "bot_api_err_config_create_failed": "Ошибка создания конфига на сервере",
+        "bot_api_err_slot_already_active":  "Слот уже активен",
+        "bot_api_err_slot_activating":      "Слот уже активируется в другой вкладке",
+        "bot_api_err_slot_bad_status":      "Неверный статус слота",
+        "bot_api_err_slot_not_active":      "Слот не активен",
+        "bot_api_err_active_sub_exists":    "У тебя уже есть активная подписка. Используй смену тарифа.",
+        "bot_api_err_no_active_sub":        "Нет активной подписки",
+        "bot_api_err_payment_service":      "Ошибка платёжного сервиса",
+        "bot_api_err_concurrent_plan_change": "План был изменён в другом окне. Перезагрузи страницу.",
+        "bot_api_err_unknown_plan":         "Неизвестный тариф",
+        "bot_api_err_current_plan_unknown": "Ошибка: текущий тариф не распознан",
+        "bot_api_err_upgrade_unavailable":  "Оплата апгрейда временно недоступна",
+        "bot_api_err_cryptobot_disabled":   "CryptoBot не настроен",
+        "bot_api_err_oxapay_disabled":      "OxaPay не подключён",
+        "bot_api_err_lava_disabled":        "Lava.top не подключён",
+        "bot_api_err_no_recurring_sub":     "Нет активной recurring-подписки",
+        "bot_api_err_sub_not_recurring":    "Подписка не recurring",
+        "bot_api_err_ticket_empty":         "Пустое сообщение",
+        "bot_api_err_ticket_too_long":      "Сообщение слишком длинное",
+        # Device label fallback
+        "bot_device_fallback":              "Устройство #{n}",
+        # Telegram invoice descriptions (shown in TG payment dialog)
+        "bot_invoice_desc_vpn":             "Доступ к VPN на {days} дней. VLESS-Reality. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
+        "bot_invoice_desc_esim":            "eSIM: {name}. Активация при первом подключении. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
+        "bot_upgrade_desc_grace":           "Подписка «{name}»",
+        "bot_upgrade_desc_active":          "Апгрейд до «{name}». Доплата за {days} дн.",
+        # /howto, /referral, /privacy, /rotate_token
+        "bot_howto_text":
+            "📖 <b>Как настроить VPN — 3 шага</b>\n\n"
+            "<b>1. Скачай приложение</b>:\n"
+            "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
+            "(или <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
+            "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
+            "(не WireGuard.exe — тот даёт 1-2 Мбит/с вместо 120)\n\n"
+            "<b>2. После оплаты</b> я пришлю <b>Subscription URL</b> — это твоя постоянная "
+            "ссылка. Импортируешь её в Happ <b>один раз</b> — дальше Happ сам подтягивает "
+            "обновления и переключает между серверами.\n\n"
+            "<b>3. В Happ</b>: «+» → <b>«Подписка»</b> → вставь URL → жми переключатель.\n"
+            "   <b>В Amnezia VPN (Windows)</b>: Файл → Импортировать → вставь URL.\n\n"
+            "💡 Если получишь ещё и AWG-конфиг — импортируй его в "
+            "<a href=\"https://apps.apple.com/app/amneziawg/id6478942365\">AmneziaWG</a> "
+            "для усиленного шифрования трафика.\n\n"
+            "💡 Если какой-то российский сайт не открывается (Сбер, Госуслуги) — "
+            "напиши в поддержку, добавим в исключения.",
+        "bot_referral_text":
+            "🔗 <b>Реферальная программа</b>\n\n"
+            "Приглашай друзей — за каждого, кто купит VPN, получаешь <b>+{bonus} дней</b> бесплатно.\n\n"
+            "Твоя ссылка:\n<code>{link}</code>\n\n"
+            "👥 Приглашено: <b>{invited}</b>\n"
+            "💳 Купили: <b>{converted}</b>\n"
+            "🎁 Бонусных дней получено: <b>{bonus_days}</b>",
+        "bot_privacy_text":
+            "🔒 <b>Политика конфиденциальности</b>\n\n"
+            "Мы не логируем трафик и не знаем какие сайты ты посещаешь.\n\n"
+            "Подробнее: <a href=\"https://maxvpnesim.com/privacy.html\">maxvpnesim.com/privacy.html</a>",
+        "bot_rotate_token_text":
+            "🔄 <b>Subscription URL обновлён</b>\n\n"
+            "Старая ссылка больше не работает. Импортируй новую в Happ:\n"
+            "<code>{url}</code>",
+        # Inline menu callbacks
+        "bot_menu_vpn_text":
+            "🌐 <b>VPN — приватность и защищённое соединение</b>\n\n"
+            "Протокол: <b>VLESS + Reality</b> — шифрует трафик, работает в любых сетях\n"
+            "Локация: 🇩🇪 Frankfurt\n"
+            "Soft-лимит трафика, после — медленнее, но не отключение\n\n"
+            "<b>Тарифы:</b>\n"
+            "• <b>База</b> 60 Mbps — 2 человека в 4K + телефоны в фоне\n"
+            "• <b>Макс</b> 120 Mbps — семья / стриминг + торренты\n",
+        "bot_menu_esim_text":
+            "📱 <b>eSIM — мобильный интернет за рубежом</b>\n\n"
+            "Покупаешь, сканируешь QR — и через 30 сек у тебя интернет в Турции, "
+            "Грузии, ОАЭ, Таиланде, Вьетнаме или по всей Европе.\n\n"
+            "🇷🇺 Есть отдельный тариф для России — с зарубежным IP "
+            "(удобно для международных сервисов и командировок).\n\n"
+            "Оплата ⭐ или картой через Telegram.",
+        "bot_menu_start_text":
+            "👋 Привет! Выбери, что тебя интересует:",
+        "bot_btn_back_to_plans":            "◀️ Назад к тарифам",
+        "bot_btn_back":                     "◀️ Назад",
+        "bot_btn_howto_short":              "📖 Как настроить?",
+        "bot_btn_open_esim_catalog":        "📱 Открыть каталог eSIM",
+        "bot_plan_chip_base":               "⭐ База — 145 ⭐ (≈200 ₽) · 60 Mbps · 5 устройств",
+        "bot_plan_chip_max":                "🚀 Макс — 360 ⭐ (≈500 ₽) · 120 Mbps · 10 устройств",
     },
     "en": {
         "bot_trial_success_header":     "🎁 <b>Trial activated for {days} {day_word}</b>",
@@ -323,6 +410,93 @@ T: dict[str, dict[str, str]] = {
             "📖 How to set up: /howto\n"
             "💎 After trial — pick a permanent plan in /start",
         "btn_open_configs":             "📁 Open configs",
+        # User-facing API errors (webapp_api.py)
+        "bot_api_err_server_unavailable":   "Server unavailable",
+        "bot_api_err_no_servers":           "No servers available",
+        "bot_api_err_server_no_agent":      "Server not configured (no agent)",
+        "bot_api_err_config_create_failed": "Failed to create config on server",
+        "bot_api_err_slot_already_active":  "Slot already active",
+        "bot_api_err_slot_activating":      "Slot is being activated in another tab",
+        "bot_api_err_slot_bad_status":      "Invalid slot status",
+        "bot_api_err_slot_not_active":      "Slot not active",
+        "bot_api_err_active_sub_exists":    "You already have an active subscription. Use plan change instead.",
+        "bot_api_err_no_active_sub":        "No active subscription",
+        "bot_api_err_payment_service":      "Payment service error",
+        "bot_api_err_concurrent_plan_change": "Plan was changed in another window. Reload the page.",
+        "bot_api_err_unknown_plan":         "Unknown plan",
+        "bot_api_err_current_plan_unknown": "Error: current plan not recognized",
+        "bot_api_err_upgrade_unavailable":  "Upgrade payment temporarily unavailable",
+        "bot_api_err_cryptobot_disabled":   "CryptoBot is not configured",
+        "bot_api_err_oxapay_disabled":      "OxaPay is not enabled",
+        "bot_api_err_lava_disabled":        "Lava.top is not enabled",
+        "bot_api_err_no_recurring_sub":     "No active recurring subscription",
+        "bot_api_err_sub_not_recurring":    "Subscription is not recurring",
+        "bot_api_err_ticket_empty":         "Empty message",
+        "bot_api_err_ticket_too_long":      "Message too long",
+        # Device label fallback
+        "bot_device_fallback":              "Device #{n}",
+        # Telegram invoice descriptions
+        "bot_invoice_desc_vpn":             "VPN access for {days} days. VLESS-Reality. By paying, you accept terms: maxvpnesim.com/oferta",
+        "bot_invoice_desc_esim":            "eSIM: {name}. Activates on first connection. By paying, you accept terms: maxvpnesim.com/oferta",
+        "bot_upgrade_desc_grace":           "Subscription «{name}»",
+        "bot_upgrade_desc_active":          "Upgrade to «{name}». Surcharge for {days} days.",
+        # /howto, /referral, /privacy, /rotate_token
+        "bot_howto_text":
+            "📖 <b>How to set up VPN — 3 steps</b>\n\n"
+            "<b>1. Install the app</b>:\n"
+            "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
+            "(or <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
+            "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
+            "(not WireGuard.exe — that one gives 1-2 Mbps instead of 120)\n\n"
+            "<b>2. After payment</b> I'll send you a <b>Subscription URL</b> — your permanent "
+            "link. Import it into Happ <b>once</b> — Happ pulls updates and switches "
+            "between servers automatically.\n\n"
+            "<b>3. In Happ</b>: «+» → <b>«Subscription»</b> → paste URL → tap the toggle.\n"
+            "   <b>In Amnezia VPN (Windows)</b>: File → Import → paste URL.\n\n"
+            "💡 If you also get an AWG-config — import it into "
+            "<a href=\"https://apps.apple.com/app/amneziawg/id6478942365\">AmneziaWG</a> "
+            "for stronger traffic obfuscation.\n\n"
+            "💡 If some Russian site doesn't open (Sber, Gosuslugi) — "
+            "ping support, we'll add it to exceptions.",
+        "bot_referral_text":
+            "🔗 <b>Referral program</b>\n\n"
+            "Invite friends — for each one who buys VPN you get <b>+{bonus} days</b> free.\n\n"
+            "Your link:\n<code>{link}</code>\n\n"
+            "👥 Invited: <b>{invited}</b>\n"
+            "💳 Purchased: <b>{converted}</b>\n"
+            "🎁 Bonus days received: <b>{bonus_days}</b>",
+        "bot_privacy_text":
+            "🔒 <b>Privacy policy</b>\n\n"
+            "We don't log traffic and don't know what sites you visit.\n\n"
+            "More: <a href=\"https://maxvpnesim.com/privacy.html\">maxvpnesim.com/privacy.html</a>",
+        "bot_rotate_token_text":
+            "🔄 <b>Subscription URL updated</b>\n\n"
+            "The old link no longer works. Import the new one in Happ:\n"
+            "<code>{url}</code>",
+        # Inline menu callbacks
+        "bot_menu_vpn_text":
+            "🌐 <b>VPN — privacy and a secure connection</b>\n\n"
+            "Protocol: <b>VLESS + Reality</b> — encrypts traffic, works on any network\n"
+            "Location: 🇩🇪 Frankfurt\n"
+            "Soft traffic limit — after which speed reduces, but no shutoff\n\n"
+            "<b>Plans:</b>\n"
+            "• <b>Base</b> 60 Mbps — 2 people streaming 4K + phones in background\n"
+            "• <b>Max</b> 120 Mbps — family / streaming + torrents\n",
+        "bot_menu_esim_text":
+            "📱 <b>eSIM — mobile internet abroad</b>\n\n"
+            "Buy, scan the QR — and in 30 seconds you have internet in Turkey, "
+            "Georgia, UAE, Thailand, Vietnam or across Europe.\n\n"
+            "🇷🇺 There's a separate plan for Russia — with foreign IP "
+            "(handy for international services and business trips).\n\n"
+            "Pay with ⭐ or by card via Telegram.",
+        "bot_menu_start_text":
+            "👋 Hi! Pick what you need:",
+        "bot_btn_back_to_plans":            "◀️ Back to plans",
+        "bot_btn_back":                     "◀️ Back",
+        "bot_btn_howto_short":              "📖 How to set up?",
+        "bot_btn_open_esim_catalog":        "📱 Open eSIM catalog",
+        "bot_plan_chip_base":               "⭐ Base — 145 ⭐ (≈$2.2) · 60 Mbps · 5 devices",
+        "bot_plan_chip_max":                "🚀 Max — 360 ⭐ (≈$5.5) · 120 Mbps · 10 devices",
     },
 }
 

@@ -546,6 +546,16 @@ const T = {
     error_load: 'Не удалось загрузить',
     cancel: 'Отмена',
     close:  'Закрыть',
+
+    // PaymentSheet period chips (F5)
+    period_1m:  '1 мес',
+    period_3m:  '3 мес',
+    period_6m:  '6 мес',
+    period_12m: '1 год',
+    period_per_month: '/мес',
+
+    // VPN page fallback when invoice creation fails (F11)
+    vpn_invoice_error_fallback: 'Ошибка при создании счёта. Попробуйте ещё раз.',
   },
 
   en: {
@@ -1068,6 +1078,16 @@ const T = {
     error_load: 'Failed to load',
     cancel: 'Cancel',
     close:  'Close',
+
+    // PaymentSheet period chips (F5)
+    period_1m:  '1 mo',
+    period_3m:  '3 mo',
+    period_6m:  '6 mo',
+    period_12m: '1 yr',
+    period_per_month: '/mo',
+
+    // VPN page fallback when invoice creation fails (F11)
+    vpn_invoice_error_fallback: 'Failed to create invoice. Try again.',
   },
 } as const
 

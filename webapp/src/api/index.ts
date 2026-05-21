@@ -50,7 +50,10 @@ async function post<T>(path: string, body: object): Promise<T> {
   }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
-  if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)
+  // Prefer bilingual `message` over machine-code `error`. Backend should
+  // include `message` for any user-facing error; legacy paths fall back
+  // to `error` raw text.
+  if (!res.ok) throw new Error((data.message as string) ?? (data.error as string) ?? `HTTP ${res.status}`)
   return data as T
 }
 
@@ -64,7 +67,8 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
-  if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)
+  // Prefer bilingual `message` over machine-code `error`.
+  if (!res.ok) throw new Error((data.message as string) ?? (data.error as string) ?? `HTTP ${res.status}`)
   return data as T
 }
 

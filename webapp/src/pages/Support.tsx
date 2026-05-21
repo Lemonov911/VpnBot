@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, type SupportCategory } from '../api'
-import { useT } from '../i18n'
+import { useT, useLang } from '../i18n'
 
 
 // FAQ icons — атрибут вопроса, не индекса.
@@ -108,6 +108,46 @@ function DownloadChip({ href, label }: { href: string; label: string }) {
 }
 
 function AppChoiceAnswer() {
+  // Bilingual JSX-rich answer. The structure has inline <strong> / <br /> tags
+  // and download chips, which don't translate cleanly via plain-string keys —
+  // so we branch on `lang` and inline both versions. Pragmatic, not DRY.
+  const { lang } = useLang()
+  if (lang === 'en') {
+    return (
+      <div className="space-y-3">
+        <p>Open <strong className="text-[var(--tg-theme-text-color)]">«My configs»</strong> in this app and check what's there:</p>
+        <div className="pl-2 border-l-2 border-purple/40">
+          <p className="mb-1">
+            See the <strong className="text-[var(--tg-theme-text-color)]">«Happ subscription URL»</strong> card?
+            <br />→ install <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Copy the URL, in the app: «+» → «From subscription» → paste.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            <DownloadChip href="https://apps.apple.com/app/happ-proxy-utility/id6504287215" label="iOS" />
+            <DownloadChip href="https://play.google.com/store/apps/details?id=com.happproxy" label="Android" />
+            <DownloadChip href="https://happ.su" label="Win / macOS" />
+          </div>
+        </div>
+        <div className="pl-2 border-l-2 border-cyan-500/40">
+          <p className="mb-1">
+            See an <strong className="text-[var(--tg-theme-text-color)]">AmneziaWG slot</strong> with QR / download buttons?
+            <br />→ install <strong className="text-[var(--tg-theme-text-color)]">Amnezia VPN</strong> (full client) or <strong className="text-[var(--tg-theme-text-color)]">AmneziaWG</strong> (lightweight, this protocol only).
+            Import: «+» → «Scan QR» or «From file».
+          </p>
+          <div className="text-[11px] font-semibold text-[var(--tg-theme-hint-color)] mt-2 mb-1">Amnezia VPN</div>
+          <div className="flex flex-wrap gap-1.5">
+            <DownloadChip href="https://apps.apple.com/app/amneziavpn/id1600529900" label="iOS" />
+            <DownloadChip href="https://play.google.com/store/apps/details?id=org.amnezia.vpn" label="Android" />
+            <DownloadChip href="https://amnezia.org/downloads" label="Win / macOS / Linux" />
+          </div>
+          <div className="text-[11px] font-semibold text-[var(--tg-theme-hint-color)] mt-2 mb-1">AmneziaWG</div>
+          <div className="flex flex-wrap gap-1.5">
+            <DownloadChip href="https://apps.apple.com/app/amneziawg/id6478942365" label="iOS" />
+            <DownloadChip href="https://play.google.com/store/apps/details?id=org.amnezia.awg" label="Android" />
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-3">
       <p>Открой <strong className="text-[var(--tg-theme-text-color)]">«Мои конфиги»</strong> в этом приложении и посмотри что там есть:</p>

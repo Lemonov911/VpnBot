@@ -25,7 +25,11 @@ export const RUB_PRICES: Record<string, Record<PayPeriod, number>> = {
 }
 
 const MONTHS_IN_PERIOD = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 } as const
-const PERIOD_LABEL_RU  = { '1m': '1 мес', '3m': '3 мес', '6m': '6 мес', '12m': '1 год' } as const
+
+/** Bilingual period label via i18n. Replaces the old PERIOD_LABEL_RU map. */
+function periodLabel(period: PayPeriod, t: ReturnType<typeof useT>): string {
+  return t(`period_${period}` as never)
+}
 
 // Plan_key суффикс по периоду. 1m остаётся без суффикса (vpn_base / vpn_max),
 // остальные — с _3m/_6m/_12m (см. plans.py).
@@ -217,7 +221,7 @@ export default function PaymentSheet({
                               : 'border-gray-500/20 bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)]'
                           }`}
                         >
-                          <div>{PERIOD_LABEL_RU[p]}</div>
+                          <div>{periodLabel(p, t)}</div>
                           <div className={`text-[10px] font-normal mt-0.5 ${period === p ? 'opacity-90' : 'opacity-60'}`}>
                             {price} {priceUnit}
                           </div>
@@ -227,7 +231,7 @@ export default function PaymentSheet({
                             </div>
                           )}
                           <div className={`text-[9px] mt-0.5 ${period === p ? 'opacity-80' : 'opacity-50'}`}>
-                            {Math.round(monthlyAvg)}{priceUnit}/мес
+                            {Math.round(monthlyAvg)}{priceUnit}{t('period_per_month' as never)}
                           </div>
                         </button>
                       )
@@ -252,7 +256,7 @@ export default function PaymentSheet({
               </div>
               <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
                 {t('pay_lava_autorenew_hint' as never)
-                  .replace('{period}', PERIOD_LABEL_RU[period])
+                  .replace('{period}', periodLabel(period, t))
                   .replace('{amount}', String(rubPrice))}
               </div>
             </div>

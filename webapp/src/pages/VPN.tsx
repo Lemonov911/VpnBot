@@ -274,7 +274,7 @@ export default function VPN() {
       buyBusyRef.current = false
       setBuyLoading(null)
       WebApp.HapticFeedback.notificationOccurred('error')
-      WebApp.showAlert(e instanceof Error ? e.message : 'Ошибка при создании счёта. Попробуйте ещё раз.')
+      WebApp.showAlert(e instanceof Error ? e.message : t('vpn_invoice_error_fallback' as never))
     }
   }
 

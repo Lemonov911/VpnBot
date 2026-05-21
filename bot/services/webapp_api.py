@@ -305,6 +305,36 @@ def _unauthorized() -> web.Response:
     return web.json_response({"error": "Unauthorized"}, status=401)
 
 
+async def _user_err(
+    user_id: int | None,
+    error_code: str,
+    i18n_key: str,
+    status: int,
+    **fmt: object,
+) -> web.Response:
+    """User-facing API error → bilingual response.
+
+    Returns JSON with:
+      `error`   — machine-readable stable code (legacy callers + analytics)
+      `message` — bilingual user-facing text in the user's preferred lang
+                  (defaults to 'ru' when user_id is None or lang missing).
+
+    Frontend wrapper (webapp/src/api/index.ts) prefers `message` over `error`.
+    """
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang: str | None = None
+    if user_id is not None:
+        try:
+            lang = await get_user_lang(user_id)
+        except Exception:
+            lang = None
+    return web.json_response(
+        {"error": error_code, "message": _t(lang, i18n_key, **fmt)},
+        status=status,
+    )
+
+
 def _int_param(request: web.Request, name: str) -> int | None:
     try:
         return int(request.match_info[name])
@@ -343,7 +373,7 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
 
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
-        return web.json_response({"error": "Unknown plan"}, status=400)
+        return await _user_err(user["id"], "Unknown plan", "bot_api_err_unknown_plan", 400)
 
     # Блокируем покупку если уже есть активная подписка
     existing_sub = await get_active_subscription(user["id"])
@@ -351,10 +381,7 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
     if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
-        return web.json_response(
-            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
-            status=400,
-        )
+        return await _user_err(user["id"], "active_subscription", "bot_api_err_active_sub_exists", 400)
 
     bot: Bot = request.app["bot"]
 
@@ -364,9 +391,15 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     # Multi-period (3/6/12) — всегда one-time, флаг recurring игнорируем.
     recurring = bool(body.get("recurring")) and not plan.get("multi_period")
 
+    # F8: Telegram-caches the invoice; description must match user's lang.
+    from services.database import get_user_lang as _gul_inv
+    from services.i18n_bot import t as _t_inv
+    _inv_lang = await _gul_inv(user["id"])
+    invoice_desc = _t_inv(_inv_lang, "bot_invoice_desc_vpn", days=plan["duration_days"])
+
     invoice_kwargs: dict = dict(
         title=f"VPN {plan['name']}",
-        description=f"Доступ к VPN на {plan['duration_days']} дней. VLESS-Reality. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
+        description=invoice_desc,
         payload=body["plan_key"],
         currency="XTR",
         prices=[LabeledPrice(label=plan["name"], amount=plan["stars"])],
@@ -389,13 +422,18 @@ async def handle_vpn_configs(request: web.Request) -> web.Response:
 
     configs = await get_user_configs_full(user["id"])
 
+    # F7: bilingual device label fallback — lookup user lang once.
+    from services.database import get_user_lang as _gul_cfg
+    from services.i18n_bot import t as _t_cfg
+    _cfg_lang = await _gul_cfg(user["id"])
+
     # Форматируем трафик и убираем чувствительные поля
     result = []
     for c in configs:
         result.append({
             "id":           c["id"],
             "protocol":     c["protocol"],
-            "label":        c["label"] or c["peer_name"] or f"Устройство #{c['slot_num']}",
+            "label":        c["label"] or c["peer_name"] or _t_cfg(_cfg_lang, "bot_device_fallback", n=c["slot_num"]),
             "slot_num":     c["slot_num"],
             "status":       c["status"],
             "has_config":   bool(c["config_data"]),
@@ -787,15 +825,15 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
 
     if config["status"] == "active":
-        return web.json_response({"error": "Слот уже активен"}, status=400)
+        return await _user_err(user["id"], "slot_already_active", "bot_api_err_slot_already_active", 400)
     if config["status"] == "activating":
-        return web.json_response({"error": "Слот уже активируется в другой вкладке"}, status=409)
+        return await _user_err(user["id"], "slot_activating", "bot_api_err_slot_activating", 409)
     if config["status"] != "empty":
-        return web.json_response({"error": "Неверный статус слота"}, status=400)
+        return await _user_err(user["id"], "slot_bad_status", "bot_api_err_slot_bad_status", 400)
 
     sub = await get_active_subscription(user["id"])
     if not sub or sub["id"] != config["subscription_id"]:
-        return web.json_response({"error": "Нет активной подписки"}, status=403)
+        return await _user_err(user["id"], "no_active_sub", "bot_api_err_no_active_sub", 403)
 
     # Atomic claim — защита от race: две вкладки одновременно жмут «Добавить»
     # на одном слоте. Без claim'а обе пройдут проверку status='empty' выше,
@@ -803,9 +841,7 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     # orphan. Claim переводит слот в 'activating' атомарно — второй запрос
     # получит rowcount=0 и отбьётся.
     if not await claim_config_slot_for_activation(config_id):
-        return web.json_response(
-            {"error": "Слот уже активируется в другой вкладке"}, status=409
-        )
+        return await _user_err(user["id"], "slot_activating", "bot_api_err_slot_activating", 409)
 
     try:
         body = await request.json()
@@ -819,7 +855,7 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         server = await get_server_by_id(server_id)
         if not server or not server["is_active"]:
             await reset_config_slot(config_id)
-            return web.json_response({"error": "Сервер недоступен"}, status=400)
+            return await _user_err(user["id"], "server_unavailable", "bot_api_err_server_unavailable", 400)
     else:
         # Load-balance по active_peers/capacity (минимально загруженный).
         # Раньше брали servers[0] — это всегда первый по INSERT-порядку, и
@@ -830,13 +866,13 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         server = await get_best_server(config["protocol"])
         if not server:
             await reset_config_slot(config_id)
-            return web.json_response({"error": "Нет доступных серверов"}, status=503)
+            return await _user_err(user["id"], "no_servers", "bot_api_err_no_servers", 503)
         server_id = server["id"]
 
     if not server.get("agent_url") or not server.get("agent_token"):
         logger.error("Server %s has no agent_url/agent_token", server.get("name", server["id"]))
         await reset_config_slot(config_id)  # rollback activating → empty
-        return web.json_response({"error": "Сервер не настроен (нет агента)"}, status=503)
+        return await _user_err(user["id"], "server_no_agent", "bot_api_err_server_no_agent", 503)
 
     peer_name = f"tg{user['id']}_{config_id}"
 
@@ -863,16 +899,16 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     except VpnctlError as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e, exc_info=True)
         await reset_config_slot(config_id)  # rollback activating → empty
-        return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
+        return await _user_err(user["id"], "config_create_failed", "bot_api_err_config_create_failed", 503)
     except Exception as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e, exc_info=True)
         await reset_config_slot(config_id)  # rollback activating → empty
-        return web.json_response({"error": "Сервер недоступен"}, status=503)
+        return await _user_err(user["id"], "server_unavailable", "bot_api_err_server_unavailable", 503)
 
     config_data = result.config
     if not config_data:
         await reset_config_slot(config_id)  # rollback activating → empty
-        return web.json_response({"error": "Ошибка создания конфига на сервере"}, status=503)
+        return await _user_err(user["id"], "config_create_failed", "bot_api_err_config_create_failed", 503)
 
     peer_id = result.id
     peer_ip = (result.extra or {}).get("assigned_ip")
@@ -928,7 +964,7 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
         return web.json_response({"error": "Not found"}, status=404)
 
     if config["status"] != "active":
-        return web.json_response({"error": "Слот не активен"}, status=400)
+        return await _user_err(user["id"], "slot_not_active", "bot_api_err_slot_not_active", 400)
 
     # Удаляем пир с сервера через vpnctl (best-effort).
     # `revoke_peer(server, peer_id, service_name)` — 3-й параметр это имя
@@ -983,7 +1019,8 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     if not _rate_limit_check_evict(_crypto_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not CRYPTOBOT_TOKEN:
-        return web.json_response({"error": "CryptoBot не настроен"}, status=503)
+        # User not yet identified — fall back to ru-default via _user_err(None,...).
+        return await _user_err(None, "cryptobot_disabled", "bot_api_err_cryptobot_disabled", 503)
 
     body = await request.json()
     user = _resolve_user(request, body)
@@ -992,7 +1029,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
 
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
-        return web.json_response({"error": "Unknown plan"}, status=400)
+        return await _user_err(user["id"], "Unknown plan", "bot_api_err_unknown_plan", 400)
     # CryptoBot multi_period — ОК. Создаём отдельный invoice на нужную сумму
     # (plan.rub/usd), периодичность зашита в plan_key который вернётся в webhook.
     # Каждый период = отдельная one-time транзакция (CryptoBot не умеет recurring).
@@ -1006,10 +1043,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
     if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
-        return web.json_response(
-            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
-            status=400,
-        )
+        return await _user_err(user["id"], "active_subscription", "bot_api_err_active_sub_exists", 400)
 
     amount  = plan["rub"] if currency == "RUB" else plan["usd"]
     payload = f"vpn:{user['id']}:{body['plan_key']}"
@@ -1030,7 +1064,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.error("CryptoBot invoice error: %s", e, exc_info=True)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+        return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
     pay_url = invoice.get("mini_app_invoice_url") or invoice.get("bot_invoice_url", "")
     logger.info("CryptoBot invoice: user=%s plan=%s cur=%s url=%s",
@@ -1505,7 +1539,7 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
     if not _rate_limit_check_evict(_oxapay_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not OXAPAY_ENABLED:
-        return web.json_response({"error": "OxaPay не подключён"}, status=503)
+        return await _user_err(None, "oxapay_disabled", "bot_api_err_oxapay_disabled", 503)
 
     body = await request.json()
     user = _resolve_user(request, body)
@@ -1515,7 +1549,7 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
     plan_key = body.get("plan_key", "")
     plan = VPN_PLANS.get(plan_key)
     if not plan:
-        return web.json_response({"error": "Unknown plan"}, status=400)
+        return await _user_err(user["id"], "Unknown plan", "bot_api_err_unknown_plan", 400)
 
     currency = (body.get("currency") or "RUB").upper()
     if currency not in ("RUB", "USD"):
@@ -1523,10 +1557,7 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
 
     existing_sub = await get_active_subscription(user["id"])
     if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
-        return web.json_response(
-            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
-            status=400,
-        )
+        return await _user_err(user["id"], "active_subscription", "bot_api_err_active_sub_exists", 400)
 
     amount = float(plan["rub"] if currency == "RUB" else plan["usd"])
     ts_min  = int(_time.time() // 60)
@@ -1550,12 +1581,12 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.error("OxaPay invoice error: %s", e, exc_info=True)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+        return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
     pay_url = invoice.get("payment_url") or ""
     if not pay_url:
         logger.error("OxaPay: no payment_url in response %r", invoice)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+        return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
     logger.info(
         "OxaPay invoice: user=%s plan=%s cur=%s order=%s track_id=%s",
@@ -1802,7 +1833,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     if not _rate_limit_check_evict(_lavatop_rate, ip, _time.monotonic(), window=6.0):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not LAVATOP_ENABLED:
-        return web.json_response({"error": "Lava.top не подключён"}, status=503)
+        return await _user_err(None, "lava_disabled", "bot_api_err_lava_disabled", 503)
 
     body = await request.json()
     user = _resolve_user(request, body)
@@ -1812,7 +1843,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     plan_key = body.get("plan_key", "")
     plan = VPN_PLANS.get(plan_key)
     if not plan:
-        return web.json_response({"error": "Unknown plan"}, status=400)
+        return await _user_err(user["id"], "Unknown plan", "bot_api_err_unknown_plan", 400)
 
     # Lava один offer_id поддерживает все 4 периодичности (MONTHLY /
     # PERIOD_90_DAYS / PERIOD_180_DAYS / PERIOD_YEAR). Базовый offer_id
@@ -1852,10 +1883,7 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
     # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
     if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
-        return web.json_response(
-            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
-            status=400,
-        )
+        return await _user_err(user["id"], "active_subscription", "bot_api_err_active_sub_exists", 400)
 
     # Сохраняем email юзера — пригодится для recurring webhook'ов
     # (если parent_contract_id не нашли — fallback по email).
@@ -1912,12 +1940,12 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
         return web.json_response({"error": user_msg}, status=400)
     except Exception as e:
         logger.error("Lava invoice error: %s", e, exc_info=True)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+        return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
     pay_url = resp.get("paymentUrl") or ""
     if not pay_url:
         logger.error("Lava: empty paymentUrl in response %r", resp)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+        return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
     logger.info(
         "Lava invoice: user=%s plan=%s email=%s contract=%s",
@@ -2492,9 +2520,14 @@ async def handle_esim_invoice(request: web.Request) -> web.Response:
 
     bot: Bot = request.app["bot"]
     payload = f"esim:{pkg_code}:{price}"
+    # F8: bilingual invoice description (Telegram caches it).
+    from services.database import get_user_lang as _gul_esim
+    from services.i18n_bot import t as _t_esim
+    _esim_lang = await _gul_esim(user["id"])
+    esim_desc = _t_esim(_esim_lang, "bot_invoice_desc_esim", name=name)
     url = await bot.create_invoice_link(
         title=name,
-        description=f"eSIM: {name}. Активация при первом подключении. Оплачивая, принимаете условия: maxvpnesim.com/oferta",
+        description=esim_desc,
         payload=payload,
         currency="XTR",
         prices=[LabeledPrice(label=name, amount=stars)],
@@ -2703,7 +2736,7 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
 
     sub = await get_active_subscription(user["id"])
     if sub is None:
-        return web.json_response({"error": "Нет активной recurring-подписки"}, status=400)
+        return await _user_err(user["id"], "no_recurring_sub", "bot_api_err_no_recurring_sub", 400)
     if not sub.get("auto_renew"):
         # Уже отменено ранее — повторный клик; возвращаем ok чтобы UI не ругался.
         return web.json_response({"ok": True, "already_cancelled": True})
@@ -2732,7 +2765,7 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
 
     # Дальше — Lava recurring (требует contract_id).
     if not sub.get("parent_contract_id"):
-        return web.json_response({"error": "Подписка не recurring"}, status=400)
+        return await _user_err(user["id"], "sub_not_recurring", "bot_api_err_sub_not_recurring", 400)
 
     contract_id = sub["parent_contract_id"]
     # CAS-первым: атомарно снимаем auto_renew, и только победитель идёт в
@@ -2901,15 +2934,15 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     plan_key = body.get("plan_key", "")
     new_plan = VPN_PLANS.get(plan_key)
     if not new_plan:
-        return web.json_response({"error": "Неизвестный тариф"}, status=400)
+        return await _user_err(user["id"], "unknown_plan", "bot_api_err_unknown_plan", 400)
 
     sub = await get_active_subscription(user["id"])
     if sub is None:
-        return web.json_response({"error": "Нет активной подписки"}, status=400)
+        return await _user_err(user["id"], "no_active_sub", "bot_api_err_no_active_sub", 400)
 
     cur_plan = VPN_PLANS.get(sub["plan"])
     if cur_plan is None:
-        return web.json_response({"error": "Ошибка: текущий тариф не распознан"}, status=400)
+        return await _user_err(user["id"], "current_plan_unknown", "bot_api_err_current_plan_unknown", 400)
 
     if plan_key == sub["plan"]:
         return web.json_response({"ok": True, "same": True})
@@ -2949,15 +2982,22 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         #   scheduler tick): full new-plan цена. Без второй ветки между
         #   expires_at и тиком scheduler'а юзер апгрейдил vpn_base→vpn_max
         #   за 1₽ (audit 17.05 #4, расширенный аналог для not-yet-grace окна).
+        # F9: bilingual upgrade descriptions (shown in CryptoBot checkout).
+        from services.database import get_user_lang as _gul_up
+        from services.i18n_bot import t as _t_up
+        from services.plans import plan_display_name as _pdn
+        _up_lang_raw = await _gul_up(user["id"])
+        _up_lang = "en" if (_up_lang_raw or "").lower().startswith("en") else "ru"
+        _new_name = _pdn(new_plan, _up_lang)
         if sub.get("status") == "grace" or remaining_days_f <= 0:
             rub_price = new_rub
-            upgrade_desc = f"Подписка «{new_plan['name']}»"
+            upgrade_desc = _t_up(_up_lang, "bot_upgrade_desc_grace", name=_new_name)
         else:
             rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days_f / 30))
-            upgrade_desc = f"Апгрейд до «{new_plan['name']}». Доплата за {remaining_days} дн."
+            upgrade_desc = _t_up(_up_lang, "bot_upgrade_desc_active", name=_new_name, days=remaining_days)
 
         if not CRYPTOBOT_TOKEN:
-            return web.json_response({"error": "Оплата апгрейда временно недоступна"}, status=503)
+            return await _user_err(user["id"], "upgrade_unavailable", "bot_api_err_upgrade_unavailable", 503)
 
         from services.cryptobot import create_invoice
         bot: Bot = request.app["bot"]
@@ -2980,7 +3020,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
             )
         except Exception as e:
             logger.error("CryptoBot upgrade invoice error: %s", e, exc_info=True)
-            return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
+            return await _user_err(user["id"], "payment_service", "bot_api_err_payment_service", 503)
 
         pay_url = invoice.get("mini_app_invoice_url") or invoice.get("bot_invoice_url", "")
         return web.json_response({"invoice_url": pay_url})
@@ -2995,10 +3035,9 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
                 sub["id"], None, expected_previous=prev_pending,
             )
             if not ok:
-                return web.json_response(
-                    {"error": "concurrent_modification",
-                     "message": "План был изменён в другом окне. Перезагрузи страницу."},
-                    status=409,
+                return await _user_err(
+                    user["id"], "concurrent_modification",
+                    "bot_api_err_concurrent_plan_change", 409,
                 )
             return web.json_response({"ok": True, "cancelled": True})
 
@@ -3006,10 +3045,9 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
             sub["id"], plan_key, expected_previous=prev_pending,
         )
         if not ok:
-            return web.json_response(
-                {"error": "concurrent_modification",
-                 "message": "План был изменён в другом окне. Перезагрузи страницу."},
-                status=409,
+            return await _user_err(
+                user["id"], "concurrent_modification",
+                "bot_api_err_concurrent_plan_change", 409,
             )
         return web.json_response({"ok": True, "scheduled": True})
 
@@ -3382,9 +3420,9 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     category = str(body.get("category", "other"))
     message  = str(body.get("message", "")).strip()
     if not message:
-        return web.json_response({"error": "Пустое сообщение"}, status=400)
+        return await _user_err(user["id"], "ticket_empty", "bot_api_err_ticket_empty", 400)
     if len(message) > 2000:
-        return web.json_response({"error": "Сообщение слишком длинное"}, status=400)
+        return await _user_err(user["id"], "ticket_too_long", "bot_api_err_ticket_too_long", 400)
 
     ticket_id = await create_support_ticket(user["id"], category, message)
 

@@ -62,31 +62,20 @@ router = Router()
 
 # Тарифы импортируются из services.plans — единственный источник истины.
 
-PLANS_KEYBOARD = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⭐ База — 145 ⭐ (≈200 ₽) · 60 Mbps · 5 устройств",   callback_data="vpn:buy:vpn_base")],
-    [InlineKeyboardButton(text="🚀 Макс — 360 ⭐ (≈500 ₽) · 120 Mbps · 10 устройств", callback_data="vpn:buy:vpn_max")],
-    [InlineKeyboardButton(text="📖 Как настроить?",                              callback_data="vpn:howto")],
-    [InlineKeyboardButton(text="◀️ Назад",                                       callback_data="menu:start")],
-])
+def _plans_keyboard(lang: str | None = None) -> InlineKeyboardMarkup:
+    """Inline-клавиатура тарифов — bilingual button labels."""
+    from services.i18n_bot import t as _t
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=_t(lang, "bot_plan_chip_base"), callback_data="vpn:buy:vpn_base")],
+        [InlineKeyboardButton(text=_t(lang, "bot_plan_chip_max"),  callback_data="vpn:buy:vpn_max")],
+        [InlineKeyboardButton(text=_t(lang, "bot_btn_howto_short"), callback_data="vpn:howto")],
+        [InlineKeyboardButton(text=_t(lang, "bot_btn_back"),        callback_data="menu:start")],
+    ])
 
-HOWTO_TEXT = (
-    "📖 <b>Как настроить VPN — 3 шага</b>\n\n"
-    "<b>1. Скачай приложение</b>:\n"
-    "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
-    "(или <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
-    "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
-    "(не WireGuard.exe — тот даёт 1-2 Мбит/с вместо 120)\n\n"
-    "<b>2. После оплаты</b> я пришлю <b>Subscription URL</b> — это твоя постоянная "
-    "ссылка. Импортируешь её в Happ <b>один раз</b> — дальше Happ сам подтягивает "
-    "обновления и переключает между серверами.\n\n"
-    "<b>3. В Happ</b>: «+» → <b>«Подписка»</b> → вставь URL → жми переключатель.\n"
-    "   <b>В Amnezia VPN (Windows)</b>: Файл → Импортировать → вставь URL.\n\n"
-    "💡 Если получишь ещё и AWG-конфиг — импортируй его в "
-    "<a href=\"https://apps.apple.com/app/amneziawg/id6478942365\">AmneziaWG</a> "
-    "для усиленного шифрования трафика.\n\n"
-    "💡 Если какой-то российский сайт не открывается (Сбер, Госуслуги) — "
-    "напиши в поддержку, добавим в исключения."
-)
+# Legacy keyboard kept for backward-compat (нигде в коде не используется, но
+# мы оставляем имя на случай внешних references). Реальная клавиатура теперь
+# строится через _plans_keyboard(lang).
+PLANS_KEYBOARD = _plans_keyboard(None)
 
 # vless_service_for_plan / vless_slow_service_for_plan вынесены в services.plans.
 # Старый MOCK_CONFIG_TEMPLATE удалён (был мёртвым кодом — нигде не использовался).
@@ -96,15 +85,12 @@ HOWTO_TEXT = (
 
 @router.callback_query(F.data == "menu:vpn")
 async def show_vpn_menu(callback: CallbackQuery):
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(callback.from_user.id)
     await callback.message.edit_text(
-        "🌐 <b>VPN — приватность и защищённое соединение</b>\n\n"
-        "Протокол: <b>VLESS + Reality</b> — шифрует трафик, работает в любых сетях\n"
-        "Локация: 🇩🇪 Frankfurt\n"
-        "Soft-лимит трафика, после — медленнее, но не отключение\n\n"
-        "<b>Тарифы:</b>\n"
-        "• <b>База</b> 60 Mbps — 2 человека в 4K + телефоны в фоне\n"
-        "• <b>Макс</b> 120 Mbps — семья / стриминг + торренты\n",
-        reply_markup=PLANS_KEYBOARD,
+        _t(lang, "bot_menu_vpn_text"),
+        reply_markup=_plans_keyboard(lang),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -112,11 +98,16 @@ async def show_vpn_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "vpn:howto")
 async def show_howto(callback: CallbackQuery):
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(callback.from_user.id)
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад к тарифам", callback_data="menu:vpn")]
+        [InlineKeyboardButton(text=_t(lang, "bot_btn_back_to_plans"), callback_data="menu:vpn")]
     ])
     await callback.message.edit_text(
-        HOWTO_TEXT, reply_markup=back_kb, parse_mode="HTML",
+        _t(lang, "bot_howto_text"),
+        reply_markup=back_kb,
+        parse_mode="HTML",
         disable_web_page_preview=True,
     )
     await callback.answer()
@@ -124,7 +115,10 @@ async def show_howto(callback: CallbackQuery):
 
 @router.message(Command("howto"))
 async def cmd_howto(message: Message):
-    await message.answer(HOWTO_TEXT, parse_mode="HTML", disable_web_page_preview=True)
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(message.from_user.id)
+    await message.answer(_t(lang, "bot_howto_text"), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @router.callback_query(F.data == "menu:start")
@@ -134,10 +128,13 @@ async def back_to_start(callback: CallbackQuery):
     # юзер всегда может вернуться в /start чтобы получить актуальное меню.
     from handlers.start import _main_menu
     from services.trial import can_claim_trial
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(callback.from_user.id)
     trial_eligible = await can_claim_trial(callback.from_user.id)
     await callback.message.edit_text(
-        "👋 Привет! Выбери, что тебя интересует:",
-        reply_markup=_main_menu(trial_eligible=trial_eligible),
+        _t(lang, "bot_menu_start_text"),
+        reply_markup=_main_menu(trial_eligible=trial_eligible, lang=lang),
     )
     await callback.answer()
 
@@ -146,21 +143,19 @@ async def back_to_start(callback: CallbackQuery):
 async def esim_menu(callback: CallbackQuery):
     import os
     from aiogram.types import WebAppInfo
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(callback.from_user.id)
     webapp_url = os.getenv("WEBAPP_URL", "")
     rows = []
     if webapp_url:
         rows.append([InlineKeyboardButton(
-            text="📱 Открыть каталог eSIM",
+            text=_t(lang, "bot_btn_open_esim_catalog"),
             web_app=WebAppInfo(url=f"{webapp_url}/esim"),
         )])
-    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:start")])
+    rows.append([InlineKeyboardButton(text=_t(lang, "bot_btn_back"), callback_data="menu:start")])
     await callback.message.edit_text(
-        "📱 <b>eSIM — мобильный интернет за рубежом</b>\n\n"
-        "Покупаешь, сканируешь QR — и через 30 сек у тебя интернет в Турции, "
-        "Грузии, ОАЭ, Таиланде, Вьетнаме или по всей Европе.\n\n"
-        "🇷🇺 Есть отдельный тариф для России — с зарубежным IP "
-        "(удобно для международных сервисов и командировок).\n\n"
-        "Оплата ⭐ или картой через Telegram.",
+        _t(lang, "bot_menu_esim_text"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML",
     )
@@ -192,10 +187,8 @@ async def initiate_purchase(callback: CallbackQuery, bot: Bot):
         chat_id=callback.from_user.id,
         **stars_invoice_kwargs(
             title=f"VPN {plan['name']}",
-            description=(
-                f"Доступ к VPN на {plan['duration_days']} дней. "
-                "Протокол VLESS-Reality. "
-                "Оплачивая, принимаете условия: maxvpnesim.com/oferta"
+            description=_i18n_t(
+                _lang, "bot_invoice_desc_vpn", days=plan["duration_days"],
             ),
             payload=plan_key,
             stars=plan["stars"],

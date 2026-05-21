@@ -205,23 +205,30 @@ async def cmd_referral(message: Message):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
     stats = await get_referral_stats(user_id)
 
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(user_id)
+
     await message.answer(
-        "🔗 <b>Реферальная программа</b>\n\n"
-        f"Приглашай друзей — за каждого, кто купит VPN, получаешь <b>+{REFERRAL_BONUS_DAYS} дней</b> бесплатно.\n\n"
-        f"Твоя ссылка:\n<code>{ref_link}</code>\n\n"
-        f"👥 Приглашено: <b>{stats['invited']}</b>\n"
-        f"💳 Купили: <b>{stats['converted']}</b>\n"
-        f"🎁 Бонусных дней получено: <b>{stats['bonus_days']}</b>",
+        _t(
+            lang, "bot_referral_text",
+            bonus=REFERRAL_BONUS_DAYS,
+            link=ref_link,
+            invited=stats["invited"],
+            converted=stats["converted"],
+            bonus_days=stats["bonus_days"],
+        ),
         parse_mode="HTML",
     )
 
 
 @router.message(lambda m: m.text and m.text.strip() == "/privacy")
 async def cmd_privacy(message: Message):
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _t
+    lang = await get_user_lang(message.from_user.id)
     await message.answer(
-        "🔒 <b>Политика конфиденциальности</b>\n\n"
-        "Мы не логируем трафик и не знаем какие сайты ты посещаешь.\n\n"
-        'Подробнее: <a href="https://maxvpnesim.com/privacy.html">maxvpnesim.com/privacy.html</a>',
+        _t(lang, "bot_privacy_text"),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -234,13 +241,13 @@ async def cmd_rotate_token(message: Message):
     Юзер: «случайно выложил Subscription URL в чат — стрёмно». Команда
     выдаёт новый sub_token, старый отзывается. Импортировать заново в Happ.
     """
-    from services.database import rotate_sub_token
+    from services.database import rotate_sub_token, get_user_lang
+    from services.i18n_bot import t as _t
     user_id = message.from_user.id
     new_token = await rotate_sub_token(user_id)
     new_url = f"https://maxvpnesim.com/sub/{new_token}"
+    lang = await get_user_lang(user_id)
     await message.answer(
-        "🔄 <b>Subscription URL обновлён</b>\n\n"
-        "Старая ссылка больше не работает. Импортируй новую в Happ:\n"
-        f"<code>{new_url}</code>",
+        _t(lang, "bot_rotate_token_text", url=new_url),
         parse_mode="HTML",
     )
