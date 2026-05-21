@@ -24,6 +24,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from services.database import (
     get_expired_subscriptions,
+    get_expired_trials,
     get_grace_expired_subscriptions,
     get_configs_for_subscription,
     mark_subscription_expired,
@@ -482,6 +483,94 @@ async def _process_expired_orders(bot: Bot):
             bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
+
+
+# Триал-клоуз notice — не «продли», т.к. триал был бесплатный. Главное
+# CTA — выбор постоянного тарифа в /start (там Mini App с планами).
+TRIAL_EXPIRY_NOTICE = (
+    "⏰ <b>Пробный период закончился</b>\n\n"
+    "Понравилось? Выбери постоянный тариф в /start — "
+    "от 200 ₽/мес, та же скорость, без перерыва."
+)
+
+
+async def _process_expired_trials(bot: Bot):
+    """Полностью закрывает истёкшие trial-подписки.
+
+    Trial-subscriptions ОТЛИЧАЮТСЯ от платных:
+      - НЕ переходят в grace (256 кбит/с) — они бесплатные, нет смысла удерживать
+        медленным tier'ом; нужно сразу освободить ёмкость серверов.
+      - revoke сразу: peer удаляется, slot reset, status='expired'.
+
+    Раньше `get_expired_subscriptions` фильтровала `plan != 'vpn_trial'` —
+    scheduler никогда не подбирал истёкшие триалы → они висели как active
+    после expires_at → бесплатный безлимит VPN.  Audit поймал.
+
+    Locking: используем `_trial_close_lock(user_id)` из handlers/vpn.py — тот же
+    что и при paid-purchase close, чтобы scheduler и _close_trial_on_paid_purchase
+    не гонялись за одной триал-sub'ой.
+
+    NB: для VLESS-revoke используем `current_vless_service(...)` — она знает,
+    что для plan_key='vpn_trial' пиры живут на vless-base (см. Fix #2 в revoke.py).
+    """
+    expired_trials = await get_expired_trials()
+    if not expired_trials:
+        return
+
+    logger.info("Найдено истёкших триалов: %d", len(expired_trials))
+
+    # Lazy import — handlers/vpn.py импортирует services.scheduler косвенно
+    # через chain, top-level import создал бы цикл.
+    from handlers.vpn import _trial_close_lock
+    from services.database import get_active_subscription_by_id
+
+    for sub in expired_trials:
+        sub_id  = sub["id"]
+        user_id = sub["user_id"]
+
+        async with _trial_close_lock(user_id):
+            # Re-check: paid-purchase close мог уже отметить sub expired
+            # пока мы ждали lock (тоже под этим же lock-ом). Если status
+            # уже не active — нечего чистить.
+            sub_now = await get_active_subscription_by_id(sub_id)
+            if not sub_now or sub_now.get("status") != "active":
+                logger.info("trial expiry skip sub=%d: status уже %s",
+                            sub_id, sub_now.get("status") if sub_now else "deleted")
+                continue
+
+            configs = await get_configs_for_subscription(sub_id)
+            for cfg in configs:
+                server_id = cfg.get("server_id")
+                cfg_id    = cfg["id"]
+                if server_id:
+                    server = await get_server_by_id(server_id)
+                    if server and server.get("agent_url"):
+                        try:
+                            client = client_for_server(server)
+                            proto = cfg.get("protocol", "")
+                            peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                            config_data = cfg.get("config_data") or ""
+                            if peer_id:
+                                if proto == "awg":
+                                    await client.remove_peer("awg", peer_id)
+                                elif proto in ("vless", "vless-reality"):
+                                    svc = _current_vless_service(config_data, "vpn_trial")
+                                    await client.remove_peer(svc, peer_id)
+                                await update_server_peer_count(server_id, -1)
+                        except Exception as e:
+                            logger.warning(
+                                "trial expiry: revoke cfg #%d failed: %s",
+                                cfg_id, e, exc_info=True,
+                            )
+                await reset_config_slot(cfg_id)
+
+            await mark_subscription_expired(sub_id)
+            logger.info("Триал #%d → expired (user=%d)", sub_id, user_id)
+
+            await _send_throttled(
+                bot, user_id, TRIAL_EXPIRY_NOTICE, parse_mode="HTML",
+                reply_markup=_renew_kb(),
+            )
 
 
 async def _sync_vless_stats():
@@ -1145,6 +1234,7 @@ async def run_scheduler(bot: Bot):
         await _safe("trial_nudge",      _send_trial_nudge(bot),          timeout=60)
         await _safe("renewal_reminders", _send_renewal_reminders(bot),   timeout=60)
         await _safe("expired_subs",     _process_expired_subscriptions(bot),       timeout=180)
+        await _safe("expired_trials",   _process_expired_trials(bot),              timeout=180)
         await _safe("grace_expired",    _process_grace_expired_subscriptions(bot), timeout=180)
         await _safe("expired_orders",   _process_expired_orders(bot),    timeout=60)
         # Менее критичные / медленные — отдельно с large timeout'ом.

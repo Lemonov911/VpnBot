@@ -143,9 +143,25 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
             for s in servers:
                 port = s.get(port_col)
                 if not port:
-                    # Сервер не объявил порт для этого tier'а — пропускаем
-                    # тихо (например, legacy node только base-tier).
-                    continue
+                    # Legacy/недонастроенный сервер без per-tier порта —
+                    # fallback на base port. Например legacy-grace-сервер с
+                    # xray_port_grace=NULL: лучше отдать full-speed URL
+                    # (потеря tier-семантики, но юзер хотя бы получит VPN),
+                    # чем silently выкинуть его из подписки.
+                    # Раньше тут было `continue` → юзер видел пустой список
+                    # URL без видимой причины.
+                    fallback = s.get("xray_port_base") or s.get("xray_port")
+                    if not fallback:
+                        logger.error(
+                            "_resolve_vless_urls: server %d has no %s and no base port, skipping",
+                            s["id"], port_col,
+                        )
+                        continue
+                    logger.warning(
+                        "_resolve_vless_urls: server %d missing %s (tier=%s), falling back to base port %s",
+                        s["id"], port_col, tier, fallback,
+                    )
+                    port = fallback
                 # vless:// URL — StealthSurf-style: sni-параметр опускаем
                 # если пуст (DPI меньше fingerprint'ит). pbk/sid обязательны.
                 params = [
@@ -726,11 +742,16 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
             await reset_config_slot(config_id)
             return web.json_response({"error": "Сервер недоступен"}, status=400)
     else:
-        servers = await get_servers_by_protocol(config["protocol"])
-        if not servers:
+        # Load-balance по active_peers/capacity (минимально загруженный).
+        # Раньше брали servers[0] — это всегда первый по INSERT-порядку, и
+        # все Mini-App-активации сыпались на один сервер пока admin не
+        # переключал is_active. get_best_server уже фильтрует is_active=1 +
+        # agent_url IS NOT NULL + capacity>0.
+        from services.database import get_best_server
+        server = await get_best_server(config["protocol"])
+        if not server:
             await reset_config_slot(config_id)
             return web.json_response({"error": "Нет доступных серверов"}, status=503)
-        server = servers[0]
         server_id = server["id"]
 
     if not server.get("agent_url") or not server.get("agent_token"):
@@ -773,6 +794,12 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
         config_id, peer_name, config_data, server_id,
         wg_pubkey=wg_pubkey, assigned_ip=peer_ip, vless_uuid=vless_uuid,
     )
+    # Same pattern as handlers/vpn.py:_deliver_vpn — bump active_peers so
+    # get_best_server load-balances correctly. Without this, a slot activated
+    # via Mini App never counts toward the chosen server's load, and that
+    # server keeps "winning" the load-balancer for all subsequent peers.
+    from services.database import update_server_peer_count
+    await update_server_peer_count(server["id"], +1)
     logger.info("Слот #%d активирован на %s (%s)", config_id, server["name"], peer_name)
     return web.json_response({"ok": True})
 
@@ -794,7 +821,13 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
     if config["status"] != "active":
         return web.json_response({"error": "Слот не активен"}, status=400)
 
-    # Удаляем пир с сервера через vpnctl (best-effort)
+    # Удаляем пир с сервера через vpnctl (best-effort).
+    # `revoke_peer(server, peer_id, service_name)` — 3-й параметр это имя
+    # vpnctl-сервиса (awg / vless-base / vless-base-slow / vless-grace / ...),
+    # а НЕ row-level proto. Для VLESS нужно resolve'ить через current_vless_service
+    # (учитывает throttle-порт + plan_key), иначе агент возвращает 404 и пир
+    # висит на сервере (active_peers рассинхронизирован).
+    revoked_on_server = False
     if config.get("peer_name") and config.get("server_id"):
         try:
             srv = await get_server_by_id(config["server_id"])
@@ -802,12 +835,29 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
                 from services.vpnctl_client import revoke_peer
                 peer_id = config.get("vless_uuid") or config.get("wg_pubkey")
                 if peer_id:
-                    await revoke_peer(srv, str(peer_id), config["protocol"])
+                    if config["protocol"] in ("vless", "vless-reality"):
+                        from services.revoke import current_vless_service
+                        from services.database import get_subscription_by_id
+                        sub = await get_subscription_by_id(config["subscription_id"])
+                        plan_key = sub["plan"] if sub else "vpn_base"
+                        svc = current_vless_service(config.get("config_data") or "", plan_key)
+                        await revoke_peer(srv, str(peer_id), svc)
+                    else:
+                        # awg / wg — service name совпадает с протоколом
+                        await revoke_peer(srv, str(peer_id), config["protocol"])
+                    revoked_on_server = True
         except Exception as e:
             logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e, exc_info=True)
 
     # Сбрасываем слот в empty — он остаётся доступным для повторной активации
     await reset_config_slot(config_id)
+    # Декремент active_peers — симметричный аналог activate-path. Только если
+    # peer реально снят с сервера (иначе active_peers уйдёт в рассинхрон с
+    # реальным состоянием агента; max(0, ...) внутри update_server_peer_count
+    # защищает от ухода в минус).
+    if revoked_on_server and config.get("server_id"):
+        from services.database import update_server_peer_count
+        await update_server_peer_count(config["server_id"], -1)
     logger.info("Слот #%d сброшен в empty пользователем %s", config_id, user["id"])
     return web.json_response({"ok": True})
 
@@ -3242,6 +3292,16 @@ async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
         target=f"server:{server_id}",
         details=f"scanned={scanned} created={created} failed={failed}",
     )
+
+    # Marker: «backfill пройден — сервер можно отдавать в /sub/ URL'ах».
+    # active_vless_servers() фильтрует по backfilled=1. Делаем UPDATE
+    # безусловно: даже если часть слотов failed, оставшиеся клиенты
+    # доступны (failed-логика на стороне admin'а — он повторит запуск).
+    import aiosqlite as _aiosqlite_local
+    from services.database import DB_PATH as _DB_PATH_local
+    async with _aiosqlite_local.connect(_DB_PATH_local) as db:
+        await db.execute("UPDATE servers SET backfilled=1 WHERE id=?", (server_id,))
+        await db.commit()
 
     return web.json_response({
         "ok": True,

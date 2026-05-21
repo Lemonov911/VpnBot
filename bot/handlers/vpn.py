@@ -741,48 +741,64 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
 
     Действие: revoke trial-пиры на агенте, reset config slots, mark trial expired.
     Не grace — он триальный, не надо возвращать после.
+
+    Locking — два уровня (важно для race-safety):
+      1) _TRIAL_LOCKS (из services.trial) — тот же per-user lock что и в
+         provision_trial. Если триал ещё провижится прямо сейчас, ждём
+         завершения провижининга и закрываем уже готовый sub. Без этого
+         race-окно: paid purchase fires пока trial create в полёте →
+         close-trial видит пустой результат → trial созданный после возврата
+         provision_trial остаётся незакрытым.
+      2) _trial_close_lock — защита от двух параллельных paid-purchase
+         успешных для одного user (Stars + CryptoBot одновременно? редко
+         но возможно), а также от race со scheduler'ом.
+    Предполагаем: provision_trial НЕ вызывает _close_trial_on_paid_purchase —
+    значит no deadlock от nested-acquire.
     """
     from services.database import (
         get_configs_for_subscription, get_server_by_id, mark_subscription_expired,
         reset_config_slot, update_server_peer_count, get_active_subscription_by_id,
     )
     from services.vpnctl_client import client_for_server
+    from services.trial import _TRIAL_LOCKS
 
-    async with _trial_close_lock(user_id):
-        # Re-check внутри лока: scheduler мог уже отметить sub expired
-        sub_now = await get_active_subscription_by_id(trial_sub_id)
-        if sub_now and sub_now.get("status") == "expired":
-            logger.info("trial close skip: sub=%d уже expired", trial_sub_id)
-            return
+    provision_lock = _TRIAL_LOCKS.setdefault(user_id, _asyncio.Lock())
+    async with provision_lock:
+        async with _trial_close_lock(user_id):
+            # Re-check внутри лока: scheduler мог уже отметить sub expired
+            sub_now = await get_active_subscription_by_id(trial_sub_id)
+            if sub_now and sub_now.get("status") == "expired":
+                logger.info("trial close skip: sub=%d уже expired", trial_sub_id)
+                return
 
-        configs = await get_configs_for_subscription(trial_sub_id)
-        for cfg in configs:
-            server_id = cfg.get("server_id")
-            if server_id:
-                server = await get_server_by_id(server_id)
-                if server and server.get("agent_url"):
-                    try:
-                        client = client_for_server(server)
-                        proto = cfg.get("protocol", "")
-                        peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                        config_data = cfg.get("config_data") or ""
-                        if peer_id:
-                            if proto == "awg":
-                                await client.remove_peer("awg", peer_id)
-                            elif proto in ("vless", "vless-reality"):
-                                # Используем current_vless_service (обрабатывает
-                                # vless-base / vless-base-slow / vless-grace по порту
-                                # в config_data), иначе throttled trial peer в
-                                # vless-base-slow не удалится, а счётчик уйдёт в минус.
-                                from services.revoke import current_vless_service
-                                inbound = current_vless_service(config_data, "vpn_trial")
-                                await client.remove_peer(inbound, peer_id)
-                            await update_server_peer_count(server_id, -1)
-                    except Exception as e:
-                        logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
-            await reset_config_slot(cfg["id"])
-        await mark_subscription_expired(trial_sub_id)
-        logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
+            configs = await get_configs_for_subscription(trial_sub_id)
+            for cfg in configs:
+                server_id = cfg.get("server_id")
+                if server_id:
+                    server = await get_server_by_id(server_id)
+                    if server and server.get("agent_url"):
+                        try:
+                            client = client_for_server(server)
+                            proto = cfg.get("protocol", "")
+                            peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                            config_data = cfg.get("config_data") or ""
+                            if peer_id:
+                                if proto == "awg":
+                                    await client.remove_peer("awg", peer_id)
+                                elif proto in ("vless", "vless-reality"):
+                                    # Используем current_vless_service (обрабатывает
+                                    # vless-base / vless-base-slow / vless-grace по порту
+                                    # в config_data), иначе throttled trial peer в
+                                    # vless-base-slow не удалится, а счётчик уйдёт в минус.
+                                    from services.revoke import current_vless_service
+                                    inbound = current_vless_service(config_data, "vpn_trial")
+                                    await client.remove_peer(inbound, peer_id)
+                                await update_server_peer_count(server_id, -1)
+                        except Exception as e:
+                            logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
+                await reset_config_slot(cfg["id"])
+            await mark_subscription_expired(trial_sub_id)
+            logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
 
 
 async def _apply_plan_upgrade(message: Message, payment):

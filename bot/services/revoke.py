@@ -32,6 +32,12 @@ def current_vless_service(config_data: str, plan_key: str) -> str:
     иначе — base/max по plan_key. Используется в revoke чтобы попасть в правильный
     inbound (важно: после grace-tier-move пир сидит в vless-grace, revoke по
     vless-base его не достанет).
+
+    vpn_trial: триал-пиры всегда живут на vless-base (см. trial.py:194 —
+    хардкод "vless-base" для триал-provisioning). Раньше falled-through в
+    vless_service_for_plan("vpn_trial") → возвращало литерал "vless" (legacy
+    имя сервиса), агент знал только vless-base/max/grace и т.п. → 404 при
+    revoke, пиры висели на сервере после mark_expired.
     """
     if ":9448" in config_data:
         return "vless-max-slow"
@@ -39,6 +45,8 @@ def current_vless_service(config_data: str, plan_key: str) -> str:
         return "vless-base-slow"
     if ":9453" in config_data:
         return "vless-grace"
+    if plan_key == "vpn_trial":
+        return "vless-base"
     return vless_service_for_plan(plan_key)
 
 

@@ -103,9 +103,17 @@ async def can_claim_trial(user_id: int) -> bool:
         # Используем created_at (как в _provision_trial_locked), не expires_at:
         # expires_at на 3 дня позже created_at, поэтому кнопка была бы скрыта
         # 3 лишних дня после окончания cooldown.
+        #
+        # COALESCE(trial_rolled_back, 0) = 0 вместо `status != 'expired'`:
+        # после Fix #1 scheduler помечает истёкшие триалы expired, и старый
+        # фильтр пропускал бы их → юзер мог взять второй триал сразу после
+        # окончания первого. trial_rolled_back маркер ставится ТОЛЬКО при
+        # rollback-пути provision_trial (provision упал) — в этом случае
+        # cooldown не применяется, юзер может повторить попытку сразу.
         row = await (await db.execute(
             f"""SELECT 1 FROM subscriptions
-                WHERE user_id=? AND plan=? AND status != 'expired'
+                WHERE user_id=? AND plan=?
+                  AND COALESCE(trial_rolled_back, 0) = 0
                   AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
@@ -148,9 +156,13 @@ async def _provision_trial_locked(user_id: int) -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         # Триал доступен раз в TRIAL_COOLDOWN_DAYS дней — не «никогда».
         # Старые истёкшие триалы > 30 дней назад не блокируют новый.
+        # См. can_claim_trial для объяснения trial_rolled_back маркера —
+        # rollback-случай не блокирует cooldown'ом, нормальное истечение
+        # (status='expired' без флага) — блокирует.
         existing = await (await db.execute(
             f"""SELECT id FROM subscriptions
-                WHERE user_id=? AND plan=? AND status != 'expired'
+                WHERE user_id=? AND plan=?
+                  AND COALESCE(trial_rolled_back, 0) = 0
                   AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
@@ -233,13 +245,15 @@ async def _provision_trial_locked(user_id: int) -> dict:
                 row = await cur.fetchone()
                 vless_cfg_id = row["id"] if row else 0
     except (TrialNoServer, VpnctlError, Exception):
-        # Rollback: пометим sub'у expired чтобы не блокировала юзера 30 дней.
-        # Используем mark_subscription_expired а не delete — payment_id уникален,
-        # на случай повторных claims через cooldown пусть он будет видимым.
+        # Rollback: помечаем sub'у expired + ставим trial_rolled_back=1 чтобы
+        # не блокировать юзера 30-дневным cooldown'ом — provisioning упал,
+        # юзер должен иметь возможность сразу повторить попытку.
+        # Используем mark_subscription_trial_rolled_back а не delete —
+        # payment_id уникален, history-row нужна для audit/debug.
         try:
-            from services.database import mark_subscription_expired
-            await mark_subscription_expired(sub_id)
-            logger.warning("trial rollback: marked sub #%d expired (user %d)", sub_id, user_id)
+            from services.database import mark_subscription_trial_rolled_back
+            await mark_subscription_trial_rolled_back(sub_id)
+            logger.warning("trial rollback: marked sub #%d rolled-back (user %d)", sub_id, user_id)
         except Exception as rb_err:
             logger.error("trial rollback failed for sub #%d: %s", sub_id, rb_err, exc_info=True)
         raise

@@ -23,18 +23,30 @@ DB_PATH = Path(__file__).parent.parent / "bot.db"
 
 @asynccontextmanager
 async def _connect():
-    """aiosqlite.connect + busy_timeout 5s.
+    """aiosqlite.connect + busy_timeout 5s + foreign_keys=ON.
 
     `journal_mode=WAL` ставится один раз в `init_db()` (это persistent
-    pragma — переживает рестарт SQLite). `busy_timeout` — per-connection,
-    поэтому ставится здесь на каждом подключении.
+    pragma — переживает рестарт SQLite). `busy_timeout` и `foreign_keys` —
+    per-connection, поэтому ставятся здесь на каждом подключении.
 
-    Все вызовы в этом модуле и снаружи должны идти через `_connect()`
-    (или прямой `aiosqlite.connect(DB_PATH)` для legacy-кода, но WAL+
-    persistent journal-mode и так на месте).
+    foreign_keys=ON: до этого SQLite молча игнорировал FOREIGN KEY
+    constraints — можно было удалить server с привязанными configs, и
+    configs.server_id оставался dangling. Теперь DELETE servers где есть
+    referenced configs упадёт IntegrityError — это правильное поведение,
+    forces explicit cleanup. PRAGMA ничего не делает с уже-существующими
+    dangling rows (только enforce'ит новые modifications).
+
+    ⚠️ Direct `aiosqlite.connect(DB_PATH)` (вне _connect) НЕ получает этот
+    PRAGMA — таких мест по коду есть (services/trial.py, services/health.py
+    и т.д.). Это сознательный compromise: тесты и read-only/health-check
+    запросы FK не нарушают, а апгрейдить всё на _connect выходит за рамки
+    этого фикса.
+
+    Все вызовы в этом модуле должны идти через `_connect()`.
     """
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA busy_timeout=5000")
+        await db.execute("PRAGMA foreign_keys=ON")
         yield db
 
 
@@ -492,6 +504,17 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN trial_nudge_sent INTEGER NOT NULL DEFAULT 0"
         )
+    # trial_rolled_back — отличает «триал был провизионен но провижининг
+    # упал → откатили» от «триал отработал и истёк по сроку».  Cooldown
+    # 30 дней применяем только для второго случая: если provision_trial
+    # упал на полпути, юзер должен иметь возможность сразу повторить.
+    # Без этого флага после Fix #1 (scheduler помечает trial expired)
+    # cooldown-фильтр `status != 'expired'` пропускал и rollback-случай
+    # (вернуть сразу) и нормальное истечение (заблокировать на 30 дней).
+    if "trial_rolled_back" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN trial_rolled_back INTEGER NOT NULL DEFAULT 0"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -561,6 +584,20 @@ async def _migrate(db: aiosqlite.Connection):
     ]:
         if col not in srv_cols:
             await db.execute(f"ALTER TABLE servers ADD COLUMN {col} {defn}")
+
+    # servers.backfilled — флаг "новый VLESS-сервер прошёл multi-location
+    # backfill". До backfill'а сервер выдавал vless:// URL в подписку, но
+    # агент про существующие UUID не знал → Happ показывал «нет серверов».
+    # Теперь URL отдаются только если backfilled=1.
+    #
+    # Новые сервера, добавленные через raw INSERT/админку, по умолчанию
+    # получат backfilled=0 — admin обязан запустить POST /api/admin/
+    # servers/{id}/backfill-vless ПЕРЕД тем как сервер появится в /sub/.
+    # Существующие сервера на момент миграции считаем уже-задеплоенными
+    # (UPDATE ниже устанавливает им backfilled=1, иначе живой прод сломался бы).
+    if "backfilled" not in srv_cols:
+        await db.execute("ALTER TABLE servers ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0")
+        await db.execute("UPDATE servers SET backfilled=1")
 
     # users.vless_uuid — canonical Reality credential. UNIQUE partial index
     # (ignores NULL) защищает от двух юзеров с одинаковым UUID при гонке
@@ -754,12 +791,43 @@ async def get_expired_subscriptions() -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_expired_trials() -> list[dict]:
+    """Trial subscriptions past expires_at — for cleanup by scheduler.
+    Separate from get_expired_subscriptions because trials skip grace entirely
+    (they're free; no incentive to retain via slow tier — just remove peers)."""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, user_id, plan, expires_at FROM subscriptions
+            WHERE status='active' AND plan='vpn_trial'
+              AND expires_at IS NOT NULL
+              AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now')
+        """) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def mark_subscription_expired(subscription_id: int):
     """Помечает подписку expired. Заодно сбрасывает pending_plan —
     он стал мёртвым атрибутом (downgrade некуда применять, sub закрыта)."""
     async with _connect() as db:
         await db.execute(
             "UPDATE subscriptions SET status='expired', pending_plan=NULL WHERE id=?",
+            (subscription_id,),
+        )
+        await db.commit()
+
+
+async def mark_subscription_trial_rolled_back(subscription_id: int):
+    """Помечает trial-sub как expired И ставит trial_rolled_back=1.
+    Используется в rollback-пути provision_trial: если выдача пиров упала
+    после create_subscription, ставим этот маркер чтобы cooldown 30 дней
+    НЕ применялся (юзер должен иметь возможность сразу повторить попытку).
+    Атомарно в одной транзакции."""
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE subscriptions "
+            "SET status='expired', pending_plan=NULL, trial_rolled_back=1 "
+            "WHERE id=?",
             (subscription_id,),
         )
         await db.commit()
@@ -1767,13 +1835,18 @@ async def get_referral_stats(referrer_id: int) -> dict:
 
 
 async def get_best_server(protocol: str) -> dict | None:
-    """Сервер с наименьшей загрузкой для данного протокола."""
+    """Сервер с наименьшей загрузкой для данного протокола.
+
+    capacity > 0 фильтр: иначе деление на 0 → NULL, NULL сортируется первым,
+    и misconfigured-сервер с capacity=0 «выигрывает» каждый load-balance.
+    """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         proto_field = "awg" if protocol == "awg" else "vless"
         async with db.execute("""
             SELECT * FROM servers
             WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
+              AND capacity > 0
             ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
             LIMIT 1
         """, (proto_field,)) as cur:
@@ -1784,13 +1857,19 @@ async def get_best_server(protocol: str) -> dict | None:
 async def get_all_active_servers(protocol: str) -> list[dict]:
     """Все active сервера для протокола с настроенным agent_url.
     Используется для multi-location VLESS provisioning: один UUID
-    реплицируется на каждый сервер, юзер видит N локаций в sub-URL."""
+    реплицируется на каждый сервер, юзер видит N локаций в sub-URL.
+
+    capacity > 0 — тот же guard, что в get_best_server: misconfigured-сервера
+    с capacity=0 даю́т NULL в сортировке и встают первыми. Лучше скрыть
+    полностью, чем гнать туда трафик.
+    """
     proto_field = "awg" if protocol == "awg" else "vless" if protocol == "vless" else protocol
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT * FROM servers
             WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
+              AND capacity > 0
             ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
         """, (proto_field,)) as cur:
             return [dict(r) for r in await cur.fetchall()]
@@ -1961,10 +2040,16 @@ async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
 async def active_vless_servers() -> list[dict]:
     """VLESS-серверы, готовые отдавать URL в подписке.
 
-    Фильтрация: protocol='vless' + is_active=1 + xray_pubkey IS NOT NULL
-    (последний — маркер «backfill параметров Reality прошёл»; пока NULL,
-    сервер невидим для dynamic-режима, чтобы случайно не отдать URL без
-    нужных pbk/sid).
+    Фильтрация:
+      • protocol='vless' + is_active=1 — базовые маркеры live-сервера.
+      • xray_pubkey IS NOT NULL — backfill параметров Reality прошёл; пока
+        NULL, сервер невидим для dynamic-режима, чтобы случайно не отдать
+        URL без нужных pbk/sid.
+      • backfilled=1 — multi-location UUID-backfill прошёл (см. POST
+        /api/admin/servers/{id}/backfill-vless). До этого агент про
+        существующие UUID юзеров не знает, и Happ покажет «нет серверов»
+        для всех пиров на новой ноде. Существующие сервера получают
+        backfilled=1 автоматически при миграции.
     Сортируем по id для детерминированного порядка в подписке.
     """
     async with _connect() as db:
@@ -1977,6 +2062,7 @@ async def active_vless_servers() -> list[dict]:
             FROM servers
             WHERE protocol='vless' AND is_active=1
               AND xray_pubkey IS NOT NULL AND xray_pubkey != ''
+              AND backfilled=1
             ORDER BY id
         """) as cur:
             return [dict(r) for r in await cur.fetchall()]
