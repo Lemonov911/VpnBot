@@ -200,7 +200,13 @@ export default function VPN() {
           <div className="w-[72px] h-[72px] rounded-[22px] mb-2 bg-success/12 flex items-center justify-center text-[36px]">✅</div>
           <div className="font-extrabold text-[22px] text-[var(--tg-theme-text-color,#000)] mb-1.5">{t('vpn_done_title')}</div>
           <p className="text-[var(--tg-theme-hint-color,#707579)] text-sm mb-5">{t('vpn_done_sub')}</p>
-          <button className="btn w-full mb-2.5" onClick={() => nav('/configs')}>{t('vpn_to_configs')}</button>
+          <button className="btn w-full mb-2.5" onClick={() => {
+            // Сбрасываем success-экран и обновляем sub ДО навигации, чтобы при
+            // возврате через BackButton VPN-страница показала свежие данные.
+            setPaid(false)
+            getActiveSubscription().then(setSub).catch(() => {})
+            nav('/configs')
+          }}>{t('vpn_to_configs')}</button>
           {/* UX audit P0: пейщики получали меньше guidance чем триал-юзеры.
               Добавляем Happ install chips чтобы они знали какую программу ставить. */}
           <div className="grid grid-cols-2 gap-2 w-full mb-2.5">

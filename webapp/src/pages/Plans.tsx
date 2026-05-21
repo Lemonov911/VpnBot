@@ -460,8 +460,8 @@ export default function Plans() {
             // Иначе grace-юзер не имеет способа выйти из throttle на тот же тариф.
             if (plan.key === curPlan!.key && inGrace) mode = 'renew'
             else if (plan.key === curPlan!.key) mode = 'current'
+            else if (isPending) mode = 'pending'   // перед upgrade: grace-юзер с pending должен видеть Cancel, а не «Улучшить»
             else if (plan.stars > curPlan!.stars) mode = 'upgrade'
-            else if (isPending) mode = 'pending'
             else mode = 'downgrade'
 
             return (

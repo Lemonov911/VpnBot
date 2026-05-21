@@ -195,6 +195,14 @@ async def _process_expired_subscriptions(bot: Bot):
                 sub_id, sub_expires[:10], GRACE_DAYS,
             )
             try:
+                # Revoke AWG/VLESS peers на агентах ДО mark_expired.
+                # Sub никогда не проходила через grace (бот лежал) — peers
+                # полностью активны на агенте и будут работать бесплатно
+                # если их не удалить.
+                from services.revoke import revoke_subscription_configs
+                await revoke_subscription_configs(
+                    sub_id, plan_key, log_prefix=f"late-expire sub#{sub_id}",
+                )
                 await mark_subscription_expired(sub_id)
                 # Уведомление юзеру
                 await _send_throttled(bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",

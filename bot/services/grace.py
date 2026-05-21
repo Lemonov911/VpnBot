@@ -39,11 +39,17 @@ async def try_renew_from_grace(
     method: str,
     stars: int = 0,
     amount_rub: int = 0,
+    auto_renew: bool = False,
 ) -> bool:
     """Returns True если grace-продление выполнено (caller skip create), иначе False.
 
     `method` — "stars" / "crypto" / "oxapay" / "lavatop"; пишется в payments-log
     для админ-аналитики.
+
+    `auto_renew` — True для Stars recurring first-payment; проставляет
+    auto_renew=1 и payment_provider='stars' чтобы следующий renewal charge
+    нашёл sub через get_recurring_sub_for_renewal (без этого создалась бы
+    вторая sub на следующий месяц).
     """
     from services.database import (
         get_active_subscription, renew_subscription_from_grace,
@@ -68,6 +74,8 @@ async def try_renew_from_grace(
     sub_id = existing["id"]
     renewed = await renew_subscription_from_grace(
         sub_id, days=plan["duration_days"],
+        auto_renew=auto_renew,
+        payment_provider="stars" if method == "stars" and auto_renew else None,
     )
     if not renewed:
         # race с scheduler'ом: пока мы читали grace, он перевёл в expired.

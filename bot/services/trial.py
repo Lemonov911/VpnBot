@@ -99,11 +99,14 @@ async def can_claim_trial(user_id: int) -> bool:
         )).fetchone()
         if row is not None:
             return False
-        # Trial был, но expires_at в пределах cooldown — блокирует
+        # Trial был, но created_at в пределах cooldown — блокирует.
+        # Используем created_at (как в _provision_trial_locked), не expires_at:
+        # expires_at на 3 дня позже created_at, поэтому кнопка была бы скрыта
+        # 3 лишних дня после окончания cooldown.
         row = await (await db.execute(
             f"""SELECT 1 FROM subscriptions
                 WHERE user_id=? AND plan=?
-                  AND expires_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()

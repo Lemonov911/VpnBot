@@ -353,7 +353,16 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         cur_expires = datetime.utcnow()
     base = max(cur_expires, datetime.utcnow())
     new_expires = base + timedelta(days=plan["duration_days"])
-    await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+    extended = await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+    if extended is None:
+        # Sub перешла в expired до нашего extend (TOCTOU со scheduler'ом).
+        # Fallback: обрабатываем как первый платёж — создаём новую sub.
+        logger.warning(
+            "Stars renewal: sub #%d expired before extend (user=%d), fallback to _deliver_vpn",
+            sub["id"], user_id,
+        )
+        await _deliver_vpn(message, payment, plan, plan_key, auto_renew=True)
+        return
 
     try:
         await bot.send_message(
@@ -390,6 +399,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         bot_obj, user_id, plan_key, plan, payment_id,
         method="stars" if not payment_id.startswith("crypto_") else "crypto",
         stars=payment.total_amount,
+        auto_renew=auto_renew,
     ):
         return
 
@@ -748,9 +758,12 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
                             if proto == "awg":
                                 await client.remove_peer("awg", peer_id)
                             elif proto in ("vless", "vless-reality"):
-                                # Определяем inbound по порту в config_data —
-                                # если уже grace (:9453), удаляем из vless-grace.
-                                inbound = "vless-grace" if ":9453" in config_data else "vless-base"
+                                # Используем current_vless_service (обрабатывает
+                                # vless-base / vless-base-slow / vless-grace по порту
+                                # в config_data), иначе throttled trial peer в
+                                # vless-base-slow не удалится, а счётчик уйдёт в минус.
+                                from services.revoke import current_vless_service
+                                inbound = current_vless_service(config_data, "vpn_trial")
                                 await client.remove_peer(inbound, peer_id)
                             await update_server_peer_count(server_id, -1)
                     except Exception as e:

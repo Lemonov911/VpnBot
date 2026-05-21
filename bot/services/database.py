@@ -1192,26 +1192,29 @@ async def get_subscription_by_parent_contract(contract_id: str) -> dict | None:
 
 async def extend_subscription_expires_at(
     sub_id: int, new_expires_at: str, *, reset_status: bool = True
-) -> bool:
+) -> bool | None:
     """Продлевает подписку (Lava recurring success).  Сбрасывает status='active'
     если он был 'grace' — recurring деньги пришли вовремя или с задержкой,
     значит юзер хочет оставаться на VPN.  Сбрасываются все reminded_* флаги.
 
-    Возвращает True если sub находилась в статусе 'grace' до продления (caller
-    должен снять throttle на агентах).  Чтение + запись в одной транзакции —
-    атомарнее, чем отдельный SELECT до вызова.
+    Возвращает True если sub была в 'grace' (caller должен снять throttle),
+    False если была active, None если sub уже expired или не найдена —
+    UPDATE не выполнен (zombie-guard: не воскрешаем expired sub).
     """
     async with _connect() as db:
         async with db.execute(
             "SELECT status FROM subscriptions WHERE id=?", (sub_id,)
         ) as cur:
             row = await cur.fetchone()
-        was_grace = bool(row and row[0] == "grace")
+        if not row or row[0] not in ("active", "grace"):
+            return None  # sub expired или not found — не воскрешаем
+        was_grace = row[0] == "grace"
         if reset_status:
             await db.execute(
                 "UPDATE subscriptions SET expires_at=?, status='active', "
                 "grace_until=NULL, reminded_3d=0, reminded_1d=0, "
-                "reminded_renewal_3d=0, reminded_grace_3d=0 WHERE id=?",
+                "reminded_renewal_3d=0, reminded_grace_3d=0 "
+                "WHERE id=? AND status IN ('active', 'grace')",
                 (new_expires_at, sub_id),
             )
         else:
@@ -1648,7 +1651,10 @@ async def mark_grace_reminded(sub_id: int):
         await db.commit()
 
 
-async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | None:
+async def renew_subscription_from_grace(
+    sub_id: int, days: int = 30, *,
+    auto_renew: bool = False, payment_provider: str | None = None,
+) -> dict | None:
     """Продление из grace-состояния: status→active, grace_until=NULL,
     expires_at = now + days.  Сбрасывает reminded-флаги (новый период,
     новые напоминания).
@@ -1658,10 +1664,23 @@ async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | N
     `_process_grace_expired_subscriptions`-scheduler-таском который мог
     перевести её в expired между check и renew).
 
+    auto_renew / payment_provider — проставляются при Stars recurring:
+    без них `get_recurring_sub_for_renewal` не найдёт sub на следующем
+    цикле и fallback создаст вторую подписку.
+
     Caller (`services/grace.py`) после этого должен вызвать
     unthrottle/move через vpnctl_client — мы только меняем БД, агент
     отдельно (см. _apply_plan_upgrade для образца).
     """
+    extra_set: list[str] = []
+    extra_params: list = []
+    if auto_renew:
+        extra_set.append("auto_renew=1")
+    if payment_provider is not None:
+        extra_set.append("payment_provider=?")
+        extra_params.append(payment_provider)
+    extra_clause = (", " + ", ".join(extra_set)) if extra_set else ""
+
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -1673,8 +1692,9 @@ async def renew_subscription_from_grace(sub_id: int, days: int = 30) -> dict | N
                     reminded_3d=0,
                     reminded_1d=0,
                     reminded_grace_3d=0
+                    {extra_clause}
                 WHERE id=? AND status='grace'""",
-            (sub_id,),
+            extra_params + [sub_id],
         )
         await db.commit()
         if cur.rowcount == 0:

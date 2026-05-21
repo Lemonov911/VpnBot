@@ -452,6 +452,7 @@ const T = {
     // Home extras
     home_no_sub:       'Нет подписки',
     home_active:       'Активен',
+    home_grace:        'Медленный режим',
     home_days_left_1:  'день',
     home_days_left_2:  'дня',
     home_buy_vpn:      'Выбрать тариф',
@@ -951,6 +952,7 @@ const T = {
     // Home extras
     home_no_sub:       'No subscription',
     home_active:       'Active',
+    home_grace:        'Slow mode',
     home_days_left_1:  'day',
     home_days_left_2:  'days',
     home_buy_vpn:      'Choose plan',

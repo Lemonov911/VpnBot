@@ -70,7 +70,10 @@ export default function PaymentSheet({
   // Preselect crypto (₽) — юзер на странице тарифов видит цену 200₽, ожидает
   // что нажав «купить» он попадёт в RUB-флоу.  Stars preselected раньше
   // вызывало когнитивный mismatch: «я нажал 200₽, а тут 145⭐».
-  const [method, setMethod] = useState<PayMethod>(defaultMethod)
+  // Стартуем с 'stars' (всегда доступен) — defaultMethod применяется в useEffect
+  // после загрузки feature flags, чтобы не показывать кнопку disabled-метода
+  // в момент первого рендера.
+  const [method, setMethod] = useState<PayMethod>('stars')
   const [showOxapay, setShowOxapay]       = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
   const [period, setPeriod]               = useState<PayPeriod>('1m')
@@ -105,11 +108,18 @@ export default function PaymentSheet({
     let cancelled = false
     getFeatures().then(f => {
       if (cancelled) return
-      setShowLavatop(!!f.lavatop)
-      const oxapayOn = !!f.oxapay
+      const lavatopOn = !!f.lavatop
+      const oxapayOn  = !!f.oxapay
+      setShowLavatop(lavatopOn)
       setShowOxapay(oxapayOn)
-      // Если OxaPay выключен, но он сейчас дефолтный метод — откатываемся на Stars.
-      if (!oxapayOn) setMethod(m => m === 'oxapay' ? 'stars' : m)
+      // Применяем предпочтительный метод теперь, когда знаем какие флаги включены.
+      // Если preferred-метод выключен — остаёмся на 'stars'.
+      if (defaultMethod === 'oxapay' && oxapayOn)   setMethod('oxapay')
+      else if (defaultMethod === 'lavatop' && lavatopOn) setMethod('lavatop')
+      else if (defaultMethod === 'stars' || defaultMethod === 'crypto') setMethod(defaultMethod)
+      // Fallback: если текущий метод вдруг оказался disabled — сбрасываем на stars.
+      if (!oxapayOn)  setMethod(m => m === 'oxapay'   ? 'stars' : m)
+      if (!lavatopOn) setMethod(m => m === 'lavatop'  ? 'stars' : m)
     })
     return () => { cancelled = true }
   }, [])

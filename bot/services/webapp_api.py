@@ -939,12 +939,21 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     from services.database import (
         get_subscription_by_payment_id, create_subscription,
         create_order, complete_order, create_config_record,
+        is_payment_recorded,
     )
     from datetime import datetime, timedelta
 
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
         logger.warning("CryptoBot: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+
+    # Идемпотентность: если payment уже записан в payments.tx_id через
+    # grace-renew path (sub не имеет этот payment_id в subscriptions.payment_id,
+    # поэтому get_subscription_by_payment_id вернул None), но повторный
+    # webhook не должен создавать вторую sub.
+    if await is_payment_recorded(payment_id):
+        logger.warning("CryptoBot: payment %s already processed (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     # Renew-from-grace: если у юзера grace-sub того же плана — продлеваем
@@ -1212,11 +1221,19 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
 
     from services.database import (
         get_subscription_by_payment_id, create_subscription, create_order, complete_order,
+        is_payment_recorded,
     )
 
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
         logger.warning("OxaPay: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+
+    # Идемпотентность при webhook retry: grace-renew path записывает payment
+    # в payments.tx_id, но не в subscriptions.payment_id — повторный вебхук
+    # иначе создаст вторую sub.
+    if await is_payment_recorded(payment_id):
+        logger.warning("OxaPay: payment %s already processed (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     from services.grace import try_renew_from_grace
@@ -1549,7 +1566,27 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         # extend_subscription_expires_at переключает status grace→active атомарно
         # и возвращает флаг — использовать его вместо pre-fetch'нутого sub.status,
         # чтобы избежать race со scheduler'ом между чтением и записью.
+        # None = sub уже expired (webhook пришёл слишком поздно) — не воскрешаем.
         was_grace = await extend_subscription_expires_at(sub["id"], new_expires.isoformat())
+
+        if was_grace is None:
+            logger.error(
+                "Lava recurring: sub #%d user=%d already expired — cannot extend, "
+                "alerting admin (юзер заплатил, но VPN-слоты пусты)",
+                sub["id"], sub["user_id"],
+            )
+            try:
+                if ADMIN_ID:
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"🚨 <b>Lava recurring: expired sub!</b>\n\n"
+                        f"Sub #{sub['id']} user {sub['user_id']} уже expired — "
+                        f"webhook пришёл слишком поздно. Нужно вручную создать новую sub.",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
+            return web.Response(status=200)
 
         # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
         if was_grace:

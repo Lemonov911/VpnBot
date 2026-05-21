@@ -196,8 +196,10 @@ export default function Home() {
                 {sub ? (
                   <>
                     <div className="flex items-center gap-[5px] mb-[3px]">
-                      <span className="w-[7px] h-[7px] rounded-full bg-success shrink-0 block" />
-                      <span className="text-xs font-bold text-success">{t('home_active')}</span>
+                      <span className={`w-[7px] h-[7px] rounded-full shrink-0 block ${sub.status === 'grace' ? 'bg-amber-500' : 'bg-success'}`} />
+                      <span className={`text-xs font-bold ${sub.status === 'grace' ? 'text-amber-500' : 'text-success'}`}>
+                        {sub.status === 'grace' ? t('home_grace' as never) : t('home_active')}
+                      </span>
                     </div>
                     <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">{planLabel(sub.plan)}</div>
                     <div className="text-[11px] text-[var(--tg-theme-hint-color)]">
@@ -249,8 +251,10 @@ export default function Home() {
                     {sub ? (
                       <>
                         <div className="flex items-center gap-[6px] mt-1">
-                          <span className="w-[8px] h-[8px] rounded-full bg-success shrink-0" />
-                          <span className="text-[13px] font-bold text-success">{t('home_active')}</span>
+                          <span className={`w-[8px] h-[8px] rounded-full shrink-0 ${sub.status === 'grace' ? 'bg-amber-500' : 'bg-success'}`} />
+                          <span className={`text-[13px] font-bold ${sub.status === 'grace' ? 'text-amber-500' : 'text-success'}`}>
+                            {sub.status === 'grace' ? t('home_grace' as never) : t('home_active')}
+                          </span>
                         </div>
                         <div className="text-[18px] font-extrabold text-[var(--tg-theme-text-color)] mt-1 leading-tight">
                           {planLabel(sub.plan)}
