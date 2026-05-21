@@ -82,18 +82,35 @@ def _spawn_bg(coro, *, name: str | None = None) -> asyncio.Task:
 
 
 def _safe_header(value: str) -> str:
-    """Percent-encode non-ASCII chars for HTTP header values.
+    """ASCII-only HTTP header value.
 
-    RFC 7230 restricts header values to ISO-8859-1. Cyrillic + emoji aren't
-    in that set: aiohttp on Python 3.12+ refuses to encode them (raises
-    UnicodeEncodeError mid-response), older versions silently truncate.
+    RFC 7230 restricts header values to ISO-8859-1. aiohttp on Python 3.12+
+    raises UnicodeEncodeError on non-Latin-1 bytes mid-response.
 
-    Happ/Streisand tolerate percent-encoded UTF-8 in Profile-Title and
-    decode it back for display. Other clients (sing-box) just show the
-    percent-encoded form, which is ugly but doesn't break the subscription.
+    Раньше тут было percent-encode через urllib.quote — но Happ (и многие
+    другие клиенты) НЕ декодируют percent-encoded UTF-8 в Profile-Title:
+    юзер видел `%F0%9F%8C%90 MAX VPN %C2%B7 ...` вместо нормального
+    заголовка. Real-world incident 22.05.2026.
+
+    Подход: дропаем non-ASCII (emoji, Cyrillic), заменяем em-dash на `-`.
+    Профиль-title не критичен для UX — основной список серверов с флагами
+    и кастомными именами Happ показывает из vless:// URL fragment'ов
+    (которые мы percent-encode'им в URL — там это корректно).
     """
-    from urllib.parse import quote as _urlquote
-    return _urlquote(value.encode('utf-8'), safe=' .,/-_:()')
+    if not value:
+        return ""
+    # Map common non-ASCII punctuation to ASCII equivalents
+    replacements = {
+        "—": "-", "–": "-", "·": "-",
+        "«": '"', "»": '"',
+        "✅": "[OK]", "❌": "[X]", "⏳": "[!]",
+        "🌐": "", "🎁": "", "💎": "",
+    }
+    for src, dst in replacements.items():
+        value = value.replace(src, dst)
+    # Strip any remaining non-ASCII (Cyrillic etc.) and squash whitespace
+    ascii_value = value.encode("ascii", errors="ignore").decode("ascii")
+    return " ".join(ascii_value.split())
 
 
 # Per-server lock для handle_admin_migrate_configs. Без него два параллельных
@@ -3184,14 +3201,14 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
             )).fetchone()
             if sub:
                 plan = VPN_PLANS.get(sub["plan"], {})
-                # vpn_trial отсутствует в VPN_PLANS (нечего покупать), но как
-                # активная подписка в Happ-Profile-Title должен выглядеть
-                # узнаваемо, а не как «VPN» (default).
+                # Profile-Title идёт в HTTP-заголовок где non-ASCII = ломается
+                # в Happ (% encoding не декодируется). Всегда используем
+                # английское имя (name_en), кириллицу/emoji всё равно
+                # вырежет _safe_header.
                 if sub["plan"] == "vpn_trial":
-                    _user_lang_pt = (user.get("lang") or "ru")[:2].lower()
-                    plan_name = "Trial 🎁" if _user_lang_pt == "en" else "Пробный 🎁"
+                    plan_name = "Trial"
                 else:
-                    plan_name = plan.get("name", "VPN")
+                    plan_name = plan.get("name_en") or plan.get("name") or "VPN"
                 # В grace юзер видит, что подписка истекла, но всё ещё работает
                 # на пониженной скорости — даём явный визуальный сигнал в title.
                 if sub["status"] == "grace":
@@ -3255,7 +3272,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Subscription-Userinfo": sub_userinfo,
         "Profile-Update-Interval": "12",
-        "Profile-Title": _safe_header(f"🌐 MAX VPN · {plan_name}"),
+        "Profile-Title": _safe_header(f"MAX VPN - {plan_name}"),
         "Profile-Web-Page-Url": "https://t.me/maxvpnesim_bot",
         "Support-Url": "https://t.me/maxvpnesim_bot",
     }

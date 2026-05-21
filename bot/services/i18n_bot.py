@@ -138,7 +138,9 @@ T: dict[str, dict[str, str]] = {
         "bot_quota_restore":
             "⚡ <b>Скорость восстановлена</b>\n\n"
             "Квота обновилась — VPN снова работает на полной скорости.",
-        "bot_sub_expired_title":          "❌ MAX VPN — подписка истекла",
+        # Profile-Title идёт в HTTP-header — non-ASCII не декодируется
+        # клиентами; держим ASCII even в RU bundle (см. _safe_header).
+        "bot_sub_expired_title":          "MAX VPN - subscription expired",
         # Lava cancel webhook
         "bot_lava_cancelled":
             "❎ <b>Автопродление отключено</b>\n\n"
@@ -393,7 +395,7 @@ T: dict[str, dict[str, str]] = {
         "bot_quota_restore":
             "⚡ <b>Speed restored</b>\n\n"
             "Quota reset — VPN works at full speed again.",
-        "bot_sub_expired_title":          "❌ MAX VPN — subscription expired",
+        "bot_sub_expired_title":          "MAX VPN - subscription expired",
         # Lava cancel webhook
         "bot_lava_cancelled":
             "❎ <b>Auto-renewal disabled</b>\n\n"
