@@ -715,7 +715,7 @@ export default function VPN() {
             - Lava: parent_contract_id != NULL — recurring был на момент покупки.
             - Stars: auto_renew_disabled_at != NULL — disable_auto_renew выставил
               маркер при отмене (для one-time Stars поле остаётся NULL → баннера нет). */}
-        {!sub.auto_renew && (
+        {!sub.auto_renew && sub.status !== 'grace' && (
           (sub.payment_provider === 'lavatop' && sub.parent_contract_id) ||
           !!sub.auto_renew_disabled_at
         ) && (

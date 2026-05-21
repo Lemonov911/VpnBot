@@ -63,6 +63,7 @@ from services.plans import (
     VPN_PLANS,
     vless_service_for_plan,
     vless_slow_service_for_plan,
+    plan_display_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,13 +107,17 @@ async def _weekly_vacuum():
 _WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
 
-def _renew_kb(lang: str | None = None) -> InlineKeyboardMarkup | None:
-    """Inline-клавиатура с deep-link на /vpn/plans в Mini App. None если WEBAPP_URL пустой."""
+def _renew_kb(lang: str | None = None, is_trial: bool = False) -> InlineKeyboardMarkup | None:
+    """Inline-клавиатура с deep-link на /vpn/plans в Mini App. None если WEBAPP_URL пустой.
+
+    is_trial=True меняет CTA на «Выбрать тариф» (trial-у нечего продлевать).
+    """
     if not _WEBAPP_URL:
         return None
+    key = "bot_btn_choose_plan" if is_trial else "bot_btn_renew_subscription"
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text=_i18n_t(lang, "bot_btn_renew_subscription"),
+            text=_i18n_t(lang, key),
             web_app=WebAppInfo(url=f"{_WEBAPP_URL}/vpn/plans"),
         )
     ]])
@@ -736,7 +741,7 @@ async def _process_expired_trials(bot: Bot):
             await _send_throttled(
                 bot, user_id, _i18n_t(_lang, "bot_trial_expiry_notice"),
                 parse_mode="HTML",
-                reply_markup=_renew_kb(_lang),
+                reply_markup=_renew_kb(_lang, is_trial=True),
             )
 
 
@@ -1212,13 +1217,13 @@ async def _send_renewal_reminders(bot: Bot):
         plan_key = sub.get("plan") or ""
         provider = sub.get("payment_provider") or ""
         plan = VPN_PLANS.get(plan_key, {})
-        plan_name = plan.get("name", plan_key)
         amount_rub = sub.get("amount_rub") or int(float(plan.get("rub", 0)))
         stars = plan.get("stars", 0)
 
         # F12: для Lava (RU/EN бирюль рынка) — берём из i18n_bot. Stars-recurring
         # пока только RU — отдельной локализации не требует, оставляем строку.
         user_lang = await get_user_lang(user_id)
+        plan_name = plan_display_name(plan, user_lang or "ru") or plan_key
         from services.i18n_bot import day_word as _day_word
 
         # Edge case: "через 0/1 дней" звучит криво — для 0/1 отдельные ключи.

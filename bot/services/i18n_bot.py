@@ -70,6 +70,10 @@ T: dict[str, dict[str, str]] = {
         "bot_btn_try_free":             "🎁 Попробуй бесплатно — {days} {day_word}",
         "bot_btn_open_app":             "🚀 Открыть приложение",
         "bot_btn_renew_subscription":   "💎 Продлить подписку",
+        "bot_btn_choose_plan":          "🎯 Выбрать тариф",
+        "bot_lava_err_self_buy":        "Lava не разрешает покупать у себя — введи другой email.",
+        "bot_lava_err_email_rejected":  "Email отклонён платёжной системой — попробуй другой.",
+        "bot_lava_err_payment_rejected":"Платёжная система отклонила запрос. Попробуй другой email или метод оплаты.",
         # Scheduler reminders
         "bot_trial_expiry_1d":
             "⏳ <b>Пробный период заканчивается через 24 часа</b>\n\n"
@@ -222,6 +226,10 @@ T: dict[str, dict[str, str]] = {
         "bot_btn_try_free":             "🎁 Try for free — {days} {day_word}",
         "bot_btn_open_app":             "🚀 Open app",
         "bot_btn_renew_subscription":   "💎 Renew subscription",
+        "bot_btn_choose_plan":          "🎯 Choose plan",
+        "bot_lava_err_self_buy":        "Lava doesn't allow self-purchases — please enter a different email.",
+        "bot_lava_err_email_rejected":  "Email rejected by the payment system — try another one.",
+        "bot_lava_err_payment_rejected":"Payment system rejected the request. Try a different email or payment method.",
         # Scheduler reminders
         "bot_trial_expiry_1d":
             "⏳ <b>Trial ends in 24 hours</b>\n\n"

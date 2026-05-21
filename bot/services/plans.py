@@ -24,6 +24,7 @@ VPN_PLANS: dict[str, dict] = {
     # ── v2 тарифы по скорости (Reality + plain WG) ──
     "vpn_base": {
         "name":           "База",
+        "name_en":        "Base",
         "stars":          180,            # ≈ 235 ₽ (+25% буфер на Telegram 30%-комиссию)
         "rub":            "200",
         "usd":            "2.20",
@@ -41,6 +42,7 @@ VPN_PLANS: dict[str, dict] = {
     },
     "vpn_max": {
         "name":           "Макс",
+        "name_en":        "Max",
         "stars":          450,            # ≈ 590 ₽ (+25% буфер на Telegram 30%-комиссию)
         "rub":            "500",
         "usd":            "5.50",
@@ -69,42 +71,42 @@ VPN_PLANS: dict[str, dict] = {
     # Скидочная лестница (vs ровно-перемноженной 1м цены):
     #   3м: −15%   6м: −20%   12м: −30%
     "vpn_base_3m": {
-        "name": "База 3 мес", "stars": 465, "rub": "510", "usd": "5.60",
+        "name": "База 3 мес", "name_en": "Base 3mo", "stars": 465, "rub": "510", "usd": "5.60",
         "duration_days": 90,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,  # доступно только в Stars+Cryptomus
     },
     "vpn_base_6m": {
-        "name": "База 6 мес", "stars": 870, "rub": "960", "usd": "10.50",
+        "name": "База 6 мес", "name_en": "Base 6mo", "stars": 870, "rub": "960", "usd": "10.50",
         "duration_days": 180,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,
     },
     "vpn_base_12m": {
-        "name": "База 1 год", "stars": 1525, "rub": "1680", "usd": "18.50",
+        "name": "База 1 год", "name_en": "Base 1y", "stars": 1525, "rub": "1680", "usd": "18.50",
         "duration_days": 365,
         "awg_slots": 2, "vless_slots": 1, "wg_slots": 0,
         "speed_mbps": 60, "soft_cap_gb": 500, "throttle_mbps": 5,
         "multi_period": True,
     },
     "vpn_max_3m": {
-        "name": "Макс 3 мес", "stars": 1150, "rub": "1275", "usd": "14.00",
+        "name": "Макс 3 мес", "name_en": "Max 3mo", "stars": 1150, "rub": "1275", "usd": "14.00",
         "duration_days": 90,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
         "multi_period": True,
     },
     "vpn_max_6m": {
-        "name": "Макс 6 мес", "stars": 2155, "rub": "2400", "usd": "26.50",
+        "name": "Макс 6 мес", "name_en": "Max 6mo", "stars": 2155, "rub": "2400", "usd": "26.50",
         "duration_days": 180,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
         "multi_period": True,
     },
     "vpn_max_12m": {
-        "name": "Макс 1 год", "stars": 3780, "rub": "4200", "usd": "46.00",
+        "name": "Макс 1 год", "name_en": "Max 1y", "stars": 3780, "rub": "4200", "usd": "46.00",
         "duration_days": 365,
         "awg_slots": 3, "vless_slots": 5, "wg_slots": 0,
         "speed_mbps": 120, "soft_cap_gb": 1000, "throttle_mbps": 15,
@@ -112,14 +114,29 @@ VPN_PLANS: dict[str, dict] = {
     },
 
     # ── Legacy тарифы (для уже-купивших, в новом UI скрыты) ──
-    "vpn_start":   {"name": "Старт",      "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_popular": {"name": "Популярный", "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30,  "awg_slots": 2, "vless_slots": 0, "legacy": True},
-    "vpn_pro":     {"name": "Про",        "stars": 342,  "rub": "450",  "usd": "5.00",  "duration_days": 30,  "awg_slots": 3, "vless_slots": 1, "legacy": True},
-    "vpn_family":  {"name": "Семейный",   "stars": 513,  "rub": "640",  "usd": "7.00",  "duration_days": 30,  "awg_slots": 7, "vless_slots": 1, "legacy": True},
-    "vpn_1m":      {"name": "1 месяц",    "stars": 299,  "rub": "299",  "usd": "3.50",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_3m":      {"name": "3 месяца",   "stars": 699,  "rub": "699",  "usd": "8.00",  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
-    "vpn_1y":      {"name": "1 год",      "stars": 1990, "rub": "1990", "usd": "22.00", "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_start":   {"name": "Старт",      "name_en": "Start",    "stars": 128,  "rub": "180",  "usd": "2.00",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_popular": {"name": "Популярный", "name_en": "Popular",  "stars": 214,  "rub": "270",  "usd": "3.00",  "duration_days": 30,  "awg_slots": 2, "vless_slots": 0, "legacy": True},
+    "vpn_pro":     {"name": "Про",        "name_en": "Pro",      "stars": 342,  "rub": "450",  "usd": "5.00",  "duration_days": 30,  "awg_slots": 3, "vless_slots": 1, "legacy": True},
+    "vpn_family":  {"name": "Семейный",   "name_en": "Family",   "stars": 513,  "rub": "640",  "usd": "7.00",  "duration_days": 30,  "awg_slots": 7, "vless_slots": 1, "legacy": True},
+    "vpn_1m":      {"name": "1 месяц",    "name_en": "1 month",  "stars": 299,  "rub": "299",  "usd": "3.50",  "duration_days": 30,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_3m":      {"name": "3 месяца",   "name_en": "3 months", "stars": 699,  "rub": "699",  "usd": "8.00",  "duration_days": 90,  "awg_slots": 1, "vless_slots": 0, "legacy": True},
+    "vpn_1y":      {"name": "1 год",      "name_en": "1 year",   "stars": 1990, "rub": "1990", "usd": "22.00", "duration_days": 365, "awg_slots": 1, "vless_slots": 0, "legacy": True},
 }
+
+
+def plan_display_name(plan: dict | str, lang: str = "ru") -> str:
+    """Returns plan display name in user's language.
+
+    Accepts either plan dict or plan_key string. Falls back to RU name
+    if EN missing.
+    """
+    if isinstance(plan, str):
+        plan = VPN_PLANS.get(plan, {})
+    if not plan:
+        return ""
+    if lang == "en":
+        return plan.get("name_en") or plan.get("name") or ""
+    return plan.get("name") or ""
 
 
 # VLESS Reality flow parameter per tier. Must match agent's xray_flow config

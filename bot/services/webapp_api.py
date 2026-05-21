@@ -129,7 +129,7 @@ def _upgrade_lock_for(sub_id: int) -> asyncio.Lock:
 
 
 # Тарифы — services.plans (единственный источник истины).
-from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
+from services.plans import VPN_PLANS, vless_service_for_plan, plan_display_name  # noqa: F401
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1900,14 +1900,15 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
         )
     except LavaError as e:
         logger.warning("Lava invoice rejected: status=%d msg=%s", e.status, e.lava_message)
-        # Маппим типичные Lava-ошибки на user-friendly RU тексты
+        # Маппим типичные Lava-ошибки на bilingual i18n-ключи.
+        from services.i18n_bot import t as _i18n_t
         msg = e.lava_message.lower()
         if "incorrect email" in msg or "self" in msg:
-            user_msg = "Lava не разрешает покупать у себя — введи другой email."
+            user_msg = _i18n_t(_u_lang, "bot_lava_err_self_buy")
         elif "email" in msg:
-            user_msg = "Email отклонён платёжной системой — попробуй другой."
+            user_msg = _i18n_t(_u_lang, "bot_lava_err_email_rejected")
         else:
-            user_msg = "Платёжная система отклонила запрос. Попробуй другой email или метод оплаты."
+            user_msg = _i18n_t(_u_lang, "bot_lava_err_payment_rejected")
         return web.json_response({"error": user_msg}, status=400)
     except Exception as e:
         logger.error("Lava invoice error: %s", e, exc_info=True)
@@ -2152,7 +2153,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             except Exception as e:
                 logger.warning("Lava renew: sub_token user=%d: %s", sub["user_id"], e)
 
-            _parts = [_i18n_t(_lang, "bot_lava_renewed", plan=plan["name"], until=_until)]
+            _parts = [_i18n_t(_lang, "bot_lava_renewed", plan=plan_display_name(plan, _lang or "ru"), until=_until)]
             if was_grace:
                 _parts.append(_i18n_t(_lang, "bot_lava_renewed_grace"))
             if _sub_url:

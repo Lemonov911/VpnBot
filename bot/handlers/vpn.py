@@ -50,7 +50,7 @@ from services.database import (
     get_esim_profile,
 )
 from services.payments import stars_invoice_kwargs
-from services.plans import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan  # noqa: F401
+from services.plans import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan, plan_display_name  # noqa: F401
 from services.vpnctl_client import provision_peer, VpnctlError
 from services.scheduler import _spawn_bg
 from services.i18n_plural import plural_ru, DAYS
@@ -254,7 +254,7 @@ async def pre_checkout(query: PreCheckoutQuery):
             # либо double-purchase, либо upgrade через wrong flow.
             existing_plan = existing.get("plan", "")
             if existing_plan == payload:
-                msg = _i18n_t(_lang, "bot_precheckout_active_sub_same", plan=VPN_PLANS[payload]['name'])
+                msg = _i18n_t(_lang, "bot_precheckout_active_sub_same", plan=plan_display_name(VPN_PLANS[payload], _lang or "ru"))
             else:
                 msg = _i18n_t(_lang, "bot_precheckout_active_sub")
             logger.warning(
@@ -404,7 +404,7 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         except Exception as e:
             logger.warning("Stars renewal: sub_token user=%d: %s", user_id, e)
 
-        msg_parts = [_i18n_t(lang, "bot_lava_renewed", plan=plan["name"], until=new_expires_str)]
+        msg_parts = [_i18n_t(lang, "bot_lava_renewed", plan=plan_display_name(plan, lang or "ru"), until=new_expires_str)]
         if extended is True:
             msg_parts.append(_i18n_t(lang, "bot_lava_renewed_grace"))
         if sub_url:
@@ -824,7 +824,7 @@ async def send_purchase_success_message(
 
     expiry_str = expires_at.strftime("%d.%m.%Y") if expires_at else ""
     msg_parts = [
-        _i18n_t(user_lang, "bot_purchase_success_title", plan=plan["name"]),
+        _i18n_t(user_lang, "bot_purchase_success_title", plan=plan_display_name(plan, user_lang or "ru")),
         "",
         _i18n_t(user_lang, "bot_purchase_success_until", until=expiry_str),
     ]
