@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -6,7 +6,8 @@ import {
   getActiveSubscription, getUserConfigs, getVpnStatus,
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
-import { useT, usePlural } from '../i18n'
+import { useT, usePlural, useLang } from '../i18n'
+import { InitDataGate } from '../components/InitDataGate'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
 import PostPayOnboarding from '../components/PostPayOnboarding'
 import CancelRenewalModal from '../components/CancelRenewalModal'
@@ -34,9 +35,13 @@ const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
   vpn_family:  { bg: 'bg-[#ff2d55]',   shadow: 'shadow-[0_4px_12px_rgba(255,45,85,0.55)]' },
 }
 
-function formatDate(iso: string): string {
-  try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) }
-  catch { return iso }
+function formatDate(iso: string, lang: 'ru' | 'en'): string {
+  try {
+    return new Date(iso).toLocaleDateString(
+      lang === 'en' ? 'en-US' : 'ru-RU',
+      { day: '2-digit', month: '2-digit', year: 'numeric' }
+    )
+  } catch { return iso }
 }
 
 function ExpiryBar({ daysLeft, t }: { daysLeft: number; t: ReturnType<typeof useT> }) {
@@ -83,6 +88,11 @@ export default function VPN() {
   const nav = useNavigate()
   const t   = useT()
   const p   = usePlural()
+  const { lang } = useLang()
+
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  const buyBusyRef = useRef(false)
 
   const PLAN_NAMES: Record<string, string> = {
     vpn_base:    t('vpn_plan_base'),
@@ -115,7 +125,7 @@ export default function VPN() {
       const fresh = await getActiveSubscription().catch(() => null)
       setSub(fresh)
       const msg = (t('vpn_cancel_renewal_done' as never))
-        .replace('{date}', fresh ? formatDate(fresh.expires_at) : '')
+        .replace('{date}', fresh ? formatDate(fresh.expires_at, lang) : '')
       WebApp.showAlert(msg)
     } catch {
       WebApp.HapticFeedback.notificationOccurred('error')
@@ -143,7 +153,8 @@ export default function VPN() {
 
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     setSheetPlan(null)
-    if (buyLoading) return
+    if (buyBusyRef.current || buyLoading) return
+    buyBusyRef.current = true
     WebApp.HapticFeedback.impactOccurred('light')
     setBuyLoading(plan.key)
     try {
@@ -156,11 +167,13 @@ export default function VPN() {
         // платежа — openInvoice callback может не сработать. Через 5 минут
         // принудительно снимаем loading, иначе кнопка зависнет.
         const guardId = setTimeout(() => {
-          if (!callbackFired) setBuyLoading(null)
+          if (!callbackFired && mountedRef.current) setBuyLoading(null)
         }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, s => {
           callbackFired = true
           clearTimeout(guardId)
+          buyBusyRef.current = false
+          if (!mountedRef.current) return
           setBuyLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
           else if (s !== 'cancelled') {
@@ -171,12 +184,14 @@ export default function VPN() {
       } else if (method === 'oxapay') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
+        buyBusyRef.current = false
         setBuyLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       } else if (method === 'lavatop') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceLavatop(planKey)
+        buyBusyRef.current = false
         setBuyLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
@@ -184,16 +199,22 @@ export default function VPN() {
         // Fallback: legacy CryptoBot (method='crypto')
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceCrypto(planKey, 'RUB')
+        buyBusyRef.current = false
         setBuyLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)
       }
     } catch (e) {
+      buyBusyRef.current = false
       setBuyLoading(null)
       WebApp.HapticFeedback.notificationOccurred('error')
       WebApp.showAlert(e instanceof Error ? e.message : 'Ошибка при создании счёта. Попробуйте ещё раз.')
     }
   }
+
+  // initData отсутствует → не Telegram-контекст. API-запросы возвращают
+  // 401, гейтим страницу подсказкой «открой бота».
+  if (!WebApp.initData) return <InitDataGate>{null}</InitDataGate>
 
   if (sub === undefined) return <SkeletonPage />
 
@@ -248,7 +269,7 @@ export default function VPN() {
               <div>
                 <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mb-0.5">{t('vpn_expired_title')}</div>
                 <div className="font-bold text-[22px] text-[var(--tg-theme-text-color,#000)]">{planName}</div>
-                <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at)}</div>
+                <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at, lang)}</div>
               </div>
               <span className="bg-danger/12 text-danger text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0">{t('vpn_expired_badge')}</span>
             </div>
@@ -514,7 +535,7 @@ export default function VPN() {
           <div>
             <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mb-0.5">{t('vpn_active_label')}</div>
             <div className="font-bold text-[22px] text-[var(--tg-theme-text-color,#000)]">{planName}</div>
-            <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at)}</div>
+            <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">{t('vpn_expires')} {formatDate(sub.expires_at, lang)}</div>
           </div>
           <span className={`text-[11px] font-bold px-2.5 py-1 rounded-[20px] mt-0.5 shrink-0 ${
             isGrace ? 'bg-danger/13 text-danger' : 'bg-success/13 text-success'
@@ -558,7 +579,7 @@ export default function VPN() {
                   {t('vpn_autorenew_on' as never)}
                 </div>
                 <div className="text-[11px] text-[var(--tg-theme-hint-color)] mt-0.5">
-                  {(t('vpn_autorenew_next' as never)).replace('{date}', formatDate(sub.expires_at))}
+                  {(t('vpn_autorenew_next' as never)).replace('{date}', formatDate(sub.expires_at, lang))}
                 </div>
                 {sub.payment_provider === 'lavatop' ? (
                   <button

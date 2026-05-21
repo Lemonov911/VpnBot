@@ -2554,7 +2554,8 @@ async def handle_user_stats(request: web.Request) -> web.Response:
         async with db.execute(
             """SELECT COUNT(DISTINCT u.id) FROM users u
                JOIN subscriptions s ON s.user_id=u.id
-               WHERE u.referred_by=? AND s.status IN ('active','expired','grace')""",
+               WHERE u.referred_by=? AND s.status IN ('active','expired','grace')
+                 AND s.plan != 'vpn_trial'""",
             (uid,),
         ) as cur:
             row = await cur.fetchone()

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import WebApp from '@twa-dev/sdk'
 import { useT, type TKey } from '../i18n'
+import { copyText } from '../utils/clipboard'
 
 /**
  * Главная карточка VLESS: «Ссылка для подключения» — после copy показывает
@@ -11,16 +12,13 @@ export function SubscriptionUrlCard({ subUrl }: { subUrl: string }) {
   const t = useT()
   const [copied, setCopied] = useState(false)
 
-  const handleCopy = async () => {
+  const handleCopy = () => {
     WebApp.HapticFeedback.impactOccurred('light')
-    try {
-      await navigator.clipboard.writeText(subUrl)
+    copyText(subUrl, () => {
       setCopied(true)
       // 4 сек вместо 1.5 — юзеру нужно успеть прочитать инструкцию
       setTimeout(() => setCopied(false), 4000)
-    } catch {
-      prompt('Subscription URL:', subUrl)
-    }
+    })
   }
 
   return (

@@ -1,5 +1,5 @@
 import WebApp from '@twa-dev/sdk'
-import { useT } from '../i18n'
+import { useT, useLang } from '../i18n'
 
 /**
  * Полноэкранная модалка подтверждения отмены автопродления.
@@ -22,10 +22,12 @@ export default function CancelRenewalModal({
   onClose: () => void
 }) {
   const t = useT()
+  const { lang } = useLang()
 
   let dateStr = ''
   try {
-    dateStr = new Date(expiresAt).toLocaleDateString('ru-RU', {
+    dateStr = new Date(expiresAt).toLocaleDateString(
+      lang === 'en' ? 'en-US' : 'ru-RU', {
       day: '2-digit', month: 'long', year: 'numeric',
     })
   } catch { dateStr = expiresAt.slice(0, 10) }

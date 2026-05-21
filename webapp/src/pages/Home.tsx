@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -38,6 +38,8 @@ export default function Home() {
   const [trialDone, setTrialDone] = useState(false)
   const [trialSheet, setTrialSheet] = useState(false)
 
+  const busyRef = useRef(false)
+
   useEffect(() => {
     let cancelled = false
     getActiveSubscription().catch(() => null).then(s => { if (!cancelled) setSub(s) })
@@ -47,6 +49,8 @@ export default function Home() {
   }, [])
 
   const handleClaimTrial = async () => {
+    if (busyRef.current) return
+    busyRef.current = true
     setClaiming(true)
     setTrialErr('')
     WebApp.HapticFeedback.impactOccurred('medium')
@@ -67,6 +71,7 @@ export default function Home() {
       else if (msg.includes('no_server'))          setTrialErr(t('trial_err_no_server'))
       else                                          setTrialErr(t('trial_err_generic'))
     } finally {
+      busyRef.current = false
       setClaiming(false)
     }
   }

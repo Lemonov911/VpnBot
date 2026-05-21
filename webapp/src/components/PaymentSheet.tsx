@@ -122,7 +122,7 @@ export default function PaymentSheet({
       if (!lavatopOn) setMethod(m => m === 'lavatop'  ? 'stars' : m)
     })
     return () => { cancelled = true }
-  }, [])
+  }, [defaultMethod])
 
   return (
     <>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -214,6 +214,9 @@ export default function Plans() {
   // чтобы он не запутался при возврате.
   const [postPayOpen, setPostPayOpen] = useState(false)
 
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+
   // Computed once per sub.plan change — not inside .map() on every render.
   const curPlan = useMemo(() => {
     if (!sub || sub.plan === 'vpn_trial' || sub.status === 'expired') return null
@@ -264,11 +267,12 @@ export default function Plans() {
         // или сеть упадёт — openInvoice callback может не сработать, кнопка
         // зависнет «загрузка». Через 5 минут принудительно снимаем loading.
         const guardId = setTimeout(() => {
-          if (!callbackFired) setLoading(null)
+          if (!callbackFired && mountedRef.current) setLoading(null)
         }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, (s) => {
           callbackFired = true
           clearTimeout(guardId)
+          if (!mountedRef.current) return
           setLoading(null)
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
           else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }

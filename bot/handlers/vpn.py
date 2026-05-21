@@ -51,6 +51,7 @@ from services.database import (
 from services.payments import stars_invoice_kwargs
 from services.plans import VPN_PLANS, vless_service_for_plan, vless_slow_service_for_plan  # noqa: F401
 from services.vpnctl_client import provision_peer, VpnctlError
+from services.scheduler import _spawn_bg
 import services.esim_api as esim_api
 
 logger = logging.getLogger(__name__)
@@ -981,8 +982,10 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
     logger.info("eSIM order placed: profile=%d order=%s pkg=%s", profile_id, order_no, pkg_code)
 
     # Фоновый poll-fallback на случай если webhook не настроен/упал.
-    asyncio.create_task(
-        _finalize_esim_via_polling(profile_id, order_no, bot, user_id)
+    # _spawn_bg удерживает ссылку, чтобы GC не убил task до завершения.
+    _spawn_bg(
+        _finalize_esim_via_polling(profile_id, order_no, bot, user_id),
+        name=f"finalize_esim_{order_no}",
     )
 
 

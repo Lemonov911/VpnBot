@@ -1041,9 +1041,17 @@ const LangCtx = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({
 })
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const stored = (localStorage.getItem('lang') as Lang) ?? 'ru'
+  const stored: Lang = (() => {
+    try {
+      const v = localStorage.getItem('lang')
+      return v === 'en' || v === 'ru' ? v : 'ru'
+    } catch { return 'ru' }
+  })()
   const [lang, setLangState] = useState<Lang>(stored)
-  const setLang = (l: Lang) => { localStorage.setItem('lang', l); setLangState(l) }
+  const setLang = (l: Lang) => {
+    try { localStorage.setItem('lang', l) } catch { /* private mode / sandboxed */ }
+    setLangState(l)
+  }
   return <LangCtx.Provider value={{ lang, setLang }}>{children}</LangCtx.Provider>
 }
 

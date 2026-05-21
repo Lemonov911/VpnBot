@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -10,6 +10,7 @@ import {
 import { useT, useLang, type TKey } from '../i18n'
 import { copyText } from '../utils/clipboard'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
+import { InitDataGate } from '../components/InitDataGate'
 
 function formatDate(iso: string, lang: string): string {
   try {
@@ -431,6 +432,7 @@ export default function Configs() {
   const [trial,    setTrial]    = useState<TrialStatus | null>(null)
   const [claiming, setClaiming] = useState(false)
   const cancelledRef = useRef(false)
+  const claimBusyRef = useRef(false)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -444,7 +446,7 @@ export default function Configs() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true)
     // Параллельно: конфиги (для AWG/WG slot-листа) + подписка (sub_url для VLESS).
     Promise.all([
@@ -457,16 +459,18 @@ export default function Configs() {
         setSub(s)
         // Если ни конфигов, ни подписки — фетчим trial-статус для empty-state CTA
         if ((data as RawSlot[]).length === 0) {
-          getTrialStatus().then(t => { if (!cancelledRef.current) setTrial(t) }).catch(() => {})
+          getTrialStatus().then(ts => { if (!cancelledRef.current) setTrial(ts) }).catch(() => {})
         }
       })
       .catch(() => { if (!cancelledRef.current) setErrMsg(t('configs_err_load')) })
       .finally(() => { if (!cancelledRef.current) setLoading(false) })
-  }
+  }, [t])
 
-  useEffect(load, [])
+  useEffect(() => { load() }, [load])
 
   const handleClaimTrial = async () => {
+    if (claimBusyRef.current) return
+    claimBusyRef.current = true
     setClaiming(true)
     try {
       await claimTrial()
@@ -475,6 +479,7 @@ export default function Configs() {
     } catch (e) {
       setErrMsg(e instanceof Error ? e.message : t('trial_err_generic'))
     } finally {
+      claimBusyRef.current = false
       setClaiming(false)
     }
   }
@@ -523,6 +528,7 @@ export default function Configs() {
   const showSubCard = !!sub?.sub_url
 
   return (
+    <InitDataGate>
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>
       {/* Legend-блок убран — после ухода VLESS в подписочный режим он стал
           монохромным («● VPN — телефон / ноутбук»), занимал место и не нёс
@@ -595,5 +601,6 @@ export default function Configs() {
         </p>
       )}
     </div>
+    </InitDataGate>
   )
 }

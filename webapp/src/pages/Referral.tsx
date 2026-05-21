@@ -4,6 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import { getReferralStats, redeemReferralBonus, type ReferralStats } from '../api'
 import { useT, useLang } from '../i18n'
 import { copyText } from '../utils/clipboard'
+import { InitDataGate } from '../components/InitDataGate'
 
 export default function Referral() {
   const nav    = useNavigate()
@@ -42,7 +43,8 @@ export default function Referral() {
     try {
       const res = await redeemReferralBonus()
       WebApp.HapticFeedback.notificationOccurred('success')
-      const dateStr = new Date(res.new_expires_at).toLocaleDateString('ru-RU',
+      const dateStr = new Date(res.new_expires_at).toLocaleDateString(
+        lang === 'en' ? 'en-US' : 'ru-RU',
         { day: '2-digit', month: 'long', year: 'numeric' })
       WebApp.showAlert(
         (t('ref_redeem_done' as never) as string)
@@ -94,6 +96,7 @@ export default function Referral() {
   }
 
   return (
+    <InitDataGate>
     <div className="page" style={{ gap: 12 }}>
 
       {/* Hero — без неё страница начиналась с «Как это работает» без контекста.
@@ -268,5 +271,6 @@ export default function Referral() {
       )}
 
     </div>
+    </InitDataGate>
   )
 }

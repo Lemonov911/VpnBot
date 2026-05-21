@@ -105,7 +105,7 @@ async def can_claim_trial(user_id: int) -> bool:
         # 3 лишних дня после окончания cooldown.
         row = await (await db.execute(
             f"""SELECT 1 FROM subscriptions
-                WHERE user_id=? AND plan=?
+                WHERE user_id=? AND plan=? AND status != 'expired'
                   AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
@@ -150,7 +150,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
         # Старые истёкшие триалы > 30 дней назад не блокируют новый.
         existing = await (await db.execute(
             f"""SELECT id FROM subscriptions
-                WHERE user_id=? AND plan=?
+                WHERE user_id=? AND plan=? AND status != 'expired'
                   AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
