@@ -75,7 +75,10 @@ async def create_vpn_user(username: str) -> bytes | None:
     try:
         async with asyncssh.connect(**_ssh_kwargs_from_env()) as conn:
             result = await conn.run(f"bash {ADD_SCRIPT} {username}", check=True)
-            config = result.stdout.strip()
+            raw = result.stdout
+            if not isinstance(raw, str):
+                raise RuntimeError(f"SSH stdout unexpected type {type(raw)}")
+            config = raw.strip()
             logger.info("VPN user создан: %s (%d байт)", username, len(config))
             return config.encode()
     except Exception as e:
@@ -141,7 +144,10 @@ async def create_config(
     try:
         async with asyncssh.connect(**kwargs) as conn:
             result = await conn.run(f"bash {ADD_SCRIPT} {peer_name}", check=True)
-            config = result.stdout.strip()
+            raw = result.stdout
+            if not isinstance(raw, str):
+                raise RuntimeError(f"SSH stdout unexpected type {type(raw)}")
+            config = raw.strip()
             logger.info("Конфиг создан: %s на %s (%d байт)", peer_name, server_ip, len(config))
             return config.encode()
     except Exception as e:
