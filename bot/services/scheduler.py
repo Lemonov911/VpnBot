@@ -181,7 +181,7 @@ async def _process_expired_subscriptions(bot: Bot):
     # переход в expired сразу, без grace 256 кбит/с. Иначе юзер получит
     # одно за другим уведомления «grace» и «expired» за час, а реально
     # сервис всё это время был недоступен.
-    cutoff_expired_long_ago = (datetime.utcnow() - timedelta(days=GRACE_DAYS)).isoformat()
+    cutoff_expired_long_ago_dt = datetime.utcnow() - timedelta(days=GRACE_DAYS)
 
     for sub in expired_subs:
         sub_id   = sub["id"]
@@ -191,7 +191,17 @@ async def _process_expired_subscriptions(bot: Bot):
         # Bot-offline guard: если sub.expires_at < (now - GRACE_DAYS), значит
         # grace window уже истёк → пропускаем grace transition, сразу к expired.
         sub_expires = sub.get("expires_at") or ""
-        if sub_expires and sub_expires < cutoff_expired_long_ago:
+        sub_expires_dt = None
+        if sub_expires:
+            # expires_at может быть либо ISO с 'T' (Python isoformat), либо с
+            # пробелом (после SQL datetime(...)). Лексикографическое сравнение
+            # неверно ('T' > ' '), так что парсим в datetime.
+            try:
+                normalized = sub_expires.replace("T", " ").split(".")[0]
+                sub_expires_dt = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S")
+            except (ValueError, AttributeError):
+                sub_expires_dt = None
+        if sub_expires_dt is not None and sub_expires_dt < cutoff_expired_long_ago_dt:
             logger.info(
                 "Подписка #%d: expires_at=%s давно истекло (>%d дней), "
                 "пропускаем grace → expired",
@@ -213,6 +223,63 @@ async def _process_expired_subscriptions(bot: Bot):
             except Exception as e:
                 logger.warning("late-expire sub #%d: %s", sub_id, e, exc_info=True)
             continue
+
+        # Применяем pending downgrade ДО throttle/grace, чтобы:
+        #  1) revoke лишних configs прошёл до throttle — throttle-loop ниже
+        #     не делает лишних tc-операций над пирами, которые тут же будут
+        #     удалены (cleaner + дешевле по агентским RTT).
+        #  2) Crash-safe ordering: сначала revoke (идемпотентен — пустые слоты
+        #     no-op), потом apply_pending (тоже идемпотентен — UPDATE WHERE
+        #     pending_plan=?). Если бот упадёт между revoke и apply,
+        #     pending_plan ещё стоит → на следующей итерации обе операции
+        #     выполнятся снова. Раньше порядок был apply → revoke: при крэше
+        #     между ними pending_plan сбрасывался, и лишние configs «висели»
+        #     активными на новом тарифе.
+        pending = sub.get("pending_plan")
+        if pending and pending != plan_key:
+            try:
+                # 1) Revoke лишних configs (old_count - new_count) для каждого
+                #    протокола. revoke_excess_configs_on_downgrade сама вычисляет
+                #    дельту по VPN_PLANS; пустые слоты — no-op.
+                try:
+                    from services.revoke import revoke_excess_configs_on_downgrade
+                    rev, fail = await revoke_excess_configs_on_downgrade(
+                        sub_id,
+                        old_plan_key=plan_key,
+                        new_plan_key=pending,
+                        log_prefix=f"pending_downgrade_sub{sub_id}",
+                    )
+                    logger.info(
+                        "Подписка #%d pending-downgrade excess-revoke: "
+                        "revoked=%d failed=%d",
+                        sub_id, rev, fail,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Подписка #%d: excess-revoke before downgrade failed: %s",
+                        sub_id, e, exc_info=True,
+                    )
+
+                # 2) Apply pending plan change. WHERE pending_plan=? защищает
+                #    от race с параллельным upgrade (тогда no-op).
+                from services.database import apply_pending_plan_change
+                applied = await apply_pending_plan_change(sub_id, pending)
+                if applied:
+                    logger.info(
+                        "Подписка #%d: применён pending downgrade %s → %s",
+                        sub_id, plan_key, applied,
+                    )
+                    plan_key = applied  # throttle-loop ниже работает с новым планом
+                else:
+                    logger.info(
+                        "Подписка #%d: pending downgrade no-op (race? pending уже NULL)",
+                        sub_id,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Подписка #%d: pending downgrade failed (%s → %s): %s",
+                    sub_id, plan_key, pending, e, exc_info=True,
+                )
 
         configs = await get_configs_for_subscription(sub_id)
         logger.info("Подписка #%d: переводим %d конфиг(ов) в grace", sub_id, len(configs))
@@ -325,58 +392,8 @@ async def _process_expired_subscriptions(bot: Bot):
             except Exception as e:
                 logger.warning("grace throttle error cfg #%d: %s", cfg_id, e, exc_info=True)
 
-        # Применяем pending downgrade (если был запланирован) на момент истечения.
-        # Семантика: юзер на vpn_max нажал «downgrade до vpn_base» → expires_at
-        # настаёт → переключаем sub.plan и сбрасываем pending. Без этого юзер
-        # после продления продолжит платить за старый план.
-        pending = sub.get("pending_plan")
-        if pending and pending != plan_key:
-            try:
-                from services.database import apply_pending_plan_change
-                applied = await apply_pending_plan_change(sub_id, pending)
-                if applied:
-                    logger.info(
-                        "Подписка #%d: применён pending downgrade %s → %s",
-                        sub_id, plan_key, applied,
-                    )
-                    # Revoke excess slots: при downgrade vpn_max → vpn_base у
-                    # юзера остаются (old_slots - new_slots) configs которые
-                    # уже не входят в новый тариф. Они уже throttle'нутые
-                    # (предыдущий цикл for cfg in configs), но всё равно
-                    # активны как peers. Без revoke юзер после next payment
-                    # вернётся к full speed на ВСЕХ старых слотах, хотя
-                    # платит уже за меньший тариф. current_vless_service в
-                    # revoke.py учитывает что VLESS peers уже в vless-grace
-                    # inbound (порт 9453), AWG peers — unthrottle перед remove.
-                    try:
-                        from services.revoke import revoke_excess_configs_on_downgrade
-                        rev, fail = await revoke_excess_configs_on_downgrade(
-                            sub_id,
-                            old_plan_key=plan_key,
-                            new_plan_key=applied,
-                            log_prefix=f"pending_downgrade_sub{sub_id}",
-                        )
-                        logger.info(
-                            "Подписка #%d pending-downgrade excess-revoke: "
-                            "revoked=%d failed=%d",
-                            sub_id, rev, fail,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "Подписка #%d: excess-revoke after downgrade failed: %s",
-                            sub_id, e, exc_info=True,
-                        )
-                    plan_key = applied  # для следующих итераций (grace transition)
-                else:
-                    logger.info(
-                        "Подписка #%d: pending downgrade no-op (race? pending уже NULL)",
-                        sub_id,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Подписка #%d: pending downgrade failed (%s → %s): %s",
-                    sub_id, plan_key, pending, e, exc_info=True,
-                )
+        # NB: pending downgrade применяется ВЫШЕ — до throttle-loop'а, чтобы
+        # revoke лишних слотов прошёл первым (crash-safe ordering).
 
         transitioned = await mark_subscription_grace(sub_id, grace_until)
         if not transitioned:
@@ -507,6 +524,106 @@ async def _process_grace_expired_subscriptions(bot: Bot):
             bot, user_id, EXPIRY_NOTICE, parse_mode="HTML",
             reply_markup=_renew_kb(),
         )
+
+
+async def _reconcile_partial_refunds(bot: Bot) -> None:
+    """Catch-up handler для refund'ов, упавших в середине каскада.
+
+    Telegram money refund (Stars / CryptoBot / Lava) — необратимая
+    операция. Если бот упал между этим шагом и DB/agent cleanup —
+    sub остаётся в inconsistent state:
+      - Case A: refunded_at заполнен, но status != 'refunded' (БД не
+        обновили) → юзер юридически refund'нут, но в нашей системе
+        выглядит активным.
+      - Case B: status='refunded', но configs всё ещё 'active'/'activating'
+        → юзер деньги вернул и продолжает пользоваться VPN бесплатно.
+
+    Этот таск сканирует обе категории и доводит cleanup до конца.
+    Идемпотентен: если sub уже в нужном состоянии — get_partial_refunds
+    её просто не вернёт.
+    """
+    from services.database import (
+        get_partial_refunds,
+        mark_subscription_refunded,
+        mark_subscription_trial_rolled_back,
+        rollback_referral_bonus,
+        disable_auto_renew,
+    )
+    from services.revoke import revoke_subscription_configs
+    from config import LAVATOP_API_KEY
+
+    subs = await get_partial_refunds()
+    if not subs:
+        return
+
+    logger.warning("Reconciling %d partial refund(s)", len(subs))
+
+    for sub in subs:
+        sub_id = sub["id"]
+        try:
+            # Case A: money refunded but DB inconsistent — finish marking refunded
+            if sub["status"] not in ("refunded", "expired"):
+                logger.warning(
+                    "Reconcile sub=%d: refunded_at set but status=%s, marking refunded now",
+                    sub_id, sub["status"],
+                )
+                payment_id = sub.get("payment_id") or ""
+                if payment_id.startswith("trial_"):
+                    await mark_subscription_trial_rolled_back(sub_id)
+                else:
+                    await mark_subscription_refunded(sub_id)
+                await rollback_referral_bonus(sub_id)
+
+                # Lava cancel: если recurring, отвязываем контракт чтобы
+                # webhook не воскресил sub через extend.
+                if sub.get("auto_renew") and sub.get("payment_provider") == "lavatop":
+                    await disable_auto_renew(sub_id)
+                    if sub.get("parent_contract_id") and LAVATOP_API_KEY:
+                        from services.lavatop import cancel_subscription as _lava_cancel
+                        try:
+                            await _lava_cancel(
+                                api_key=LAVATOP_API_KEY,
+                                contract_id=sub["parent_contract_id"],
+                            )
+                        except Exception as e:
+                            logger.warning("reconcile Lava cancel sub=%d: %s", sub_id, e)
+
+            # Case B (и продолжение A): revoke ещё активных configs.
+            if sub.get("active_config_count", 0) > 0:
+                logger.warning(
+                    "Reconcile sub=%d: %d configs still active, revoking",
+                    sub_id, sub["active_config_count"],
+                )
+                revoked, failed = await revoke_subscription_configs(
+                    sub_id, sub["plan"], log_prefix=f"reconcile_refund#{sub_id}",
+                )
+                logger.info(
+                    "Reconcile sub=%d: revoked %d, failed %d",
+                    sub_id, revoked, failed,
+                )
+
+            # Admin alert — partial refund reconciled.
+            try:
+                from config import ADMIN_ID
+                if ADMIN_ID:
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"♻️ <b>Partial refund reconciled</b>\n\n"
+                        f"Sub: #{sub_id}\n"
+                        f"User: <code>{sub['user_id']}</code>\n"
+                        f"Plan: {sub['plan']}\n"
+                        f"Status was: <code>{sub['status']}</code>\n"
+                        f"Active configs cleaned: {sub.get('active_config_count', 0)}\n\n"
+                        "Likely cause: bot crashed mid-refund.",
+                        parse_mode="HTML",
+                    )
+            except Exception as e:
+                logger.warning("reconcile admin alert sub=%d: %s", sub_id, e)
+        except Exception as e:
+            logger.error(
+                "Reconcile partial refund sub=%d failed: %s",
+                sub_id, e, exc_info=True,
+            )
 
 
 async def _process_expired_orders(bot: Bot):
@@ -1329,6 +1446,10 @@ async def run_scheduler(bot: Bot):
         await _safe("expired_subs",     _process_expired_subscriptions(bot),       timeout=180)
         await _safe("expired_trials",   _process_expired_trials(bot),              timeout=180)
         await _safe("grace_expired",    _process_grace_expired_subscriptions(bot), timeout=180)
+        # Refund cascade catch-up: ищет sub'ы, где Telegram money refund
+        # (необратим) прошёл, но DB/agent cleanup не доехал из-за crash.
+        # Идемпотентен — если всё чисто, get_partial_refunds вернёт [].
+        await _safe("reconcile_refunds", _reconcile_partial_refunds(bot), timeout=180)
         await _safe("expired_orders",   _process_expired_orders(bot),    timeout=60)
         # Менее критичные / медленные — отдельно с large timeout'ом.
         await _safe("vless_stats",      _sync_vless_stats(),             timeout=300)

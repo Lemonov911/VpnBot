@@ -109,8 +109,12 @@ async def cmd_stats(message: Message):
         users_row = await (await db.execute("SELECT COUNT(*) FROM users")).fetchone()
         # Истекают за 3 дня
         exp_row = await (await db.execute(
+            # expires_at в БД может быть как с 'T' (Python isoformat), так и с
+            # пробелом (после SQL datetime(...)). Лексикографически 'T' > ' ',
+            # поэтому raw-сравнение исключало свежесозданные подписки. Нормализуем
+            # обе стороны через datetime() для корректного сравнения.
             "SELECT COUNT(*) FROM subscriptions WHERE status='active' "
-            "AND expires_at <= datetime('now','+3 days')"
+            "AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now','+3 days')"
         )).fetchone()
 
     plans = "\n".join(f"  • {r['plan']}: <b>{r['c']}</b>" for r in rows_plan) or "  (нет)"

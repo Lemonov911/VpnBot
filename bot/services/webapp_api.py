@@ -2386,11 +2386,17 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
         return web.json_response({"error": "Подписка не recurring"}, status=400)
 
     contract_id = sub["parent_contract_id"]
-    # Сначала пытаемся отменить на стороне Lava — без этого она продолжит
-    # списания. Если Lava вернёт ошибку — всё равно ставим у себя auto_renew=0
-    # (юзер увидит «отменено» в UI), но логируем.
+    # CAS-первым: атомарно снимаем auto_renew, и только победитель идёт в
+    # Lava. При гонке двух устройств второе получает was_renewed=False и
+    # отвечает «уже отменено» — иначе оба бы дёрнули Lava cancel, второй
+    # raise 404 и спамил admin-алерты.
     from services.lavatop import cancel_subscription as _lava_cancel
     from services.database import disable_auto_renew
+    was_renewed = await disable_auto_renew(sub["id"])
+    if not was_renewed:
+        # Параллельный cancel из другого устройства уже отработал.
+        return web.json_response({"ok": True, "already_cancelled": True})
+
     ok = False
     if LAVATOP_ENABLED:
         try:
@@ -2399,7 +2405,6 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
             logger.error("Lava cancel exception sub=%d: %s", sub["id"], e, exc_info=True)
     else:
         logger.warning("cancel-renewal: LAVATOP_ENABLED=false sub=%d", sub["id"])
-    await disable_auto_renew(sub["id"])
 
     if not ok and LAVATOP_ENABLED:
         # Lava вернула ошибку — webhook subscription.cancelled может не прийти.
@@ -2635,13 +2640,31 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         return web.json_response({"invoice_url": pay_url})
 
     else:
-        # Даунгрейд — планируем на следующий месяц
-        # Если уже запланирован тот же — отменяем
+        # Даунгрейд — планируем на следующий месяц.
+        # CAS защищает от гонки: параллельная сессия из второго устройства
+        # могла уже изменить pending_plan между нашим SELECT и UPDATE.
+        prev_pending = sub.get("pending_plan") or ""
         if sub.get("pending_plan") == plan_key:
-            await schedule_plan_change(sub["id"], None)
+            ok = await schedule_plan_change(
+                sub["id"], None, expected_previous=prev_pending,
+            )
+            if not ok:
+                return web.json_response(
+                    {"error": "concurrent_modification",
+                     "message": "План был изменён в другом окне. Перезагрузи страницу."},
+                    status=409,
+                )
             return web.json_response({"ok": True, "cancelled": True})
 
-        await schedule_plan_change(sub["id"], plan_key)
+        ok = await schedule_plan_change(
+            sub["id"], plan_key, expected_previous=prev_pending,
+        )
+        if not ok:
+            return web.json_response(
+                {"error": "concurrent_modification",
+                 "message": "План был изменён в другом окне. Перезагрузи страницу."},
+                status=409,
+            )
         return web.json_response({"ok": True, "scheduled": True})
 
 
@@ -2655,7 +2678,7 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     Подписочные HTTP-заголовки (Profile-Title, Subscription-Userinfo)
     дают клиенту красивый заголовок с трафиком и датой истечения —
     как у Outline/StealthSurf и других платных провайдеров."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     from services.database import (
         get_user_by_sub_token, get_active_vless_configs_for_user
     )
@@ -2677,7 +2700,21 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
 
     user = await get_user_by_sub_token(token)
     if not user:
-        return web.Response(text="not found", status=404)
+        # 410 Gone + Profile-Title: токен ротировали (новая покупка, refund,
+        # ban). Happ/Streisand при 404 показывают «server error», а на 410
+        # с Profile-Title — внятный заголовок. Profile-Update-Interval=0
+        # говорит клиенту прекратить poll'ить этот URL.
+        return web.Response(
+            text="subscription token expired — please reopen the bot to get a new URL",
+            status=410,
+            headers={
+                "Content-Type":            "text/plain; charset=utf-8",
+                "Profile-Title":           "MAX VPN — token expired",
+                "Profile-Update-Interval": "0",
+                "Profile-Web-Page-Url":    "https://t.me/maxvpnesim_bot",
+                "Support-Url":             "https://t.me/maxvpnesim_bot",
+            },
+        )
 
     # Динамический URL-резолвер: для backfilled юзеров строит URL'ы из
     # `users.vless_uuid × servers.xray_*` (одна строка добавления сервера
@@ -2763,7 +2800,13 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                         for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
                                     "%Y-%m-%d %H:%M:%S"):
                             try:
-                                expire_unix = int(datetime.strptime(exp, fmt).timestamp())
+                                # expires_at is UTC by convention — attach tzinfo before
+                                # .timestamp() so it isn't reinterpreted as local time
+                                # on a MSK-tz bot server.
+                                naive_dt = datetime.strptime(exp, fmt)
+                                expire_unix = int(
+                                    naive_dt.replace(tzinfo=timezone.utc).timestamp()
+                                )
                                 break
                             except ValueError:
                                 continue

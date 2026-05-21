@@ -16,6 +16,27 @@ function authHeaders(): Record<string, string> {
   }
 }
 
+// 401 = backend отбросил initData (stale signature, истекло auth_date, бот
+// перезагрузил BOT_TOKEN). Юзер должен заново открыть Mini App — Telegram
+// сам прокинет свежий initData. Показываем один alert и закрываем WebApp.
+// Не сбрасываем флаг внутри сессии — после WebApp.close() контекст JS
+// уничтожается, при повторном открытии флаг автоматически = false.
+let sessionExpiredShown = false
+
+function handle401(): void {
+  if (sessionExpiredShown) return
+  sessionExpiredShown = true
+  try {
+    WebApp.showAlert(
+      'Сессия истекла. Закрой и снова открой мини-приложение.',
+      () => { try { WebApp.close() } catch { /* noop */ } },
+    )
+  } catch {
+    // Telegram SDK может бросить если вызвано вне TG-контекста (dev preview
+    // в браузере). Молча игнорим, чтобы не маскировать оригинальную ошибку.
+  }
+}
+
 async function post<T>(path: string, body: object): Promise<T> {
   const res = await fetch(API_BASE + path, {
     method: 'POST',
@@ -23,6 +44,10 @@ async function post<T>(path: string, body: object): Promise<T> {
     // init_data в теле — для backward compatibility
     body: JSON.stringify({ ...body, init_data: WebApp.initData }),
   })
+  if (res.status === 401) {
+    handle401()
+    throw new Error('session_expired')
+  }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
   if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)
@@ -33,6 +58,10 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   const url = new URL(API_BASE + path, window.location.origin)
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   const res = await fetch(url.toString(), { headers: authHeaders() })
+  if (res.status === 401) {
+    handle401()
+    throw new Error('session_expired')
+  }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
   if (!res.ok) throw new Error((data.error as string) ?? `HTTP ${res.status}`)

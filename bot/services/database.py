@@ -21,6 +21,19 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path(__file__).parent.parent / "bot.db"
 
 
+class _Sentinel:
+    """Singleton-marker используемый функциями где нужен явный «параметр
+    не задан» отдельно от None. Например в `schedule_plan_change(...,
+    expected_previous=...)` — None означает «CAS against empty pending_plan»,
+    а sentinel значит «без CAS, legacy fire-and-forget»."""
+    __slots__ = ()
+    def __repr__(self) -> str:  # pragma: no cover
+        return "<UNSET>"
+
+
+_SENTINEL = _Sentinel()
+
+
 @asynccontextmanager
 async def _connect():
     """aiosqlite.connect + busy_timeout 5s + foreign_keys=ON.
@@ -840,6 +853,46 @@ async def mark_subscription_expired(subscription_id: int):
         await db.commit()
 
 
+async def get_partial_refunds() -> list[dict]:
+    """Подписки, у которых refund-каскад начался, но не доехал до конца.
+
+    Caused by bot crash mid-refund-cascade. Telegram money refund сам по
+    себе необратим (Stars / CryptoBot всё уже вернули юзеру), но если бот
+    упал между этим и обновлением БД / revoke configs — состояние
+    inconsistent. Этот helper находит такие подписки для catch-up'а
+    scheduler'ом.
+
+    Возвращает sub'ы в двух inconsistent-сценариях:
+
+      A) `refunded_at IS NOT NULL` (деньги вернули) AND
+         `status NOT IN ('refunded', 'expired')` (но БД не пометила refunded).
+
+      B) `status='refunded'` AND есть configs с status IN ('active','activating')
+         (БД помечена refunded, но пиры на агенте остались — юзер до сих пор
+         пользуется VPN бесплатно).
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT s.id, s.user_id, s.plan, s.status, s.refunded_at, s.payment_id,
+                   s.parent_contract_id, s.payment_provider, s.auto_renew,
+                   (SELECT COUNT(*) FROM configs c WHERE c.subscription_id=s.id
+                    AND c.status IN ('active', 'activating')) AS active_config_count
+            FROM subscriptions s
+            WHERE
+                -- Case A: money refunded but DB not marked refunded
+                (s.refunded_at IS NOT NULL AND s.status NOT IN ('refunded', 'expired'))
+                OR
+                -- Case B: DB marked refunded but configs still active
+                (s.status = 'refunded' AND EXISTS (
+                    SELECT 1 FROM configs c2
+                    WHERE c2.subscription_id=s.id
+                      AND c2.status IN ('active', 'activating')
+                ))
+        """) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
 async def mark_subscription_trial_rolled_back(subscription_id: int):
     """Помечает trial-sub как expired И ставит trial_rolled_back=1.
     Используется в rollback-пути provision_trial: если выдача пиров упала
@@ -1474,12 +1527,26 @@ async def mark_renewal_reminded(sub_id: int) -> bool:
         return (cur.rowcount or 0) > 0
 
 
-async def disable_auto_renew(sub_id: int):
+async def disable_auto_renew(sub_id: int) -> bool:
     """Юзер отменил автопродление (из нашего UI или Lava-кабинета).
-    Сама подписка дослужит до expires_at."""
+    Сама подписка дослужит до expires_at.
+
+    Atomic CAS: UPDATE срабатывает только если auto_renew был установлен.
+    Возвращает True если только что выключили, False если уже было выключено
+    (или sub_id не существует). Caller'ы которым return не нужен — игнорируют
+    его (legacy fire-and-forget продолжает работать).
+
+    Применение: предотвращает двойной вызов Lava cancel API при гонке
+    двух устройств — второе устройство получает False и пропускает вызов
+    к внешнему API, который иначе вернёт 404 и заспамит admin-алерт.
+    """
     async with _connect() as db:
-        await db.execute("UPDATE subscriptions SET auto_renew=0 WHERE id=?", (sub_id,))
+        cur = await db.execute(
+            "UPDATE subscriptions SET auto_renew=0 WHERE id=? AND auto_renew=1",
+            (sub_id,),
+        )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def set_quota_throttled_flag(sub_id: int, flagged: bool) -> None:
@@ -1807,17 +1874,41 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
         await db.commit()
 
 
-async def schedule_plan_change(sub_id: int, pending_plan: str | None):
+async def schedule_plan_change(
+    sub_id: int,
+    pending_plan: str | None,
+    expected_previous: str | None | _Sentinel = _SENTINEL,
+) -> bool:
     """
     Ставит (или снимает) запланированный даунгрейд на следующий месяц.
     pending_plan=None — отменить запланированное изменение.
+
+    `expected_previous` (optional CAS):
+        — `_SENTINEL` (default): legacy fire-and-forget, всегда True.
+        — `None` / `""`: CAS «текущее значение pending_plan пустое».
+        — строка `"vpn_base"`: CAS «текущее значение pending_plan совпадает».
+
+    Возвращает False если параллельная сессия успела изменить значение —
+    caller должен сообщить 409 или перечитать состояние.
     """
     async with _connect() as db:
-        await db.execute(
-            "UPDATE subscriptions SET pending_plan=? WHERE id=?",
-            (pending_plan, sub_id),
-        )
+        if expected_previous is _SENTINEL:
+            # Legacy path — без CAS, не проверяем предыдущее значение.
+            cur = await db.execute(
+                "UPDATE subscriptions SET pending_plan=? WHERE id=?",
+                (pending_plan, sub_id),
+            )
+        else:
+            # CAS: матчим COALESCE(pending_plan,'') == expected_previous_norm.
+            # Нормализуем None→'' чтобы строковое сравнение в SQL работало.
+            expected_norm = expected_previous or ""
+            cur = await db.execute(
+                "UPDATE subscriptions SET pending_plan=? "
+                "WHERE id=? AND COALESCE(pending_plan,'') = ?",
+                (pending_plan, sub_id, expected_norm),
+            )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 async def has_active_subscription(user_id: int) -> bool:
@@ -2550,9 +2641,20 @@ async def add_referral_bonus(referrer_id: int, days: int):
             (days, referrer_id),
         )
         modifier = f"+{days} days"
+        # NULL guard: datetime(NULL, '+7 days') = NULL → write обнулит expires_at
+        # → подписка станет бесконечной. Используем тот же CASE-паттерн, что
+        # в extend_subscription: если expires_at NULL или в прошлом — считаем
+        # от now, иначе — от текущего expires_at.
         await db.execute(
-            "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) WHERE user_id=? AND status='active'",
-            (modifier, referrer_id),
+            """UPDATE subscriptions
+               SET expires_at = CASE
+                       WHEN expires_at IS NULL
+                            OR datetime(REPLACE(expires_at, 'T', ' ')) < datetime('now')
+                       THEN datetime('now', ?)
+                       ELSE datetime(expires_at, ?)
+                   END
+               WHERE user_id=? AND status='active'""",
+            (modifier, modifier, referrer_id),
         )
         await db.commit()
 
@@ -2704,13 +2806,21 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
         # Для grace-подписки: сбрасываем статус в active и очищаем grace_until,
         # иначе sub остаётся throttled и scheduler заэкспайрит её по grace_until
         # несмотря на только что продлённый expires_at.
+        # NULL guard: если expires_at NULL (legacy row), datetime(NULL, '+N days')
+        # вернёт NULL и затрёт колонку → подписка станет бессрочной. Используем
+        # тот же CASE-паттерн, что в extend_subscription.
         await db.execute(
             """UPDATE subscriptions
-               SET expires_at  = datetime(expires_at, ?),
+               SET expires_at  = CASE
+                       WHEN expires_at IS NULL
+                            OR datetime(REPLACE(expires_at, 'T', ' ')) < datetime('now')
+                       THEN datetime('now', ?)
+                       ELSE datetime(expires_at, ?)
+                   END,
                    status      = CASE WHEN status = 'grace' THEN 'active' ELSE status END,
                    grace_until = CASE WHEN status = 'grace' THEN NULL ELSE grace_until END
                WHERE id = ?""",
-            (f"+{bank} days", sub["id"]),
+            (f"+{bank} days", f"+{bank} days", sub["id"]),
         )
         # Ставим redeemed_at на все subs где этот юзер был реферрером и бонус
         # ещё не помечен redeemed. Для rollback логики — отличить bank vs sub.
@@ -2852,9 +2962,14 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
             else:
                 # Decrement только если target sub ещё active/grace.
                 # Если target expired/refunded — дни уже «сгорели», ничего не делаем.
+                # NULL guard: datetime(NULL, '-N days') = NULL → write обнулит
+                # expires_at, превратив sub в бессрочную. Добавляем
+                # `expires_at IS NOT NULL` в WHERE — если legacy-row без даты,
+                # вычитать просто нечего.
                 await db.execute(
                     "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) "
-                    "WHERE id=? AND status IN ('active', 'grace')",
+                    "WHERE id=? AND status IN ('active', 'grace') "
+                    "AND expires_at IS NOT NULL",
                     (f"-{days} days", target_sub_id),
                 )
         else:

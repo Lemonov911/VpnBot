@@ -491,6 +491,22 @@ export default function Configs() {
     }
   }
 
+  // Determine whether the API error indicates the slot state changed under us
+  // (another device claimed/revoked it). The fetch wrapper in `api/index.ts`
+  // turns non-OK responses into `new Error(data.error ?? 'HTTP <status>')`,
+  // so we match both the literal `HTTP 409` suffix и текстовые маркеры от бэка.
+  const isConflictError = (msg: string): boolean => {
+    if (!msg) return false
+    return (
+      msg.includes('409') ||
+      msg.includes('already') ||
+      msg.includes('claimed') ||
+      msg.includes('slot_already') ||
+      msg.includes('config_already') ||
+      msg.includes('conflict')
+    )
+  }
+
   const handleActivate = async (configId: number, serverId: number) => {
     setErrMsg('')
     try {
@@ -498,7 +514,12 @@ export default function Configs() {
       WebApp.HapticFeedback.notificationOccurred('success')
       load()
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : t('configs_err_activate'))
+      const msg = e instanceof Error ? e.message : ''
+      setErrMsg(msg || t('configs_err_activate'))
+      // 409 = slot was activated by another device. Refresh to show actual state.
+      if (isConflictError(msg)) {
+        load()
+      }
     }
   }
 
@@ -511,7 +532,12 @@ export default function Configs() {
       // апдейт slots оставлял stale-карточку «Ссылка для Happ».
       load()
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : t('configs_err_revoke'))
+      const msg = e instanceof Error ? e.message : ''
+      setErrMsg(msg || t('configs_err_revoke'))
+      // 409 / уже отозван другим устройством — синхронизируем UI с бэком.
+      if (isConflictError(msg)) {
+        load()
+      }
     }
   }
 
