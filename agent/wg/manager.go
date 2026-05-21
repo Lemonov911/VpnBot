@@ -369,13 +369,15 @@ func (m *Manager) ResumeAll(pubkeys []string) error {
 }
 
 func (m *Manager) Stats() ([]*Peer, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// getDevice polls the WireGuard kernel interface — this is a slow syscall.
+	// Do it outside any lock so it doesn't block AddPeer/RemovePeer.
 	dev, err := m.getDevice()
 	if err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for _, kp := range dev.Peers {
 		pk := kp.PublicKey.String()

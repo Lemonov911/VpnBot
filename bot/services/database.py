@@ -748,8 +748,8 @@ async def get_expired_subscriptions() -> list[dict]:
         async with db.execute("""
             SELECT id, user_id, plan, expires_at, pending_plan FROM subscriptions
             WHERE status='active' AND plan != 'vpn_trial'
-              AND expires_at IS NOT NULL AND expires_at <= ?
-        """, (datetime.utcnow().isoformat(),)) as cur:
+              AND expires_at IS NOT NULL AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now')
+        """) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
 
@@ -1454,7 +1454,8 @@ async def get_active_subscription(user_id: int) -> dict | None:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at, grace_until
+            SELECT id, plan, stars_paid, status, expires_at, pending_plan, created_at, grace_until,
+                   auto_renew, payment_provider, parent_contract_id
             FROM subscriptions
             WHERE user_id=? AND status IN ('active', 'grace')
             ORDER BY created_at DESC LIMIT 1

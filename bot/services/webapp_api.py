@@ -963,7 +963,8 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                                     target_svc, f"u{up_user_id}_c{cfg['id']}", peer_id=peer_id,
                                 )
                                 normal_added = True
-                                await client.remove_peer("vless-grace", peer_id)
+                                for _svc in ("vless-grace", "vless-base-slow", "vless-max-slow"):
+                                    await client.remove_peer(_svc, peer_id)
                             except Exception:
                                 if normal_added:
                                     try:
@@ -1316,7 +1317,7 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
 
     from services.database import (
         get_subscription_by_payment_id, create_subscription, create_order, complete_order,
-        is_payment_recorded,
+        is_payment_recorded, record_payment as _rp_oxapay,
     )
 
     existing = await get_subscription_by_payment_id(payment_id)
@@ -1358,6 +1359,10 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         stars_paid=0, expires_at=expires_at,
     )
     await complete_order(order_db_id, payment_id=payment_id)
+    await _rp_oxapay(
+        user_id=user_id, subscription_id=sub_id, method="oxapay", tx_id=payment_id,
+        stars=0, amount_usd=float(plan.get("usd", 0)),
+    )
 
     try:
         from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
@@ -1758,6 +1763,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     from services.database import (
         get_subscription_by_payment_id, create_subscription, create_order, complete_order,
+        record_payment as _rp_lava,
     )
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
@@ -1797,6 +1803,10 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         stars_paid=0, expires_at=expires_at,
     )
     await complete_order(order_db_id, payment_id=payment_id)
+    await _rp_lava(
+        user_id=user_id, subscription_id=sub_id, method="lavatop", tx_id=payment_id,
+        stars=0, amount_usd=amount,  # фактически ₽, хранится в поле usd для аналитики
+    )
 
     try:
         from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus

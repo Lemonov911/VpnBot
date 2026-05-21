@@ -320,7 +320,7 @@ type syncReq struct {
 // handleServiceSync removes any peer whose ID is not in valid_ids.
 // Used by the bot to keep the agent in sync with paid subscriptions —
 // peers whose subscription expired/was cancelled are removed automatically.
-func (s *Server) handleServiceSync(svc service.Service) http.HandlerFunc {
+func (s *Server) handleServiceSync(svc service.Service, svcName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req syncReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -337,11 +337,15 @@ func (s *Server) handleServiceSync(svc service.Service) http.HandlerFunc {
 			valid[id] = true
 		}
 		removed := []string{}
+		failed := []string{}
 		kept := 0
 		for _, p := range peers {
 			if !valid[p.ID] {
 				if err := svc.RemovePeer(p.ID); err == nil {
 					removed = append(removed, p.ID)
+				} else {
+					log.Printf("sync[%s]: RemovePeer(%s) failed: %v", svcName, p.ID, err)
+					failed = append(failed, p.ID)
 				}
 				continue
 			}
@@ -349,6 +353,7 @@ func (s *Server) handleServiceSync(svc service.Service) http.HandlerFunc {
 		}
 		jsonOK(w, map[string]any{
 			"removed":     removed,
+			"failed":      failed,
 			"kept":        kept,
 			"valid_count": len(req.ValidIDs),
 		})

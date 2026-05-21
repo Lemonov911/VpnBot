@@ -129,12 +129,16 @@ export default function VPN() {
     WebApp.BackButton.show()
     const goBack = () => nav('/')
     WebApp.BackButton.onClick(goBack)
+    let cancelled = false
     Promise.all([
       getActiveSubscription().catch(() => null),
       getUserConfigs().catch(() => [] as VpnConfig[]),
       getVpnStatus().catch(() => null),
-    ]).then(([s, c, st]) => { setSub(s); setConfigs(c as VpnConfig[]); setStatus(st) })
-    return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
+    ]).then(([s, c, st]) => {
+      if (cancelled) return
+      setSub(s); setConfigs(c as VpnConfig[]); setStatus(st)
+    })
+    return () => { cancelled = true; WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
@@ -226,7 +230,7 @@ export default function VPN() {
             </button>
           </div>
           <button className="btn w-full !bg-[var(--tg-theme-section-bg-color,#f1f1f1)] !text-[var(--tg-theme-text-color,#000)]"
-            onClick={() => { setPaid(false); getActiveSubscription().then(setSub) }}>
+            onClick={() => { setPaid(false); getActiveSubscription().then(setSub).catch(() => {}) }}>
             {t('vpn_to_plans')}
           </button>
         </div>

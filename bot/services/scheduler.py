@@ -549,7 +549,8 @@ async def _apply_quota_throttle(bot: Bot):
                         except Exception:
                             pass
                     raise
-                await update_config_data(cfg["config_id"], slow_peer.config)
+                if slow_peer.config:
+                    await update_config_data(cfg["config_id"], slow_peer.config)
                 logger.info(
                     "throttled config #%d (used %.1f GB > %d GB cap)",
                     cfg["config_id"], used / 1024**3, cap_gb,
@@ -581,7 +582,8 @@ async def _apply_quota_throttle(bot: Bot):
                         except Exception:
                             pass
                     raise
-                await update_config_data(cfg["config_id"], normal_peer.config)
+                if normal_peer.config:
+                    await update_config_data(cfg["config_id"], normal_peer.config)
                 logger.info("throttle restored on config #%d", cfg["config_id"])
         except VpnctlError as e:
             logger.warning("throttle change failed for config #%d: %s", cfg["config_id"], e, exc_info=True)

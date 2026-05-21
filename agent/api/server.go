@@ -68,7 +68,7 @@ func (s *Server) Handler() http.Handler {
 				r.Post("/peers/resume-all", s.handleServiceResumeAll(svcRef, false))
 				r.Post("/peers/{id}/throttle", s.handleServiceThrottlePeer(tcIface))
 				r.Delete("/peers/{id}/throttle", s.handleServiceUnthrottlePeer(tcIface))
-				r.Post("/sync", s.handleServiceSync(svcRef))
+				r.Post("/sync", s.handleServiceSync(svcRef, svcName))
 				r.Get("/info", s.handleServiceInfo(svcRef))
 			})
 

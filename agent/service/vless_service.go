@@ -261,19 +261,29 @@ func (s *VLESSService) ResumePeer(id string) error {
 }
 
 func (s *VLESSService) SuspendAll(ids []string) error {
+	var errs []string
 	for _, id := range ids {
 		if err := s.SuspendPeer(id); err != nil {
-			return err
+			errs = append(errs, fmt.Sprintf("%s: %v", id, err))
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("SuspendAll partial failure (%d/%d): %s",
+			len(errs), len(ids), strings.Join(errs, "; "))
 	}
 	return nil
 }
 
 func (s *VLESSService) ResumeAll(ids []string) error {
+	var errs []string
 	for _, id := range ids {
 		if err := s.ResumePeer(id); err != nil {
-			return err
+			errs = append(errs, fmt.Sprintf("%s: %v", id, err))
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("ResumeAll partial failure (%d/%d): %s",
+			len(errs), len(ids), strings.Join(errs, "; "))
 	}
 	return nil
 }

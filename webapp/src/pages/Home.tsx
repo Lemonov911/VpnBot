@@ -39,9 +39,11 @@ export default function Home() {
   const [trialSheet, setTrialSheet] = useState(false)
 
   useEffect(() => {
-    getActiveSubscription().catch(() => null).then(setSub)
-    getUserStats().catch(() => null).then(s => setStats(s))
-    getTrialStatus().catch(() => null).then(s => setTrial(s))
+    let cancelled = false
+    getActiveSubscription().catch(() => null).then(s => { if (!cancelled) setSub(s) })
+    getUserStats().catch(() => null).then(s => { if (!cancelled) setStats(s) })
+    getTrialStatus().catch(() => null).then(s => { if (!cancelled) setTrial(s) })
+    return () => { cancelled = true }
   }, [])
 
   const handleClaimTrial = async () => {

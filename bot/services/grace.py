@@ -158,7 +158,8 @@ async def unthrottle_sub_configs(sub_id: int, user_id: int, plan_key: str) -> No
                         peer_id=peer_id,
                     )
                     normal_added = True
-                    await client.remove_peer("vless-grace", peer_id)
+                    for _svc in ("vless-grace", "vless-base-slow", "vless-max-slow"):
+                        await client.remove_peer(_svc, peer_id)
                 except VpnctlError:
                     if normal_added:
                         try:

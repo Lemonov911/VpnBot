@@ -163,13 +163,19 @@ class VpnctlClient:
 
     async def list_peers(self, service: str) -> list:
         st, data = await self._request("GET", f"/services/{service}/peers")
+        if st != 200:
+            raise VpnctlError(f"list_peers({service}): {st}")
         return data if isinstance(data, list) else []
 
     async def suspend_all(self, service: str, ids: list[str]):
-        await self._request("POST", f"/services/{service}/peers/suspend-all", {"ids": ids})
+        st, _ = await self._request("POST", f"/services/{service}/peers/suspend-all", {"ids": ids})
+        if st not in (200, 204):
+            raise VpnctlError(f"suspend_all({service}): {st}")
 
     async def resume_all(self, service: str, ids: list[str]):
-        await self._request("POST", f"/services/{service}/peers/resume-all", {"ids": ids})
+        st, _ = await self._request("POST", f"/services/{service}/peers/resume-all", {"ids": ids})
+        if st not in (200, 204):
+            raise VpnctlError(f"resume_all({service}): {st}")
 
     async def throttle_peer(self, service: str, peer_id: str, assigned_ip: str, kbps: int = 256):
         """Grace-period throttle: ограничивает скорость пира через tc на awg0.

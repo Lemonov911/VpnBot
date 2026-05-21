@@ -135,7 +135,7 @@ function PlanCard({
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
-          <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{t(PLAN_NAME_KEY[plan.key])}</span>
+          <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{t(PLAN_NAME_KEY[plan.key] ?? 'vpn_plan_start' as TKey)}</span>
           {isHit && (
             <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
           )}
@@ -328,10 +328,10 @@ export default function Plans() {
     // Upgrade без confirm — там followed by payment screen, юзер успеет
     // отказаться при выставлении инвойса.
     if (action === 'downgrade') {
-      const ok = await showConfirm(t('plans_downgrade_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key])))
+      const ok = await showConfirm(t('plans_downgrade_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key] ?? 'vpn_plan_start' as TKey)))
       if (!ok) return
     } else if (action === 'cancel') {
-      const ok = await showConfirm(t('plans_cancel_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key])))
+      const ok = await showConfirm(t('plans_cancel_confirm').replace('{name}', t(PLAN_NAME_KEY[plan.key] ?? 'vpn_plan_start' as TKey)))
       if (!ok) return
     }
 
@@ -444,7 +444,7 @@ export default function Plans() {
 
             Expired статус — то же самое: подписка истекла, юзер должен видеть
             обычные «Купить», а не «Понизить»/«Ваш» от прошлого тарифа. */}
-        {(sub === null || sub.plan === 'vpn_trial' || sub.status === 'expired') ? (
+        {(sub === null || sub.plan === 'vpn_trial' || sub.status === 'expired' || !curPlan) ? (
           VISIBLE_PLANS.map((plan, i) => (
             <PlanCard key={plan.key} plan={plan} mode="buy"
               upgradePrice={0} loading={loading === plan.key}
