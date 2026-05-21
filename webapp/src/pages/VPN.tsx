@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceOxapay, createVpnInvoiceLavatop, cancelLavatopRenewal,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceOxapay, createVpnInvoiceLavatop, cancelLavatopRenewal,
   getActiveSubscription, getUserConfigs, getVpnStatus,
   type Subscription, type VpnConfig, type VpnServerStatus,
 } from '../api'
@@ -167,12 +167,6 @@ export default function VPN() {
       } else if (method === 'oxapay') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')
-        setBuyLoading(null)
-        WebApp.openLink(pay_url)
-        setPostPayOpen(true)
-      } else if (method === 'cryptomus') {
-        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
-        const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
         setBuyLoading(null)
         WebApp.openLink(pay_url)
         setPostPayOpen(true)

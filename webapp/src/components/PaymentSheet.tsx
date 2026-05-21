@@ -3,7 +3,7 @@ import WebApp from '@twa-dev/sdk'
 import { useT } from '../i18n'
 import { getFeatures } from '../api'
 
-export type PayMethod = 'stars' | 'crypto' | 'cryptomus' | 'oxapay' | 'lavatop'
+export type PayMethod = 'stars' | 'crypto' | 'oxapay' | 'lavatop'
 export type PayPeriod = '1m' | '3m' | '6m' | '12m'
 
 // Multi-period цены — синхронизировано с bot/services/plans.py.
@@ -71,7 +71,6 @@ export default function PaymentSheet({
   // что нажав «купить» он попадёт в RUB-флоу.  Stars preselected раньше
   // вызывало когнитивный mismatch: «я нажал 200₽, а тут 145⭐».
   const [method, setMethod] = useState<PayMethod>(defaultMethod)
-  const [showCryptomus, setShowCryptomus] = useState(false)
   const [showOxapay, setShowOxapay]       = useState(false)
   const [showLavatop, setShowLavatop]     = useState(false)
   const [period, setPeriod]               = useState<PayPeriod>('1m')
@@ -106,7 +105,6 @@ export default function PaymentSheet({
     let cancelled = false
     getFeatures().then(f => {
       if (cancelled) return
-      setShowCryptomus(!!f.cryptomus)
       setShowLavatop(!!f.lavatop)
       const oxapayOn = !!f.oxapay
       setShowOxapay(oxapayOn)
@@ -162,9 +160,6 @@ export default function PaymentSheet({
             ['stars',    '⭐', t('pay_method_stars'),     `${starsPrice} ⭐`],
             ...(showOxapay
               ? [['oxapay', '🪙', 'OxaPay', `${rubPrice} ₽`] as const]
-              : []),
-            ...(showCryptomus
-              ? [['cryptomus', '🔗', t('pay_method_cryptomus' as never), `${rubPrice} ₽`]]
               : []),
           ]) as [PayMethod, string, string, string][]).map(([val, icon, label, price], i, arr) => (
             <div key={val}>

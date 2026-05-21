@@ -42,7 +42,7 @@ async def try_renew_from_grace(
 ) -> bool:
     """Returns True если grace-продление выполнено (caller skip create), иначе False.
 
-    `method` — "stars" / "crypto" / "cryptomus" / "lavatop"; пишется в payments-log
+    `method` — "stars" / "crypto" / "oxapay" / "lavatop"; пишется в payments-log
     для админ-аналитики.
     """
     from services.database import (

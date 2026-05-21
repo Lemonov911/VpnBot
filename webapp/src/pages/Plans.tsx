@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
-  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceCryptomus, createVpnInvoiceOxapay, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
+  createVpnInvoice, createVpnInvoiceCrypto, createVpnInvoiceOxapay, createVpnInvoiceLavatop, getActiveSubscription, changeSubscriptionPlan,
   type Subscription,
 } from '../api'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
@@ -273,12 +273,6 @@ export default function Plans() {
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
           else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
         })
-      } else if (method === 'cryptomus') {
-        const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
-        const { pay_url } = await createVpnInvoiceCryptomus(planKey, 'RUB')
-        setLoading(null)
-        WebApp.openLink(pay_url)
-        setPostPayOpen(true)
       } else if (method === 'oxapay') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const { pay_url } = await createVpnInvoiceOxapay(planKey, 'RUB')

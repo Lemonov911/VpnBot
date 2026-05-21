@@ -43,14 +43,6 @@ VPN_SERVER_KEY   = os.getenv("VPN_SERVER_KEY_PATH", "~/.ssh/id_rsa")
 VPN_SERVER_PASS  = os.getenv("VPN_SERVER_PASSWORD", "")
 CRYPTOBOT_TOKEN  = os.getenv("CRYPTOBOT_TOKEN", "")
 
-# Cryptomus — альтернативный крипто-провайдер с прямыми on-chain платежами
-# (BTC/ETH/USDT не через @CryptoBot, ниже комиссии, резерв если CryptoBot упадёт).
-# Включается двумя env'ами + флагом — все три нужны, иначе endpoint'ы 503.
-CRYPTOMUS_MERCHANT_UUID = os.getenv("CRYPTOMUS_MERCHANT_UUID", "")
-CRYPTOMUS_PAYMENT_KEY   = os.getenv("CRYPTOMUS_PAYMENT_KEY", "")
-CRYPTOMUS_ENABLED = bool(CRYPTOMUS_MERCHANT_UUID and CRYPTOMUS_PAYMENT_KEY) and \
-                   os.getenv("CRYPTOMUS_ENABLED", "false").lower() == "true"
-
 # Lava.top — RU-friendly платёжный провайдер с картами + СБП + recurring подпиской.
 # У Lava нет meta/payload поля — purchases идентифицируются по email юзера, поэтому
 # мы спрашиваем email в Mini App и используем его для tracking. parent_contract_id

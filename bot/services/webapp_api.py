@@ -34,7 +34,6 @@ from aiogram.types import LabeledPrice
 from config import (
     DEBUG, ADMIN_ID, ADMIN_IDS, BOT_TOKEN, CRYPTOBOT_TOKEN, WEBAPP_URL,
     ESIM_WEBHOOK_SECRET, ADMIN_API_SECRET, SHOW_ESIM, SUB_URL_BASE,
-    CRYPTOMUS_MERCHANT_UUID, CRYPTOMUS_PAYMENT_KEY, CRYPTOMUS_ENABLED,
     LAVATOP_API_KEY, LAVATOP_WEBHOOK_KEY, LAVATOP_ENABLED, LAVATOP_OFFERS,
     OXAPAY_API_KEY, OXAPAY_ENABLED,
 )
@@ -456,7 +455,6 @@ _sub_rate:     dict[str, float] = {}  # rate-limit для /sub/{token}
 # Rate-limit buckets для POST endpoints — защита от спама счетов/тикетов.
 _invoice_rate:  dict[str, float] = {}  # /api/vpn/invoice, /api/esim/invoice
 _crypto_rate:   dict[str, float] = {}  # /api/vpn/invoice/crypto
-_cryptomus_rate: dict[str, float] = {}  # /api/vpn/invoice/cryptomus
 _oxapay_rate:    dict[str, float] = {}  # /api/vpn/invoice/oxapay
 _lavatop_rate:   dict[str, float] = {}  # /api/vpn/invoice/lavatop
 _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
@@ -1062,267 +1060,6 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         )
     except Exception as e:
         logger.warning("CryptoBot: failed to notify user %d: %s", user_id, e, exc_info=True)
-
-    return web.Response(status=200)
-
-
-# ── Cryptomus хендлеры ────────────────────────────────────────────────────────
-# Альтернатива CryptoBot: прямые on-chain платежи (BTC/ETH/USDT-TRC20/etc).
-# Юзер платит на их checkout-странице, мы получаем webhook с MD5-подписью.
-# Включается только если CRYPTOMUS_ENABLED=true И заданы оба ключа.
-
-async def handle_cryptomus_invoice(request: web.Request) -> web.Response:
-    """
-    POST /api/vpn/invoice/cryptomus  { plan_key, currency: "RUB"|"USD" }
-    Создаёт инвойс через Cryptomus и возвращает { pay_url }.
-    """
-    ip = _client_ip(request)
-    if not _rate_limit_check_evict(_cryptomus_rate, ip, _time.monotonic(), window=6.0):
-        return web.json_response({"error": "rate_limited"}, status=429)
-    if not CRYPTOMUS_ENABLED:
-        return web.json_response({"error": "Cryptomus не подключён"}, status=503)
-
-    body = await request.json()
-    user = _resolve_user(request, body)
-    if user is None:
-        return _unauthorized()
-
-    plan_key = body.get("plan_key", "")
-    plan = VPN_PLANS.get(plan_key)
-    if not plan:
-        return web.json_response({"error": "Unknown plan"}, status=400)
-    # multi_period для Cryptomus ОК — он по своей природе one-time crypto payment,
-    # для каждого периода свой invoice с правильной суммой.
-
-    currency = (body.get("currency") or "RUB").upper()
-    if currency not in ("RUB", "USD"):
-        return web.json_response({"error": "currency must be RUB or USD"}, status=400)
-
-    existing_sub = await get_active_subscription(user["id"])
-    # Триал — не платная подписка, юзер должен иметь возможность купить
-    # обычный тариф. Триал-пиры закроются в provision_vpn_slots_async /
-    # _deliver_vpn после успешного платежа (см. _close_trial_on_paid_purchase).
-    if existing_sub and existing_sub.get("plan") != "vpn_trial" and existing_sub.get("status") != "grace":
-        return web.json_response(
-            {"error": "У тебя уже есть активная подписка. Используй смену тарифа."},
-            status=400,
-        )
-
-    amount = plan["rub"] if currency == "RUB" else plan["usd"]
-    # order_id формируется детерминированно: тот же юзер + план + минута →
-    # повтор кнопки в течение минуты вернёт тот же invoice (Cryptomus
-    # отдаёт 422 на duplicate order_id, но мы перехватим — см. ниже).
-    # Cryptomus принимает 1..128 символов из [a-zA-Z0-9_-] (включая _).
-    # Используем _ как часть plan_key (vpn_base, vpn_max_3m), а - как
-    # разделитель полей — однозначно парсится на webhook'е.
-    ts_min = int(_time.time() // 60)
-    order_id = f"vpn-{user['id']}-{plan_key}-{ts_min}"
-
-    base_url = WEBAPP_URL or "https://maxvpnesim.com"
-    api_origin = SUB_URL_BASE or "https://maxvpnesim.com"
-    callback_url = f"{api_origin}/api/cryptomus/webhook"
-    return_url   = f"{base_url}/vpn"  # куда юзер вернётся после оплаты
-
-    from services.cryptomus import create_invoice as _cm_create
-    try:
-        invoice = await _cm_create(
-            merchant_uuid=CRYPTOMUS_MERCHANT_UUID,
-            payment_key=CRYPTOMUS_PAYMENT_KEY,
-            amount=str(amount),
-            currency=currency,
-            order_id=order_id,
-            callback_url=callback_url,
-            return_url=return_url,
-            description=f"VPN {plan['name']} 30d",
-        )
-    except Exception as e:
-        logger.error("Cryptomus invoice error: %s", e, exc_info=True)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
-
-    pay_url = invoice.get("url") or invoice.get("payment_url") or ""
-    if not pay_url:
-        logger.error("Cryptomus: no url in response %r", invoice)
-        return web.json_response({"error": "Ошибка платёжного сервиса"}, status=503)
-
-    logger.info(
-        "Cryptomus invoice: user=%s plan=%s cur=%s order=%s uuid=%s",
-        user.get("id"), plan_key, currency, order_id, invoice.get("uuid"),
-    )
-    return web.json_response({"pay_url": pay_url})
-
-
-async def handle_cryptomus_webhook(request: web.Request) -> web.Response:
-    """
-    POST /api/cryptomus/webhook
-    Cryptomus уведомляет об оплате. MD5-подпись передаётся внутри JSON в поле "sign".
-    Идемпотентность: payment_id = `cryptomus_{uuid}` + UNIQUE-constraint
-    на subscriptions.payment_id защищает от дубль-webhook'ов.
-    """
-    if not CRYPTOMUS_ENABLED:
-        return web.Response(status=200)
-
-    body_bytes = await request.read()
-    try:
-        payload = json.loads(body_bytes)
-    except Exception:
-        logger.warning("Cryptomus webhook: invalid JSON body")
-        return web.Response(status=400)
-    if not isinstance(payload, dict):
-        return web.Response(status=400)
-
-    received_sign = payload.get("sign", "")
-    from services.cryptomus import verify_signature
-    if not verify_signature(body_bytes, received_sign, CRYPTOMUS_PAYMENT_KEY):
-        logger.warning(
-            "Cryptomus webhook: BAD signature order_id=%s status=%s from=%s",
-            payload.get("order_id"), payload.get("status"), request.remote,
-        )
-        return web.Response(status=401)
-
-    status = (payload.get("status") or "").lower()
-    # 'paid' — точно сумма; 'paid_over' — юзер перевёл больше, тоже зачисляем.
-    # Прочие (check, process, confirm_check, fail, cancel, wrong_amount,
-    # system_fail, refund_*) — игнорируем тихо.
-    if status not in ("paid", "paid_over"):
-        logger.info("Cryptomus webhook: ignoring status=%s order_id=%s",
-                    status, payload.get("order_id"))
-        return web.Response(status=200)
-
-    uuid_str = payload.get("uuid") or ""
-    order_id = payload.get("order_id") or ""
-    if not uuid_str or not order_id:
-        logger.warning("Cryptomus webhook: missing uuid/order_id %r", payload)
-        return web.Response(status=200)
-
-    # order_id формат: "vpn-{user_id}-{plan_key}-{ts_min}"
-    # plan_key содержит underscores (vpn_base, vpn_max_3m), - только разделитель.
-    parts = order_id.split("-")
-    if len(parts) != 4 or parts[0] != "vpn":
-        logger.warning("Cryptomus webhook: unexpected order_id format %s", order_id)
-        return web.Response(status=200)
-    try:
-        user_id = int(parts[1])
-    except ValueError:
-        logger.warning("Cryptomus webhook: bad user_id in order_id %s", order_id)
-        return web.Response(status=200)
-    plan_key = parts[2]
-    plan = VPN_PLANS.get(plan_key)
-    if not plan:
-        logger.warning("Cryptomus webhook: unknown plan %s (order=%s)", plan_key, order_id)
-        return web.Response(status=200)
-
-    # Сверка суммы — Cryptomus в webhook'е передаёт реальную сумму инвойса.
-    # Без неё юзер может (теоретически) выписать invoice на 1₽ через свой
-    # ключ, а потом запихнуть webhook. Подпись это не ловит — она просто
-    # подтверждает целостность того что нам прислали.
-    try:
-        invoice_amount = float(payload.get("amount") or 0)
-    except (TypeError, ValueError):
-        invoice_amount = 0.0
-    fiat = (payload.get("currency") or "").upper()
-    expected = float(plan["rub"]) if fiat == "RUB" else float(plan["usd"]) if fiat == "USD" else None
-    if expected is None or invoice_amount + 1e-6 < expected:
-        logger.error(
-            "Cryptomus webhook: amount mismatch order=%s got=%.2f%s expected=%.2f — REJECTED",
-            order_id, invoice_amount, fiat, expected or 0,
-        )
-        return web.Response(status=400)
-
-    payment_id = f"cryptomus_{uuid_str}"
-
-    from services.database import (
-        get_subscription_by_payment_id, create_subscription, create_order, complete_order,
-    )
-
-    existing = await get_subscription_by_payment_id(payment_id)
-    if existing:
-        logger.warning("Cryptomus: duplicate payment %s", payment_id)
-        return web.Response(status=200)
-
-    # Renew-from-grace: shared с другими платёжками.
-    from services.grace import try_renew_from_grace
-    bot: Bot = request.app["bot"]
-    if await try_renew_from_grace(
-        bot, user_id, plan_key, plan, payment_id, method="cryptomus",
-        amount_rub=int(float(plan.get("rub", 0))),
-    ):
-        return web.Response(status=200)
-
-    expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
-    sub_id = await create_subscription(
-        user_id=user_id,
-        plan=plan_key,
-        payment_id=payment_id,
-        stars_paid=0,
-        amount_rub=int(float(plan.get("rub", 0))),
-        expires_at=expires_at,
-    )
-    if sub_id is None:
-        logger.warning("Cryptomus: payment %s TOCTOU-duplicate, ignored", payment_id)
-        return web.Response(status=200)
-
-    order_db_id = await create_order(
-        user_id=user_id, product_type="vpn", plan=plan_key,
-        stars_paid=0, expires_at=expires_at,
-    )
-    await complete_order(order_db_id, payment_id=payment_id)
-
-    # bot уже извлечён выше (для try_renew_from_grace).
-    try:
-        from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
-        delivered, total = await provision_vpn_slots_async(
-            bot, user_id, sub_id, plan, plan_key,
-        )
-        # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
-        # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
-        await maybe_award_referral_bonus(bot, user_id, sub_id)
-    except Exception as e:
-        logger.error("Cryptomus: provision crashed user=%d sub=%d: %s",
-                     user_id, sub_id, e, exc_info=True)
-        delivered, total = 0, plan["awg_slots"] + plan["vless_slots"] + plan.get("wg_slots", 0)
-
-    if total > 0 and delivered == 0:
-        logger.error(
-            "Cryptomus provision FAILED 0/%d user=%d sub=%d uuid=%s — ADMIN ALERT",
-            total, user_id, sub_id, uuid_str,
-        )
-        try:
-            if ADMIN_ID:
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"🚨 <b>Cryptomus provision FAIL</b>\n\n"
-                    f"User: <code>{user_id}</code>\n"
-                    f"Sub: #{sub_id}\n"
-                    f"Plan: {plan_key}\n"
-                    f"Cryptomus UUID: <code>{uuid_str}</code>\n\n"
-                    f"Action: досоздай конфиги вручную или сделай refund в Cryptomus dashboard.",
-                    parse_mode="HTML",
-                )
-        except Exception as e:
-            logger.error("Cryptomus admin alert failed: %s", e, exc_info=True)
-        try:
-            await bot.send_message(
-                user_id,
-                "❌ <b>VPN-конфиги не создались</b>\n\n"
-                "Оплата прошла, но сервера временно недоступны. "
-                "Поддержка уже уведомлена — подключим вручную или вернём средства.",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-        return web.Response(status=200)
-
-    # Успех — уведомление юзеру
-    try:
-        await bot.send_message(
-            user_id,
-            f"✅ <b>VPN {plan['name']} оплачен!</b>\n\n"
-            f"📅 Действует до: <b>{expires_at.strftime('%d.%m.%Y')}</b>\n\n"
-            f"Конфиги доступны в Mini App.",
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        logger.warning("Cryptomus: failed to notify user %d: %s", user_id, e, exc_info=True)
 
     return web.Response(status=200)
 
@@ -3008,10 +2745,8 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
             payment_id = row[0] if row else None
 
     # Определяем provider по префиксу payment_id.  Stars = всё что НЕ
-    # crypto_/cryptomus_/lavatop_/free_.  Раньше `not startswith(crypto_,
-    # free_)` ошибочно классифицировало `cryptomus_` и `lavatop_` как Stars
-    # → bot.refund_star_payment получал чужой charge_id → Telegram 400.
-    _NON_STARS_PREFIXES = ("crypto_", "cryptomus_", "oxapay_", "lavatop_", "free_")
+    # crypto_/oxapay_/lavatop_/free_ — не Stars-платёж, нельзя делать Stars refund.
+    _NON_STARS_PREFIXES = ("crypto_", "oxapay_", "lavatop_", "free_")
     is_stars = payment_id and not payment_id.startswith(_NON_STARS_PREFIXES)
     stars_refund_done = False
 
@@ -3050,8 +2785,7 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     # Источник платежа — для audit log + UI чтобы админ видел корректный канал.
     payment_source = "stars"
     if payment_id:
-        if payment_id.startswith("cryptomus_"): payment_source = "cryptomus"
-        elif payment_id.startswith("oxapay_"): payment_source = "oxapay"
+        if payment_id.startswith("oxapay_"): payment_source = "oxapay"
         elif payment_id.startswith("lavatop_"): payment_source = "lavatop"
         elif payment_id.startswith("crypto_"): payment_source = "cryptobot"
         elif payment_id.startswith("free_"): payment_source = "free"
@@ -3475,7 +3209,6 @@ async def handle_health(request: web.Request) -> web.Response:
         "features": {
             "esim":      SHOW_ESIM,
             "cryptobot": bool(CRYPTOBOT_TOKEN),
-            "cryptomus": CRYPTOMUS_ENABLED,
             "oxapay":    OXAPAY_ENABLED,
             "lavatop":   LAVATOP_ENABLED,
         },
@@ -3522,11 +3255,6 @@ def create_api_app(bot: Bot) -> web.Application:
 
     # CryptoBot webhook
     app.router.add_post("/api/cryptobot/webhook",          handle_cryptobot_webhook)
-
-    # Cryptomus — endpoint'ы регистрируем всегда (упрощает frontend
-    # logic), но они отдают 503 пока CRYPTOMUS_ENABLED=false.
-    app.router.add_post("/api/vpn/invoice/cryptomus",      handle_cryptomus_invoice)
-    app.router.add_post("/api/cryptomus/webhook",          handle_cryptomus_webhook)
 
     # OxaPay — крипто-шлюз, HMAC-SHA512. То же правило: endpoint'ы всегда
     # зарегистрированы, без OXAPAY_ENABLED отдают 503.
