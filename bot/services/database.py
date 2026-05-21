@@ -960,7 +960,13 @@ async def mark_subscription_refunded(subscription_id: int):
 async def extend_subscription(subscription_id: int, days: int) -> dict | None:
     """Добавляет `days` дней к expires_at.  Если sub была в grace — возвращает
     status='active', очищает grace_until.  Возвращает обновлённую запись (id,
-    user_id, plan, status, expires_at) или None если sub не найдена.
+    user_id, plan, status, expires_at) или None если sub не найдена ИЛИ её статус
+    не подходит для extend (expired/refunded).
+
+    Status guard: UPDATE срабатывает только если status IN ('active','grace').
+    Без этого admin extend мог «воскресить» refunded/expired sub'у. Caller
+    (handle_admin_sub_extend / admin_grant_subscription) должен трактовать
+    None как «sub недоступна» и сообщить 404/409.
 
     Используется админкой для compensation gifts.  Atomic в одной транзакции,
     чтобы scheduler не успел grace-expire-нуть подписку посередине.
@@ -974,7 +980,7 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
         if not pre:
             return None
         was_grace = pre["status"] == "grace"
-        await db.execute(
+        cur_upd = await db.execute(
             """UPDATE subscriptions
                SET expires_at = CASE
                        WHEN expires_at IS NULL OR datetime(expires_at) < datetime('now')
@@ -987,9 +993,19 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
                    reminded_1d       = 0,
                    reminded_renewal_3d = 0,
                    reminded_grace_3d   = 0
-               WHERE id=?""",
+               WHERE id=? AND status IN ('active', 'grace')""",
             (f"+{days} days", f"+{days} days", subscription_id),
         )
+        if cur_upd.rowcount == 0:
+            # Sub существует, но status не в ('active','grace') — expired или
+            # refunded. Возвращаем None чтобы caller отрапортовал «sub not
+            # eligible for extend» вместо тихого ничего-не-делания.
+            logger.warning(
+                "extend_subscription: sub=%d status=%s not eligible for extend",
+                subscription_id, pre["status"],
+            )
+            await db.commit()
+            return None
         await db.commit()
         async with db.execute(
             "SELECT id, user_id, plan, status, expires_at FROM subscriptions WHERE id=?",
@@ -1828,7 +1844,8 @@ async def get_last_expired_subscription(user_id: int) -> dict | None:
 async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                                     awg_delta: int, vless_delta: int,
                                     wg_delta: int = 0,
-                                    duration_days: int = 30):
+                                    duration_days: int = 30,
+                                    new_payment_id: str | None = None) -> bool:
     """
     Немедленно меняет план подписки (апгрейд).
     Добавляет новые пустые слоты если awg_delta/vless_delta/wg_delta > 0.
@@ -1839,6 +1856,12 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
     оставил бы юзера на 256 кбит/с с новым планом — UI «Plan: Max», фактически
     throttle.
 
+    Status guard: UPDATE срабатывает только если sub.status IN ('active','grace').
+    Без этого CryptoBot webhook race (или admin refund mid-flight) могли «воскресить»
+    refunded/expired sub'у, выставив status='active'. Возвращает True если row был
+    обновлён, False если sub не нашлась или была в неподходящем статусе — caller
+    должен залогировать и НЕ вставлять новые слоты.
+
     Sec/edge audit C4 (15.05): caller'у (handlers/vpn.py:_apply_plan_upgrade)
     после этого вызова нужно отдельно вызвать unthrottle на vpnctl_client
     чтобы вернуть AWG-пиры с tc, и переместить VLESS из vless-grace inbound
@@ -1846,7 +1869,7 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
     """
     async with _connect() as db:
         # Если был в grace — продлеваем active на полные duration_days от now
-        await db.execute(
+        cur = await db.execute(
             """UPDATE subscriptions
                SET plan=?, pending_plan=NULL,
                    status='active',
@@ -1855,14 +1878,33 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                        WHEN status='grace' THEN datetime('now', ?)
                        ELSE expires_at
                    END
-               WHERE id=?""",
+               WHERE id=? AND status IN ('active', 'grace')""",
             (new_plan, f"+{duration_days} days", sub_id),
         )
+        if cur.rowcount == 0:
+            # Sub либо не существует, либо уже expired/refunded — caller должен
+            # пропустить вставку слотов + alert admin (CryptoBot money taken,
+            # subscription state diverged).
+            logger.warning(
+                "change_subscription_plan: sub=%d not eligible (rowcount=0) — "
+                "status guard rejected, slot insertion skipped",
+                sub_id,
+            )
+            await db.commit()
+            return False
+        if new_payment_id:
+            # Upgrade doplata — update payment_id so refund targets the latest charge.
+            # Без этого refund на upgrade-sub'е попадает в первоначальный charge,
+            # а deltaт (Stars/RUB за апгрейд) повисает без возможности вернуть из admin UI.
+            await db.execute(
+                "UPDATE subscriptions SET payment_id=? WHERE id=?",
+                (new_payment_id, sub_id),
+            )
         for proto, delta in (("awg", awg_delta), ("vless", vless_delta), ("wg", wg_delta)):
             if delta < 0:
                 logger.warning(
                     "change_subscription_plan: negative %s_delta=%d for sub=%d plan=%s — "
-                    "slot count decrease not supported, surplus configs remain active",
+                    "caller should call revoke_excess_configs_on_downgrade to revoke surplus",
                     proto, delta, sub_id, new_plan,
                 )
             for _ in range(max(0, delta)):
@@ -1872,6 +1914,7 @@ async def change_subscription_plan(sub_id: int, new_plan: str, user_id: int,
                     (sub_id, user_id, proto),
                 )
         await db.commit()
+        return True
 
 
 async def schedule_plan_change(
@@ -1965,14 +2008,20 @@ async def get_ticket_by_id(ticket_id: int) -> dict | None:
             return dict(row) if row else None
 
 
-async def close_ticket(ticket_id: int):
-    """Закрывает тикет — простой UPDATE статуса. Идемпотентно (close-on-closed = ok)."""
+async def close_ticket(ticket_id: int) -> bool:
+    """Закрывает тикет — простой UPDATE статуса. Идемпотентно (close-on-closed = ok).
+
+    Возвращает True если запись была изменена (тикет существует), False если
+    ничего не сматчилось — caller'у нужно отбить 404 чтобы не маскировать
+    опечатки в ticket_id и не мусорить в audit log.
+    """
     async with _connect() as db:
-        await db.execute(
+        cur = await db.execute(
             "UPDATE support_tickets SET status='closed' WHERE id=?",
             (ticket_id,),
         )
         await db.commit()
+        return (cur.rowcount or 0) > 0
 
 
 # ── expiry reminders ───────────────────────────────────────────────────────────
@@ -2136,14 +2185,16 @@ async def get_referral_stats(referrer_id: int) -> dict:
     """Сколько пользователей привёл реферер и сколько из них купили."""
     async with _connect() as db:
         async with db.execute(
-            "SELECT COUNT(*) FROM users WHERE referred_by=?", (referrer_id,)
+            "SELECT COUNT(*) FROM users WHERE referred_by=? AND COALESCE(is_banned, 0) = 0",
+            (referrer_id,),
         ) as cur:
             invited = (await cur.fetchone())[0]
         async with db.execute(
             """SELECT COUNT(DISTINCT u.id) FROM users u
                JOIN subscriptions s ON s.user_id=u.id
-               WHERE u.referred_by=? AND s.status IN ('active','expired')
-                 AND s.plan != 'vpn_trial'""",
+               WHERE u.referred_by=? AND s.status IN ('active','expired','grace')
+                 AND s.plan != 'vpn_trial'
+                 AND s.refunded_at IS NULL""",
             (referrer_id,),
         ) as cur:
             converted = (await cur.fetchone())[0]
@@ -2160,10 +2211,22 @@ async def get_best_server(protocol: str) -> dict | None:
 
     capacity > 0 фильтр: иначе деление на 0 → NULL, NULL сортируется первым,
     и misconfigured-сервер с capacity=0 «выигрывает» каждый load-balance.
+
+    Protocol mapping явный: awg/wg/vless различимы. Раньше было
+    `proto_field = "awg" if protocol == "awg" else "vless"` — wg сваливался
+    в vless, что заставляло wg-конфиги провижиниться на VLESS-сервера.
     """
+    if protocol == "awg":
+        proto_field = "awg"
+    elif protocol == "wg":
+        proto_field = "wg"
+    elif protocol in ("vless", "vless-reality"):
+        proto_field = "vless"
+    else:
+        logger.warning("get_best_server: unknown protocol=%r", protocol)
+        return None
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        proto_field = "awg" if protocol == "awg" else "vless"
         async with db.execute("""
             SELECT * FROM servers
             WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
@@ -2183,8 +2246,18 @@ async def get_all_active_servers(protocol: str) -> list[dict]:
     capacity > 0 — тот же guard, что в get_best_server: misconfigured-сервера
     с capacity=0 даю́т NULL в сортировке и встают первыми. Лучше скрыть
     полностью, чем гнать туда трафик.
+
+    Protocol mapping явный — см. комментарий в get_best_server.
     """
-    proto_field = "awg" if protocol == "awg" else "vless" if protocol == "vless" else protocol
+    if protocol == "awg":
+        proto_field = "awg"
+    elif protocol == "wg":
+        proto_field = "wg"
+    elif protocol in ("vless", "vless-reality"):
+        proto_field = "vless"
+    else:
+        logger.warning("get_all_active_servers: unknown protocol=%r", protocol)
+        return []
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
@@ -2203,6 +2276,48 @@ async def update_server_peer_count(server_id: int, delta: int):
             (delta, server_id),
         )
         await db.commit()
+
+
+async def reconcile_active_peers_counters() -> list[dict]:
+    """Recompute servers.active_peers from actual configs counts. Returns list of fixes applied.
+
+    Drift accumulates over time when increment/decrement calls are missed (bugs,
+    crashes, edge cases). This recompute is the authoritative correction.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT
+                s.id AS server_id,
+                s.name,
+                s.active_peers AS stored,
+                COALESCE(c.actual_count, 0) AS actual
+            FROM servers s
+            LEFT JOIN (
+                SELECT server_id, COUNT(*) AS actual_count
+                FROM configs
+                WHERE status IN ('active', 'activating') AND server_id IS NOT NULL
+                GROUP BY server_id
+            ) c ON c.server_id = s.id
+            WHERE s.active_peers != COALESCE(c.actual_count, 0)
+        """) as cur:
+            drifted = [dict(r) for r in await cur.fetchall()]
+
+        fixes: list[dict] = []
+        for row in drifted:
+            await db.execute(
+                "UPDATE servers SET active_peers=? WHERE id=?",
+                (row["actual"], row["server_id"]),
+            )
+            fixes.append({
+                "server_id": row["server_id"],
+                "name": row["name"],
+                "before": row["stored"],
+                "after": row["actual"],
+                "delta": row["actual"] - row["stored"],
+            })
+        await db.commit()
+        return fixes
 
 
 async def save_peer_to_config(config_id: int, server_id: int, wg_pubkey: str,

@@ -1376,6 +1376,36 @@ def _spawn_bg(coro, name: str | None = None) -> asyncio.Task:
     return task
 
 
+async def _reconcile_peer_counters(bot: Bot) -> None:
+    """Periodic recompute of servers.active_peers from configs table.
+
+    Catches counter drift caused by missed increments/decrements in edge paths
+    (crashes, partial-fail operations). Runs hourly. Logs admin alert if drift
+    exceeds threshold per server.
+    """
+    from services.database import reconcile_active_peers_counters
+    fixes = await reconcile_active_peers_counters()
+    if not fixes:
+        return
+
+    logger.warning("active_peers reconcile: %d servers had drift", len(fixes))
+
+    # Alert admin if drift is significant (>5 peers per server suggests a bug)
+    significant = [f for f in fixes if abs(f["delta"]) > 5]
+    from config import ADMIN_ID
+    if significant and ADMIN_ID:
+        lines = ["⚠️ <b>active_peers drift detected</b>\n"]
+        for f in significant[:10]:
+            lines.append(
+                f"• {f['name']}: {f['before']} → {f['after']} "
+                f"(delta {f['delta']:+d})"
+            )
+        try:
+            await bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logger.warning("reconcile admin alert: %s", e)
+
+
 async def _run_health_loop(bot: Bot | None = None):
     """Independent loop: probe servers every 60s, write to server_health_log.
     Передаём bot чтобы health.py мог слать alert админу при auto-(de)activate.
@@ -1450,6 +1480,7 @@ async def run_scheduler(bot: Bot):
         # (необратим) прошёл, но DB/agent cleanup не доехал из-за crash.
         # Идемпотентен — если всё чисто, get_partial_refunds вернёт [].
         await _safe("reconcile_refunds", _reconcile_partial_refunds(bot), timeout=180)
+        await _safe("reconcile_peers",  _reconcile_peer_counters(bot),   timeout=120)
         await _safe("expired_orders",   _process_expired_orders(bot),    timeout=60)
         # Менее критичные / медленные — отдельно с large timeout'ом.
         await _safe("vless_stats",      _sync_vless_stats(),             timeout=300)

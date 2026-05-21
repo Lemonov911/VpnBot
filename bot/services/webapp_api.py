@@ -98,6 +98,20 @@ def _migrate_lock_for(server_id: int) -> asyncio.Lock:
     return _migrate_locks[server_id]
 
 
+# Per-sub lock для CryptoBot plan_upgrade webhook (PS2). Параллельные invoice'ы
+# на одну sub'у (юзер открыл апгрейд из двух окон) должны сериализоваться:
+# второй webhook читает уже обновлённый sub.plan и отказывает (expected_from
+# не совпадает) → админ refund'ит вручную. Без лока два webhook'а читали бы
+# исходный план одновременно и оба применяли свои стейл deltas.
+_upgrade_locks: dict[int, asyncio.Lock] = {}
+
+
+def _upgrade_lock_for(sub_id: int) -> asyncio.Lock:
+    if sub_id not in _upgrade_locks:
+        _upgrade_locks[sub_id] = asyncio.Lock()
+    return _upgrade_locks[sub_id]
+
+
 # Тарифы — services.plans (единственный источник истины).
 from services.plans import VPN_PLANS, vless_service_for_plan  # noqa: F401
 
@@ -1016,20 +1030,37 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     logger.info("CryptoBot payment: invoice_id=%s payload=%s",
                 invoice.get("invoice_id"), raw_payload)
 
-    # payload format: "vpn:USER_ID:PLAN_KEY" or "plan_upgrade:SUB_ID:PLAN_KEY:AWG:VLESS[:WG]"
+    # payload format (PS2):
+    #   "vpn:USER_ID:PLAN_KEY"
+    #   "plan_upgrade:SUB_ID:PLAN_KEY:EXPECTED_FROM"  (new)
+    #   "plan_upgrade:SUB_ID:PLAN_KEY:AWG:VLESS[:WG]" (legacy, in-flight pre-PS2)
     parts = raw_payload.split(":")
 
     if parts[0] == "plan_upgrade":
         # ── CryptoBot upgrade payment ──────────────────────────────────────────
-        if len(parts) not in (5, 6):
-            logger.warning("CryptoBot webhook: malformed plan_upgrade payload %r", raw_payload)
-            return web.Response(status=200)
+        # PS2 payload форматы:
+        #   Новый: plan_upgrade:{sub_id}:{plan_key}:{expected_from}
+        #     Deltas пересчитываем под per-sub lock от ТЕКУЩЕГО sub.plan.
+        #   Legacy: plan_upgrade:{sub_id}:{plan_key}:{awg}:{vless}[:{wg}]
+        #     In-flight invoice'ы со stale-deltas (до PS2-rollout).
+        expected_from: str | None = None
+        legacy_deltas: tuple[int, int, int] | None = None
         try:
-            up_sub_id   = int(parts[1])
-            up_plan_key = parts[2]
-            up_awg      = int(parts[3])
-            up_vless    = int(parts[4])
-            up_wg       = int(parts[5]) if len(parts) == 6 else 0
+            if len(parts) == 4:
+                up_sub_id   = int(parts[1])
+                up_plan_key = parts[2]
+                expected_from = parts[3]
+            elif len(parts) in (5, 6):
+                up_sub_id   = int(parts[1])
+                up_plan_key = parts[2]
+                legacy_deltas = (
+                    int(parts[3]),
+                    int(parts[4]),
+                    int(parts[5]) if len(parts) == 6 else 0,
+                )
+            else:
+                logger.warning("CryptoBot webhook: malformed plan_upgrade payload %r", raw_payload)
+                return web.Response(status=200)
         except ValueError:
             logger.warning("CryptoBot webhook: bad int in plan_upgrade payload %r", raw_payload)
             return web.Response(status=200)
@@ -1043,79 +1074,174 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             logger.warning("CryptoBot plan_upgrade: already processed invoice %s", invoice.get("invoice_id"))
             return web.Response(status=200)
 
-        up_sub = await get_subscription_by_id(up_sub_id)
-        if not up_sub:
-            logger.error("CryptoBot plan_upgrade: sub #%d not found invoice %s",
-                         up_sub_id, invoice.get("invoice_id"))
-            return web.Response(status=200)
-        up_user_id = up_sub["user_id"]
-        up_plan    = VPN_PLANS.get(up_plan_key)
-        if not up_plan:
-            logger.warning("CryptoBot plan_upgrade: unknown plan %r", up_plan_key)
-            return web.Response(status=200)
+        # PS2: всю обработку оборачиваем в per-sub lock. Конкурентные upgrade-
+        # webhook'и сериализуются — второй увидит уже обновлённый sub.plan
+        # и (если expected_from не совпадает) отправит платёж админу на refund.
+        async with _upgrade_lock_for(up_sub_id):
+            up_sub = await get_subscription_by_id(up_sub_id)
+            if not up_sub:
+                logger.error("CryptoBot plan_upgrade: sub #%d not found invoice %s",
+                             up_sub_id, invoice.get("invoice_id"))
+                return web.Response(status=200)
+            up_user_id = up_sub["user_id"]
+            up_plan    = VPN_PLANS.get(up_plan_key)
+            if not up_plan:
+                logger.warning("CryptoBot plan_upgrade: unknown plan %r", up_plan_key)
+                return web.Response(status=200)
 
-        was_grace_up = up_sub.get("status") == "grace"
-        await change_subscription_plan(
-            up_sub_id, up_plan_key, up_user_id, up_awg, up_vless, up_wg,
-            duration_days=up_plan["duration_days"],
-        )
-        await _rp(user_id=up_user_id, subscription_id=up_sub_id, method="crypto", tx_id=payment_id)
+            old_plan_key = up_sub["plan"]
 
-        if was_grace_up:
-            try:
-                from services.vpnctl_client import client_for_server
-                from services.plans import vless_service_for_plan
-                configs = await get_configs_for_subscription(up_sub_id)
-                for cfg in configs:
-                    srv_id = cfg.get("server_id")
-                    if not srv_id:
-                        continue
-                    server = await get_server_by_id(srv_id)
-                    if not server or not server.get("agent_url"):
-                        continue
-                    try:
-                        client = client_for_server(server)
-                        proto       = cfg.get("protocol", "")
-                        peer_id     = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                        assigned_ip = cfg.get("assigned_ip") or ""
-                        if proto == "awg" and peer_id and assigned_ip:
-                            await client.unthrottle_peer("awg", peer_id, assigned_ip)
-                        elif proto in ("vless", "vless-reality") and peer_id:
-                            target_svc   = vless_service_for_plan(up_plan_key)
-                            normal_added = False
-                            try:
-                                new_peer = await client.add_peer(
-                                    target_svc, f"u{up_user_id}_c{cfg['id']}", peer_id=peer_id,
-                                )
-                                normal_added = True
-                                for _svc in ("vless-grace", "vless-base-slow", "vless-max-slow"):
-                                    await client.remove_peer(_svc, peer_id)
-                            except Exception:
-                                if normal_added:
-                                    try:
-                                        await client.remove_peer(target_svc, peer_id)
-                                    except Exception:
-                                        pass
-                                raise
-                            if new_peer.config:
-                                await update_config_data(cfg["id"], new_peer.config)
-                    except Exception as e:
-                        logger.warning("CryptoBot plan_upgrade unthrottle cfg #%d: %s", cfg["id"], e)
-            except Exception as e:
-                logger.error("CryptoBot plan_upgrade unthrottle outer: %s", e)
+            # PS2: если payload новый и план уже двинулся — alert админа.
+            if expected_from is not None and up_sub["plan"] != expected_from:
+                logger.error(
+                    "CryptoBot upgrade race: user %d sub=%d already moved from %s to %s, "
+                    "received payment for %s→%s (invoice=%s) — admin alert",
+                    up_user_id, up_sub_id, expected_from, up_sub["plan"],
+                    expected_from, up_plan_key, invoice.get("invoice_id"),
+                )
+                try:
+                    if ADMIN_ID:
+                        bot_alert: Bot = request.app["bot"]
+                        await bot_alert.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>CryptoBot upgrade race</b>\n\n"
+                            f"User: <code>{up_user_id}</code>\n"
+                            f"Sub: #{up_sub_id}\n"
+                            f"Expected plan: <code>{expected_from}</code>\n"
+                            f"Current plan: <code>{up_sub['plan']}</code>\n"
+                            f"Requested target: <code>{up_plan_key}</code>\n"
+                            f"Invoice: <code>{invoice.get('invoice_id')}</code>\n"
+                            f"Amount: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
+                            "Деньги получены CryptoBot — refund через CryptoBot вручную.",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
+                return web.Response(status=200)
 
-        bot_up: Bot = request.app["bot"]
-        try:
-            await bot_up.send_message(
-                up_user_id,
-                f"✅ <b>Тариф изменён на «{up_plan['name']}»!</b>\n\n"
-                f"💎 Оплата: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
-                "Открой <b>Мои конфиги</b> — новые слоты уже там.",
-                parse_mode="HTML",
+            # Пересчитываем deltas от ТЕКУЩЕГО sub.plan (новый формат) или
+            # берём baked-in (legacy формат, in-flight pre-PS2 invoice'ы).
+            if legacy_deltas is not None:
+                up_awg, up_vless, up_wg = legacy_deltas
+            else:
+                cur_plan_obj = VPN_PLANS.get(old_plan_key)
+                if not cur_plan_obj:
+                    logger.error(
+                        "CryptoBot upgrade: unknown current plan %r for sub=%d",
+                        old_plan_key, up_sub_id,
+                    )
+                    return web.Response(status=200)
+                up_awg   = up_plan["awg_slots"]   - cur_plan_obj["awg_slots"]
+                up_vless = up_plan["vless_slots"] - cur_plan_obj["vless_slots"]
+                up_wg    = up_plan.get("wg_slots", 0) - cur_plan_obj.get("wg_slots", 0)
+
+            was_grace_up = up_sub.get("status") == "grace"
+            applied = await change_subscription_plan(
+                up_sub_id, up_plan_key, up_user_id, up_awg, up_vless, up_wg,
+                duration_days=up_plan["duration_days"],
+                new_payment_id=payment_id,
             )
-        except Exception as e:
-            logger.warning("CryptoBot plan_upgrade: failed to notify user %d: %s", up_user_id, e)
-        return web.Response(status=200)
+            if not applied:
+                # PS5 status guard: sub expired/refunded mid-flight. Записываем
+                # payment-row + алертим админа.
+                logger.error(
+                    "CryptoBot upgrade rejected by status guard: sub=%d plan=%s→%s invoice=%s",
+                    up_sub_id, old_plan_key, up_plan_key, invoice.get("invoice_id"),
+                )
+                await _rp(user_id=up_user_id, subscription_id=up_sub_id,
+                          method="crypto", tx_id=payment_id)
+                try:
+                    if ADMIN_ID:
+                        bot_alert2: Bot = request.app["bot"]
+                        await bot_alert2.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>CryptoBot upgrade rejected (status guard)</b>\n\n"
+                            f"User: <code>{up_user_id}</code>\n"
+                            f"Sub: #{up_sub_id}\n"
+                            f"Plan: <code>{old_plan_key}</code> → <code>{up_plan_key}</code>\n"
+                            f"Invoice: <code>{invoice.get('invoice_id')}</code>\n\n"
+                            "Sub была expired/refunded к моменту оплаты — refund CryptoBot вручную.",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
+                return web.Response(status=200)
+
+            await _rp(user_id=up_user_id, subscription_id=up_sub_id, method="crypto", tx_id=payment_id)
+
+            # PS3: если апгрейд уменьшил число слотов в каком-то протоколе —
+            # отозвать лишние configs. Без этого юзер "upgrade'нул" на план
+            # с меньшим набором слотов, но старые пиры продолжают работать.
+            if up_awg < 0 or up_vless < 0 or up_wg < 0:
+                try:
+                    from services.revoke import revoke_excess_configs_on_downgrade
+                    rev, fail = await revoke_excess_configs_on_downgrade(
+                        up_sub_id, old_plan_key=old_plan_key, new_plan_key=up_plan_key,
+                        log_prefix=f"crypto_upgrade_shrink_sub{up_sub_id}",
+                    )
+                    logger.info(
+                        "CryptoBot upgrade with fewer slots sub=%d: revoked %d, failed %d",
+                        up_sub_id, rev, fail,
+                    )
+                except Exception as e:
+                    logger.error("CryptoBot upgrade shrink revoke sub=%d: %s",
+                                 up_sub_id, e, exc_info=True)
+
+            if was_grace_up:
+                try:
+                    from services.vpnctl_client import client_for_server
+                    from services.plans import vless_service_for_plan
+                    configs = await get_configs_for_subscription(up_sub_id)
+                    for cfg in configs:
+                        srv_id = cfg.get("server_id")
+                        if not srv_id:
+                            continue
+                        server = await get_server_by_id(srv_id)
+                        if not server or not server.get("agent_url"):
+                            continue
+                        try:
+                            client = client_for_server(server)
+                            proto       = cfg.get("protocol", "")
+                            peer_id     = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                            assigned_ip = cfg.get("assigned_ip") or ""
+                            if proto == "awg" and peer_id and assigned_ip:
+                                await client.unthrottle_peer("awg", peer_id, assigned_ip)
+                            elif proto in ("vless", "vless-reality") and peer_id:
+                                target_svc   = vless_service_for_plan(up_plan_key)
+                                normal_added = False
+                                try:
+                                    new_peer = await client.add_peer(
+                                        target_svc, f"u{up_user_id}_c{cfg['id']}", peer_id=peer_id,
+                                    )
+                                    normal_added = True
+                                    for _svc in ("vless-grace", "vless-base-slow", "vless-max-slow"):
+                                        await client.remove_peer(_svc, peer_id)
+                                except Exception:
+                                    if normal_added:
+                                        try:
+                                            await client.remove_peer(target_svc, peer_id)
+                                        except Exception:
+                                            pass
+                                    raise
+                                if new_peer.config:
+                                    await update_config_data(cfg["id"], new_peer.config)
+                        except Exception as e:
+                            logger.warning("CryptoBot plan_upgrade unthrottle cfg #%d: %s", cfg["id"], e)
+                except Exception as e:
+                    logger.error("CryptoBot plan_upgrade unthrottle outer: %s", e)
+
+            bot_up: Bot = request.app["bot"]
+            try:
+                await bot_up.send_message(
+                    up_user_id,
+                    f"✅ <b>Тариф изменён на «{up_plan['name']}»!</b>\n\n"
+                    f"💎 Оплата: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
+                    "Открой <b>Мои конфиги</b> — новые слоты уже там.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.warning("CryptoBot plan_upgrade: failed to notify user %d: %s", up_user_id, e)
+            return web.Response(status=200)
 
     if len(parts) != 3 or parts[0] != "vpn":
         logger.warning("CryptoBot webhook: unexpected payload %s", raw_payload)
@@ -2611,17 +2737,18 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
             rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days_f / 30))
             upgrade_desc = f"Апгрейд до «{new_plan['name']}». Доплата за {remaining_days} дн."
 
-        awg_delta   = new_plan["awg_slots"]   - cur_plan["awg_slots"]
-        vless_delta = new_plan["vless_slots"] - cur_plan["vless_slots"]
-        wg_delta    = new_plan.get("wg_slots", 0) - cur_plan.get("wg_slots", 0)
-
         if not CRYPTOBOT_TOKEN:
             return web.json_response({"error": "Оплата апгрейда временно недоступна"}, status=503)
 
         from services.cryptobot import create_invoice
         bot: Bot = request.app["bot"]
         bot_info = await bot.get_me()
-        payload  = f"plan_upgrade:{sub['id']}:{plan_key}:{awg_delta}:{vless_delta}:{wg_delta}"
+        # PS2: новый payload — без baked-in deltas. Webhook пересчитает их
+        # под per-sub lock от ТЕКУЩЕГО sub.plan. Параллельные upgrade-invoice'ы
+        # больше не аккумулируют stale deltas. `expected_from` нужен чтобы
+        # webhook отказался применять платёж если план уже двинулся
+        # (юзер открыл два invoice'а, оплатил оба — второй идёт админу на refund).
+        payload = f"plan_upgrade:{sub['id']}:{plan_key}:{sub['plan']}"
 
         try:
             invoice = await create_invoice(
@@ -2846,8 +2973,13 @@ async def handle_user_stats(request: web.Request) -> web.Response:
     from services.database import DB_PATH
     import aiosqlite as _sq
     async with _sq.connect(DB_PATH) as db:
+        # Исключаем refunded sub'ы и trial — без фильтра LTV overstate'ил
+        # доход на сумму всех refund'ов (юзер видел «спустил 5000⭐» хотя
+        # половину вернули админом). trial всегда stars_paid=0, но на всякий.
         async with db.execute(
-            "SELECT COALESCE(SUM(stars_paid),0) FROM subscriptions WHERE user_id=?", (uid,)
+            "SELECT COALESCE(SUM(stars_paid),0) FROM subscriptions "
+            "WHERE user_id=? AND refunded_at IS NULL AND plan != 'vpn_trial'",
+            (uid,),
         ) as cur:
             row = await cur.fetchone()
             assert row is not None
@@ -2858,18 +2990,22 @@ async def handle_user_stats(request: web.Request) -> web.Response:
             row = await cur.fetchone()
             bonus_days = row[0] if row else 0
         async with db.execute(
-            "SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)
+            "SELECT COUNT(*) FROM users WHERE referred_by=? AND COALESCE(is_banned, 0) = 0",
+            (uid,),
         ) as cur:
             row = await cur.fetchone()
             assert row is not None
             invited = row[0]
         # converted — сколько из приглашённых реально оформили подписку.
         # Используется на Home banner: «3 пригласил · 1 уже оформил».
+        # Фильтры дублируют database.get_referral_stats — refunded не считаются
+        # converted (иначе админский refund «съедал» статистику реферера).
         async with db.execute(
             """SELECT COUNT(DISTINCT u.id) FROM users u
                JOIN subscriptions s ON s.user_id=u.id
                WHERE u.referred_by=? AND s.status IN ('active','expired','grace')
-                 AND s.plan != 'vpn_trial'""",
+                 AND s.plan != 'vpn_trial'
+                 AND s.refunded_at IS NULL""",
             (uid,),
         ) as cur:
             row = await cur.fetchone()
@@ -3052,17 +3188,27 @@ async def cors_middleware(request: web.Request, handler):
 
 # ── Admin API (для Next.js admin панели) ──────────────────────────────────────
 
+def _check_admin_rate_limit(request: web.Request) -> bool:
+    """Rate-limit gate for admin endpoints — per-IP.
+
+    Returns False when the caller exceeded the window; caller should answer 429.
+    Window bumped to 10s — admin panel issues several parallel requests on page
+    load, and a 2s window was triggering false rejections.
+    """
+    import time as _t
+    ip = _client_ip(request)
+    return _rate_limit_check_evict(_admin_rate, ip, _t.monotonic(), window=10.0)
+
+
 def _check_admin_secret(request: web.Request) -> bool:
-    """Проверяет X-Admin-Secret header. Без него все admin endpoints — 403.
-    Rate-limit: 1 req/2s per IP — слишком быстро для brute-force, но ок для
-    нормального использования (admin-панель делает запросы не чаще 1/сек).
+    """Validate X-Admin-Secret header. Without it all admin endpoints answer 403.
+
+    Note: rate-limit is now a separate gate (`_check_admin_rate_limit`) so callers
+    can distinguish a 429 from a 403 — previously both collapsed into False and
+    confused the admin panel during parallel page loads.
     """
     import hmac as _hmac_lib
-    import time as _t
     if not ADMIN_API_SECRET:
-        return False
-    ip = _client_ip(request)
-    if not _rate_limit_check_evict(_admin_rate, ip, _t.monotonic(), window=2.0):
         return False
     incoming = request.headers.get("X-Admin-Secret", "")
     return _hmac_lib.compare_digest(incoming.encode(), ADMIN_API_SECRET.encode())
@@ -3073,6 +3219,8 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
     Body: { "text": "...", "close": true|false }
     Шлёт юзеру ответ от имени бота. Опционально закрывает тикет.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3121,17 +3269,27 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
 
 async def handle_admin_ticket_close(request: web.Request) -> web.Response:
     """POST /api/admin/tickets/{id}/close — закрыть тикет без отправки сообщения."""
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    from services.database import close_ticket
+    from services.database import close_ticket, audit_log_record
     ticket_id_str = request.match_info.get("id", "")
     try:
         ticket_id = int(ticket_id_str)
     except ValueError:
         return web.json_response({"error": "bad id"}, status=400)
 
-    await close_ticket(ticket_id)
+    closed = await close_ticket(ticket_id)
+    if not closed:
+        return web.json_response({"error": "ticket not found"}, status=404)
+
+    await audit_log_record(
+        admin_id=0, action="ticket_close",
+        target=f"ticket:{ticket_id}",
+        details="-",
+    )
     return web.json_response({"ok": True})
 
 
@@ -3149,6 +3307,8 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     Body: { "days": 7, "reason": "compensation" }
     Добавляет N дней к expires_at. Из grace возвращает в active.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3197,6 +3357,8 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     Помечает подписку refunded.  Если stars_refund=true и платёж был Stars —
     дополнительно вызывает refund_star_payment у Telegram (необратимо).
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3219,6 +3381,11 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     sub = await get_subscription_by_id(sub_id)
     if not sub:
         return web.json_response({"error": "sub not found"}, status=404)
+    if sub["user_id"] in ADMIN_IDS or sub["user_id"] == ADMIN_ID:
+        return web.json_response(
+            {"error": "Cannot refund an admin's subscription"},
+            status=400,
+        )
 
     # Получаем payment_id отдельным запросом — get_subscription_by_id его не возвращает.
     # R8: для Stars refund приоритизируем ПОСЛЕДНИЙ Stars-charge для этой
@@ -3406,12 +3573,19 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
     Ставит is_banned=1.  Существующие конфиги работают до естественного expiry —
     отдельной кнопкой можно сделать refund подписки если нужно отрезать сразу.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
     user_id = _parse_path_int(request, "id")
     if user_id is None:
         return web.json_response({"error": "bad id"}, status=400)
+    if user_id in ADMIN_IDS or user_id == ADMIN_ID:
+        return web.json_response(
+            {"error": "Cannot ban an admin user"},
+            status=400,
+        )
 
     try:
         body = await request.json()
@@ -3502,6 +3676,8 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     создаёт новую sub + пустые config-слоты (юзер активирует их сам в Mini App).
     Опционально шлёт юзеру TG-уведомление о подарке если бот может ему написать.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3530,6 +3706,11 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     from services.plans import VPN_PLANS
     if not isinstance(plan_key, str) or plan_key not in VPN_PLANS:
         return web.json_response({"error": "unknown plan_key"}, status=400)
+    if plan_key == "vpn_trial":
+        return web.json_response(
+            {"error": "Cannot grant a trial subscription; trial has its own cooldown logic"},
+            status=400,
+        )
 
     if not isinstance(days, int) or not (1 <= days <= 365):
         return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
@@ -3607,6 +3788,8 @@ async def handle_admin_grants_list(request: web.Request) -> web.Response:
     """GET /api/admin/grants?limit=50
     Список последних N grant'ов из payments (is_free_grant=1). Сортировка по created_at DESC.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3629,6 +3812,8 @@ async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
     переимпорта подписки. Идемпотентна — повторный запуск пропустит уже-
     реплицированные слоты.
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3742,6 +3927,8 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
     AWG/WG: re-provision на лучшем доступном сервере + уведомление юзеру скачать конфиг.
     VLESS: сбрасывает dead-server записи (multi-location копии на других серверах живы).
     """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
@@ -3822,6 +4009,21 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
                     await reset_config_slot(config_id)
                     await update_server_peer_count(server_id, -1)
                     reset_vless += 1
+                    # Notify user: their VLESS location was removed, but multi-location means
+                    # other servers still work for them. They should re-fetch sub URL in Happ.
+                    try:
+                        if user_id not in notified:
+                            notified.add(user_id)
+                            await bot.send_message(
+                                user_id,
+                                "🔄 <b>Локация VPN обновлена</b>\n\n"
+                                "Один из VPN-серверов выведен из эксплуатации. "
+                                "Открой Happ → потяни вниз для обновления подписки. "
+                                "Остальные локации работают как обычно.",
+                                parse_mode="HTML",
+                            )
+                    except Exception as e:
+                        logger.warning("VLESS migrate notify user=%d: %s", user_id, e)
                     continue
 
                 # AWG / plain WG — single-server, must migrate
@@ -3898,12 +4100,19 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
 
 async def handle_admin_user_unban(request: web.Request) -> web.Response:
     """POST /api/admin/user/{id}/unban — снимает бан."""
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
     user_id = _parse_path_int(request, "id")
     if user_id is None:
         return web.json_response({"error": "bad id"}, status=400)
+    if user_id in ADMIN_IDS or user_id == ADMIN_ID:
+        return web.json_response(
+            {"error": "Cannot ban an admin user"},
+            status=400,
+        )
 
     from services.database import set_user_banned, audit_log_record
     ok = await set_user_banned(user_id, banned=False)

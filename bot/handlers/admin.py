@@ -105,6 +105,11 @@ async def cmd_stats(message: Message):
         rev_stars_row = await (await db.execute(
             "SELECT COALESCE(SUM(stars),0) FROM payments WHERE date(created_at)=date('now')"
         )).fetchone()
+        # Daily RUB revenue (CryptoBot/Lava/OxaPay paid in RUB go into subscriptions.amount_rub)
+        rev_rub_row = await (await db.execute(
+            "SELECT COALESCE(SUM(amount_rub),0) FROM subscriptions "
+            "WHERE date(created_at)=date('now') AND refunded_at IS NULL AND plan != 'vpn_trial'"
+        )).fetchone()
         # Всего юзеров
         users_row = await (await db.execute("SELECT COUNT(*) FROM users")).fetchone()
         # Истекают за 3 дня
@@ -126,6 +131,7 @@ async def cmd_stats(message: Message):
     )
     throttled = thr_row[0] if thr_row else 0
     today_stars = rev_stars_row[0] if rev_stars_row else 0
+    today_rub = rev_rub_row[0] if rev_rub_row else 0
     total_users = users_row[0] if users_row else 0
     expiring = exp_row[0] if exp_row else 0
 
@@ -136,7 +142,7 @@ async def cmd_stats(message: Message):
         f"<b>Серверы</b>:\n<code>{srvs}</code>\n\n"
         f"🐢 Throttled: <b>{throttled}</b>\n"
         f"⏳ Истекают за 3 дня: <b>{expiring}</b>\n"
-        f"⭐ Доход сегодня: <b>{today_stars}</b>\n"
+        f"💰 Доход сегодня: <b>{today_stars} ⭐</b> / <b>{today_rub} ₽</b>\n"
         f"👤 Всего юзеров: <b>{total_users}</b>"
     )
     await message.answer(text, parse_mode="HTML")

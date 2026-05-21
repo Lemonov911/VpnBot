@@ -118,12 +118,16 @@ export function allPayments(filters: {
   const sql = `
     SELECT s.id, s.user_id, s.plan, s.stars_paid, s.amount_rub, s.payment_id,
            s.status, s.refunded_at, s.created_at, s.expires_at,
-           CASE
-             WHEN s.payment_id LIKE 'crypto_%'      THEN 'crypto'
-             WHEN s.payment_id LIKE 'free_%'        THEN 'free'
-             WHEN s.payment_id LIKE 'admin_grant_%' THEN 'admin_grant'
-             ELSE 'stars'
-           END as method,
+           COALESCE(s.payment_provider,
+                    CASE
+                      WHEN s.payment_id LIKE 'crypto_%'      THEN 'cryptobot'
+                      WHEN s.payment_id LIKE 'oxapay_%'      THEN 'oxapay'
+                      WHEN s.payment_id LIKE 'lavatop_%'     THEN 'lavatop'
+                      WHEN s.payment_id LIKE 'admin_grant_%' THEN 'gift'
+                      WHEN s.payment_id LIKE 'trial_%'       THEN 'trial'
+                      WHEN s.payment_id LIKE 'free_%'        THEN 'free'
+                      ELSE 'stars'
+                    END) as method,
            u.username, u.first_name,
            (SELECT p.granted_by_admin_id
               FROM payments p
@@ -235,9 +239,9 @@ export function analyticsSummary() {
     subs_active:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='active' ${excl}`),
     subs_paid_30d:        r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
     subs_trial_30d:       r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
-    revenue_stars_30d:    r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
-    revenue_stars_7d:     r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
-    expired_30d:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='expired' AND expires_at > datetime('now','-30 days') ${excl}`),
+    revenue_stars_30d:    r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_stars_7d:     r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-7 days') ${excl}`),
+    expired_30d:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='expired' AND datetime(REPLACE(expires_at, 'T', ' ')) > datetime('now','-30 days') ${excl}`),
   }
 }
 
@@ -249,6 +253,7 @@ export function dailyRevenueLast30() {
            COALESCE(SUM(stars_paid),0) as stars
     FROM subscriptions
     WHERE plan != 'vpn_trial'
+      AND refunded_at IS NULL
       AND created_at > datetime('now','-30 days') ${excl}
     GROUP BY day
     ORDER BY day ASC
@@ -323,9 +328,9 @@ export function topClients(limit = 50) {
   const excl = excludeAdminsClause('u.id')
   return db().prepare(`
     SELECT u.id, u.username, u.first_name, u.created_at as joined_at,
-           COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial')                       as paid_subs,
+           COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial' AND s.refunded_at IS NULL)                       as paid_subs,
            COUNT(s.id) FILTER (WHERE s.plan = 'vpn_trial')                        as trial_subs,
-           COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' THEN s.stars_paid END), 0) as total_stars,
+           COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' AND s.refunded_at IS NULL THEN s.stars_paid END), 0) as total_stars,
            MAX(CASE WHEN s.status = 'active' THEN s.plan END)                     as current_plan,
            MAX(s.created_at)                                                       as last_purchase,
            MAX(CASE WHEN s.status = 'active' THEN s.expires_at END)               as active_until
@@ -355,20 +360,20 @@ export function moneyTotals() {
   const r = (sql: string) => (d.prepare(sql).get() as { n: number }).n
   const excl = excludeAdminsClause('user_id')
   return {
-    total_revenue_stars: r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' ${excl}`),
-    total_revenue_rub:   r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' ${excl}`),
-    paying_users:        r(`SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND (stars_paid > 0 OR amount_rub > 0) ${excl}`),
+    total_revenue_stars: r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL ${excl}`),
+    total_revenue_rub:   r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL ${excl}`),
+    paying_users:        r(`SELECT COUNT(DISTINCT user_id) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND (stars_paid > 0 OR amount_rub > 0) ${excl}`),
     avg_revenue_per_payer: 0,
     avg_ltv_stars:       0,
-    revenue_7d:          r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
-    revenue_30d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
-    revenue_90d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days') ${excl}`),
-    revenue_rub_7d:      r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-7 days') ${excl}`),
-    revenue_rub_30d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
-    revenue_rub_90d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-90 days') ${excl}`),
+    revenue_7d:          r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-7 days') ${excl}`),
+    revenue_30d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_90d:         r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-90 days') ${excl}`),
+    revenue_rub_7d:      r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-7 days') ${excl}`),
+    revenue_rub_30d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-30 days') ${excl}`),
+    revenue_rub_90d:     r(`SELECT COALESCE(SUM(amount_rub),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-90 days') ${excl}`),
     repeat_buyers:       r(`SELECT COUNT(*) as n FROM (
       SELECT user_id FROM subscriptions
-      WHERE plan!='vpn_trial' AND (stars_paid > 0 OR amount_rub > 0) ${excl}
+      WHERE plan!='vpn_trial' AND refunded_at IS NULL AND (stars_paid > 0 OR amount_rub > 0) ${excl}
       GROUP BY user_id HAVING COUNT(*) > 1
     )`),
   }
@@ -435,8 +440,8 @@ export function monitoringSnapshot() {
     revoked_configs:    r("SELECT COUNT(*) as n FROM configs WHERE status='revoked'"),
     open_tickets:       r("SELECT COUNT(*) as n FROM support_tickets WHERE status='open'"),
     closed_tickets:     r("SELECT COUNT(*) as n FROM support_tickets WHERE status='closed'"),
-    expiring_3d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND expires_at <= datetime('now','+3 days')"),
-    expiring_1d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND expires_at <= datetime('now','+1 day')"),
+    expiring_3d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now','+3 days')"),
+    expiring_1d:        r("SELECT COUNT(*) as n FROM subscriptions WHERE status='active' AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now','+1 day')"),
   }
 }
 
@@ -450,7 +455,7 @@ export function payingUsersGrowth() {
   const rows = d.prepare(`
     SELECT strftime('%Y-%m', created_at) as month, COUNT(*) as new_paid
     FROM subscriptions
-    WHERE plan NOT IN ('vpn_trial') AND (stars_paid > 0 OR amount_rub > 0) ${excl}
+    WHERE plan NOT IN ('vpn_trial') AND refunded_at IS NULL AND (stars_paid > 0 OR amount_rub > 0) ${excl}
     GROUP BY month
     ORDER BY month
   `).all() as Array<{ month: string; new_paid: number }>
@@ -660,15 +665,16 @@ export function attributionByPeriod(days: number | null = 30): AttributionRow[] 
           SELECT 1 FROM subscriptions s
           WHERE s.user_id = u.id
             AND s.plan != 'vpn_trial'
+            AND s.refunded_at IS NULL
             AND (s.stars_paid > 0 OR s.amount_rub > 0)
         ) THEN 1 ELSE 0 END                  as had_paid,
         COALESCE((
           SELECT SUM(s.stars_paid) FROM subscriptions s
-          WHERE s.user_id = u.id AND s.plan != 'vpn_trial'
+          WHERE s.user_id = u.id AND s.plan != 'vpn_trial' AND s.refunded_at IS NULL
         ), 0)                                 as stars_total,
         COALESCE((
           SELECT SUM(s.amount_rub) FROM subscriptions s
-          WHERE s.user_id = u.id AND s.plan != 'vpn_trial'
+          WHERE s.user_id = u.id AND s.plan != 'vpn_trial' AND s.refunded_at IS NULL
         ), 0)                                 as rub_total
       FROM users u
       WHERE 1=1 ${dateWhere} ${exclU}

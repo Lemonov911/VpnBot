@@ -879,28 +879,61 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
 
 
 async def _apply_plan_upgrade(message: Message, payment):
-    """Применяет апгрейд тарифа после успешной оплаты."""
+    """Применяет апгрейд тарифа после успешной оплаты.
+
+    Idempotency (PS1): Telegram может redeliver successful_payment если бот не
+    ответил вовремя. Дублирующий charge_id уже записан в payments → пропускаем,
+    иначе второй вызов снова вставит слоты (double-add).
+
+    Payload format (PS2):
+      Новый: plan_upgrade:{sub_id}:{plan_key}:{expected_from}
+        — deltas пересчитываем на лету от ТЕКУЩЕГО sub.plan под per-sub lock.
+        Если sub.plan уже изменился (параллельный upgrade) — отказываем и
+        алертим админа (Stars charge нужно refund'ить вручную).
+      Legacy: plan_upgrade:{sub_id}:{plan_key}:{awg}:{vless}[:{wg}]
+        — старые in-flight invoice'ы со stale-deltas, ещё могут дойти после
+        деплоя. Обрабатываем «как раньше».
+    """
+    # Idempotency guard: дубль-doсtavка от Telegram. record_payment ниже
+    # вставит row с UNIQUE tx_id — повторный вызов увидит запись и выйдет.
+    # ВАЖНО: гард в самом начале, до любых DB-мутаций. Иначе double-add слотов.
+    from services.database import is_payment_recorded as _is_recorded
+    payment_id = payment.telegram_payment_charge_id
+    if await _is_recorded(payment_id):
+        logger.warning("_apply_plan_upgrade: duplicate Stars charge %s, skipping", payment_id)
+        return
+
     parts = payment.invoice_payload.split(":")
-    # plan_upgrade:{sub_id}:{plan_key}:{awg_delta}:{vless_delta}[:{wg_delta}]
-    # wg_delta — опциональный 6-й элемент (added after launch). Старые in-flight
-    # invoice'ы без него парсятся с wg_delta=0.
-    if len(parts) not in (5, 6):
+    if len(parts) < 4 or parts[0] != "plan_upgrade":
         await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
         return
 
-    _, sub_id_str, plan_key, awg_delta_str, vless_delta_str = parts[:5]
-    wg_delta_str = parts[5] if len(parts) == 6 else "0"
+    user_id = message.from_user.id
+
+    # Парсим payload — два формата.
+    expected_from: str | None = None
+    legacy_deltas: tuple[int, int, int] | None = None
     try:
-        sub_id      = int(sub_id_str)
-        awg_delta   = int(awg_delta_str)
-        vless_delta = int(vless_delta_str)
-        wg_delta    = int(wg_delta_str)
+        sub_id = int(parts[1])
+        plan_key = parts[2]
+        if len(parts) == 4:
+            # Новый формат — expected_from = текущий план на момент создания invoice'а.
+            expected_from = parts[3]
+        elif len(parts) in (5, 6):
+            # Legacy формат с baked deltas. wg_delta опциональный.
+            legacy_deltas = (
+                int(parts[3]),
+                int(parts[4]),
+                int(parts[5]) if len(parts) == 6 else 0,
+            )
+        else:
+            await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
+            return
     except ValueError:
         logger.error("upgrade payload parse failed: %r (payment=%s)",
-                     payment.invoice_payload, payment.telegram_payment_charge_id, exc_info=True)
+                     payment.invoice_payload, payment_id, exc_info=True)
         await message.answer("⚠️ Ошибка payload апгрейда. Напиши в поддержку.")
         return
-    user_id     = message.from_user.id
 
     plan = VPN_PLANS.get(plan_key)
     if not plan:
@@ -914,23 +947,128 @@ async def _apply_plan_upgrade(message: Message, payment):
     sub = await get_subscription_by_id(sub_id)
     if not sub:
         logger.error("upgrade: sub #%d не найдена (payment_id=%s, user=%d)",
-                     sub_id, payment.telegram_payment_charge_id, user_id)
+                     sub_id, payment_id, user_id)
         await message.answer("⚠️ Подписка не найдена. Напиши в поддержку.")
         return
     if sub["user_id"] != user_id:
         logger.error("upgrade SECURITY: sub #%d принадлежит user %d, оплатил %d (payment=%s)",
-                     sub_id, sub["user_id"], user_id, payment.telegram_payment_charge_id)
+                     sub_id, sub["user_id"], user_id, payment_id)
         await message.answer("⚠️ Подписка не твоя. Если это ошибка — напиши в поддержку.")
         return
 
     was_grace = sub.get("status") == "grace"
+    old_plan_key = sub["plan"]
     # Lock per sub_id — защита от race с scheduler'ом который может в это
     # же время grace-expire-нуть подписку и удалить пиры пока идёт unthrottle.
+    # ТАКЖЕ защита от concurrent upgrade webhook'ов на ту же sub'у — внутри
+    # лока пересчитываем deltas от ТЕКУЩЕГО sub.plan (PS2).
     async with _sub_lifecycle_lock(sub_id):
-        await change_subscription_plan(
+        # Перечитываем sub под локом — между read'ом выше и сейчас другой
+        # webhook мог изменить план. Это та самая стейл-данных гонка которую
+        # лечит PS2.
+        sub = await get_subscription_by_id(sub_id) or sub
+        old_plan_key = sub["plan"]
+
+        if expected_from is not None and sub["plan"] != expected_from:
+            # User уже двинулся с expected_from на другой план — этот платёж
+            # относится к устаревшему состоянию. Алертим админа на ручной refund.
+            logger.error(
+                "Stars upgrade race: user %d sub=%d already moved from %s to %s, "
+                "received payment for %s→%s (charge=%s) — admin alert",
+                user_id, sub_id, expected_from, sub["plan"], expected_from, plan_key, payment_id,
+            )
+            from config import ADMIN_ID
+            try:
+                if ADMIN_ID:
+                    bot_obj = message.bot
+                    await bot_obj.send_message(
+                        ADMIN_ID,
+                        f"🚨 <b>Stars upgrade race</b>\n\n"
+                        f"User: <code>{user_id}</code>\n"
+                        f"Sub: #{sub_id}\n"
+                        f"Expected plan: <code>{expected_from}</code>\n"
+                        f"Current plan: <code>{sub['plan']}</code>\n"
+                        f"Requested target: <code>{plan_key}</code>\n"
+                        f"Payment: <code>{payment_id}</code>\n\n"
+                        "Telegram Stars charge получен. Нужен ручной refund "
+                        "через bot refundStarPayment (charge_id выше).",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
+            await message.answer(
+                "⚠️ План уже был изменён в параллельной сессии. "
+                "Админ свяжется для возврата ⭐. Напиши в поддержку с этим charge_id: "
+                f"<code>{payment_id}</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Пересчитываем deltas от ТЕКУЩЕГО sub.plan (новый формат) или берём
+        # baked-in (legacy формат).
+        if legacy_deltas is not None:
+            awg_delta, vless_delta, wg_delta = legacy_deltas
+        else:
+            cur_plan = VPN_PLANS.get(old_plan_key)
+            if not cur_plan:
+                logger.error("upgrade: unknown current plan %r for sub=%d", old_plan_key, sub_id)
+                await message.answer("⚠️ Ошибка плана. Напиши в поддержку.")
+                return
+            awg_delta   = plan["awg_slots"]   - cur_plan["awg_slots"]
+            vless_delta = plan["vless_slots"] - cur_plan["vless_slots"]
+            wg_delta    = plan.get("wg_slots", 0) - cur_plan.get("wg_slots", 0)
+
+        applied = await change_subscription_plan(
             sub_id, plan_key, user_id, awg_delta, vless_delta, wg_delta,
             duration_days=plan["duration_days"],
+            new_payment_id=payment.telegram_payment_charge_id,
         )
+        if not applied:
+            # PS5 status guard: sub более не eligible (expired/refunded mid-flight).
+            # Алертим админа и НЕ инсертим слоты. record_payment всё равно
+            # выполним внизу — Stars-charge получен, нужен ручной refund.
+            logger.error(
+                "Stars upgrade rejected by status guard: sub=%d user=%d plan=%s→%s (charge=%s)",
+                sub_id, user_id, old_plan_key, plan_key, payment_id,
+            )
+            from config import ADMIN_ID
+            try:
+                if ADMIN_ID:
+                    await message.bot.send_message(
+                        ADMIN_ID,
+                        f"🚨 <b>Stars upgrade rejected (status guard)</b>\n\n"
+                        f"User: <code>{user_id}</code>\n"
+                        f"Sub: #{sub_id}\n"
+                        f"Plan: <code>{old_plan_key}</code> → <code>{plan_key}</code>\n"
+                        f"Charge: <code>{payment_id}</code>\n\n"
+                        "Sub была expired/refunded к моменту оплаты — нужен manual refund.",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
+            await message.answer(
+                "⚠️ Подписка уже была закрыта. Админ свяжется для возврата ⭐. "
+                f"Напиши в поддержку с charge_id: <code>{payment_id}</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        # PS3: если апгрейд уменьшил число слотов в каком-то протоколе —
+        # отозвать лишние configs. Без этого юзер «upgrade'нул» на план с
+        # меньшим набором слотов, но продолжает пользоваться старыми пирами.
+        if awg_delta < 0 or vless_delta < 0 or wg_delta < 0:
+            try:
+                from services.revoke import revoke_excess_configs_on_downgrade
+                revoked, failed = await revoke_excess_configs_on_downgrade(
+                    sub_id, old_plan_key=old_plan_key, new_plan_key=plan_key,
+                    log_prefix=f"upgrade_shrink_sub{sub_id}",
+                )
+                logger.info(
+                    "upgrade with fewer slots sub=%d: revoked %d, failed %d",
+                    sub_id, revoked, failed,
+                )
+            except Exception as e:
+                logger.error("upgrade shrink revoke sub=%d: %s", sub_id, e, exc_info=True)
 
         # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
         # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что
@@ -989,12 +1127,16 @@ async def _apply_plan_upgrade(message: Message, payment):
         parts_desc.append(f"{plan['wg_slots']} WireGuard")
     slots_desc = " + ".join(parts_desc) or "0"
 
+    # PS1: gate-row для idempotency guard. UNIQUE на tx_id защитит от двойного
+    # запуска при Telegram retry. Если уже записан — record_payment вернёт False,
+    # но мы дошли до сюда только если was_recorded=False в начале, так что
+    # это безопасно.
     await record_payment(
         user_id=user_id,
         subscription_id=sub_id,
         method="stars",
         stars=payment.total_amount,
-        tx_id=payment.telegram_payment_charge_id,
+        tx_id=payment_id,
     )
 
     await message.answer(
