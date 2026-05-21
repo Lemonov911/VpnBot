@@ -50,7 +50,7 @@ class PeerResult:
     id: str
     label: str
     config: str
-    extra: dict = None
+    extra: dict | None = None
 
 
 class VpnctlError(Exception):
@@ -115,13 +115,13 @@ class VpnctlClient:
         st, data = await self._request("GET", "/health", timeout_s=10)
         if st != 200:
             raise VpnctlError(f"health: {st}")
-        return data
+        return data if isinstance(data, dict) else {}
 
     async def list_services(self) -> list:
         st, data = await self._request("GET", "/services", timeout_s=10)
         if st != 200:
             raise VpnctlError(f"list_services: {st}")
-        return data
+        return data if isinstance(data, list) else []
 
     async def add_peer(self, service: str, label: str, *, peer_id: str | None = None) -> PeerResult:
         body: dict = {"label": label}
@@ -198,7 +198,7 @@ class VpnctlClient:
         )
         if st != 200:
             raise VpnctlError(f"sync({service}): {data}")
-        return data
+        return data if isinstance(data, dict) else {}
 
     # ── Backward compat (WG-only) ──────────────────────────────────────────────
 
@@ -307,7 +307,7 @@ async def _probe_server(server_id: int) -> int:
         st, data = await client._request("GET", "/health", timeout_s=10)
         elapsed = (time.time() - t0) * 1000
         print(f"  status: {st}, latency: {elapsed:.0f}ms")
-        if st == 200:
+        if st == 200 and isinstance(data, dict):
             print(f"  uptime: {data.get('uptime')}, services: {data.get('services')}")
             ok_count += 1
         else:

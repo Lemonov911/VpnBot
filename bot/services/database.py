@@ -2108,7 +2108,7 @@ async def get_user_configs_full(user_id: int) -> list[dict]:
             return [dict(r) for r in await cur.fetchall()]
 
 
-async def record_payment(user_id: int, subscription_id: int, method: str,
+async def record_payment(user_id: int, subscription_id: int | None, method: str,
                           stars: int = 0, amount_usd: float = 0.0, tx_id: str = "") -> bool:
     """Records a payment. Returns True if NEW row inserted, False if dedup
     (duplicate tx_id — webhook retry, recurring re-fire).  Caller must handle

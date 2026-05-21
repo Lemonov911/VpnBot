@@ -782,7 +782,8 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
             if srv:
                 from services.vpnctl_client import revoke_peer
                 peer_id = config.get("vless_uuid") or config.get("wg_pubkey")
-                await revoke_peer(srv, peer_id, config["protocol"])
+                if peer_id:
+                    await revoke_peer(srv, str(peer_id), config["protocol"])
         except Exception as e:
             logger.warning("Не удалось удалить пир %s: %s", config["peer_name"], e, exc_info=True)
 
@@ -847,7 +848,7 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
             amount=amount,
             payload=payload,
             description=f"VPN {plan['name']} — 30 дней · VLESS-Reality",
-            bot_username=bot_info.username,
+            bot_username=bot_info.username or "",
         )
     except Exception as e:
         logger.error("CryptoBot invoice error: %s", e, exc_info=True)
@@ -1338,6 +1339,7 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     ):
         return web.Response(status=200)
 
+    from datetime import datetime, timedelta
     expires_at = datetime.utcnow() + timedelta(days=plan["duration_days"])
     sub_id = await create_subscription(
         user_id=user_id,
@@ -2343,7 +2345,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
                 amount=str(rub_price),
                 payload=payload,
                 description=upgrade_desc,
-                bot_username=bot_info.username,
+                bot_username=bot_info.username or "",
             )
         except Exception as e:
             logger.error("CryptoBot upgrade invoice error: %s", e, exc_info=True)
@@ -2516,7 +2518,9 @@ async def handle_user_stats(request: web.Request) -> web.Response:
         async with db.execute(
             "SELECT COALESCE(SUM(stars_paid),0) FROM subscriptions WHERE user_id=?", (uid,)
         ) as cur:
-            stars_spent = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            assert row is not None
+            stars_spent = row[0]
         async with db.execute(
             "SELECT COALESCE(ref_bonus_days,0) FROM users WHERE id=?", (uid,)
         ) as cur:
@@ -2525,7 +2529,9 @@ async def handle_user_stats(request: web.Request) -> web.Response:
         async with db.execute(
             "SELECT COUNT(*) FROM users WHERE referred_by=?", (uid,)
         ) as cur:
-            invited = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            assert row is not None
+            invited = row[0]
         # converted — сколько из приглашённых реально оформили подписку.
         # Используется на Home banner: «3 пригласил · 1 уже оформил».
         async with db.execute(
@@ -2534,7 +2540,9 @@ async def handle_user_stats(request: web.Request) -> web.Response:
                WHERE u.referred_by=? AND s.status IN ('active','expired','grace')""",
             (uid,),
         ) as cur:
-            converted = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            assert row is not None
+            converted = row[0]
 
     return web.json_response({
         "stars_spent": stars_spent,
@@ -2869,6 +2877,8 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         return web.json_response({"error": "sub not found"}, status=404)
 
     # Получаем payment_id отдельным запросом — get_subscription_by_id его не возвращает.
+    import aiosqlite
+    from services.database import DB_PATH
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT payment_id FROM subscriptions WHERE id=?", (sub_id,),

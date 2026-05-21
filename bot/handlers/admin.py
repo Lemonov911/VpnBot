@@ -53,6 +53,8 @@ async def relay_support_reply(message: Message):
     """
     if not _is_admin(message.from_user.id):
         return  # не админ — даже не reply на тикет
+    if not message.reply_to_message:
+        return  # команда отправлена без реплая
     replied_msg_id = message.reply_to_message.message_id
     ticket = await get_ticket_by_admin_msg(replied_msg_id)
     if not ticket:

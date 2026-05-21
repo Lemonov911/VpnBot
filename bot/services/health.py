@@ -249,7 +249,7 @@ async def cleanup_old_logs(keep_days: int = 31):
 async def uptime_summary(server_id: int) -> dict:
     """Возвращает uptime % для одного сервера за 24h / 7d / 30d."""
     async with aiosqlite.connect(DB_PATH) as db:
-        result = {}
+        result: dict[str, dict[str, float | int | None]] = {}
         for label, window in (("24h", "-1 days"), ("7d", "-7 days"), ("30d", "-30 days")):
             async with db.execute(
                 f"""SELECT
@@ -261,9 +261,12 @@ async def uptime_summary(server_id: int) -> dict:
                 (server_id,),
             ) as cur:
                 row = await cur.fetchone()
+            if row is None:
+                result[label] = {"pct": None, "samples": 0, "total": 0}
+                continue
             up, down, total = row
             denom = (up or 0) + (down or 0)  # ignore 'unknown'
-            pct = round(100.0 * (up or 0) / denom, 2) if denom else None
+            pct: float | None = round(100.0 * (up or 0) / denom, 2) if denom else None
             result[label] = {"pct": pct, "samples": denom, "total": total}
         return result
 
@@ -371,7 +374,9 @@ async def all_incidents(limit: int = 100, offset: int = 0) -> tuple[list[dict], 
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT COUNT(*) FROM incidents") as cur:
-            total = (await cur.fetchone())[0]
+            _row = await cur.fetchone()
+            assert _row is not None
+            total = _row[0]
         async with db.execute(
             """SELECT i.id, i.server_id, i.started_at, i.resolved_at, i.duration_sec,
                       s.name as server_name, s.flag, s.location
