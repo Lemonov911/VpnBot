@@ -881,6 +881,14 @@ async def _apply_plan_upgrade(message: Message, payment):
         parts_desc.append(f"{plan['wg_slots']} WireGuard")
     slots_desc = " + ".join(parts_desc) or "0"
 
+    await record_payment(
+        user_id=user_id,
+        subscription_id=sub_id,
+        method="stars",
+        stars=payment.total_amount,
+        tx_id=payment.telegram_payment_charge_id,
+    )
+
     await message.answer(
         f"✅ <b>Тариф изменён на «{plan['name']}»!</b>\n\n"
         f"🔌 Теперь у тебя: <b>{slots_desc}</b>\n\n"
@@ -924,6 +932,13 @@ async def _deliver_esim(message: Message, bot: Bot, payment):
         stars_paid=payment.total_amount,
     )
     await complete_order(order_id, payment_id=charge_id)
+    await record_payment(
+        user_id=user_id,
+        subscription_id=None,
+        method="stars",
+        stars=payment.total_amount,
+        tx_id=charge_id,
+    )
 
     # tx_id detrministic by order_id — без uuid suffix'а. esimaccess использует
     # transactionId для idempotency: если timeout → retry → тот же tx_id →

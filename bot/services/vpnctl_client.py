@@ -152,10 +152,14 @@ class VpnctlClient:
             raise VpnctlError(f"remove_peer({service}): {st}")
 
     async def suspend_peer(self, service: str, peer_id: str):
-        await self._request("PUT", f"/services/{service}/peers/{quote(peer_id, safe='')}/suspend")
+        st, _ = await self._request("PUT", f"/services/{service}/peers/{quote(peer_id, safe='')}/suspend")
+        if st not in (200, 204):
+            raise VpnctlError(f"suspend_peer({service}, {peer_id}): {st}")
 
     async def resume_peer(self, service: str, peer_id: str):
-        await self._request("PUT", f"/services/{service}/peers/{quote(peer_id, safe='')}/resume")
+        st, _ = await self._request("PUT", f"/services/{service}/peers/{quote(peer_id, safe='')}/resume")
+        if st not in (200, 204):
+            raise VpnctlError(f"resume_peer({service}, {peer_id}): {st}")
 
     async def list_peers(self, service: str) -> list:
         st, data = await self._request("GET", f"/services/{service}/peers")
@@ -170,19 +174,23 @@ class VpnctlClient:
     async def throttle_peer(self, service: str, peer_id: str, assigned_ip: str, kbps: int = 256):
         """Grace-period throttle: ограничивает скорость пира через tc на awg0.
         Для VLESS — переключает на vless-grace inbound (порт 9453)."""
-        await self._request(
+        st, _ = await self._request(
             "POST",
             f"/services/{service}/peers/{quote(peer_id, safe='')}/throttle",
             {"ip": assigned_ip, "kbps": kbps},
         )
+        if st not in (200, 204):
+            raise VpnctlError(f"throttle_peer({service}, {peer_id}): {st}")
 
     async def unthrottle_peer(self, service: str, peer_id: str, assigned_ip: str):
         """Снимает grace-period throttle."""
-        await self._request(
+        st, _ = await self._request(
             "DELETE",
             f"/services/{service}/peers/{quote(peer_id, safe='')}/throttle",
             {"ip": assigned_ip},
         )
+        if st not in (200, 204):
+            raise VpnctlError(f"unthrottle_peer({service}, {peer_id}): {st}")
 
     async def sync_active_ids(self, service: str, valid_ids: list[str]) -> dict:
         st, data = await self._request(

@@ -91,23 +91,23 @@ def _bot_version() -> str:
 
 
 async def _weekly_vacuum():
-    """SQLite incremental_vacuum — освобождает пустые страницы порциями.
+    """SQLite VACUUM — дефрагментирует и сжимает bot.db.
     Без этого bot.db растёт на 5-10% в месяц (fragmentation).
-    incremental_vacuum(N) освобождает не более N страниц за вызов — не
-    требует exclusive lock на всю БД в отличие от полного VACUUM.
+    VACUUM требует brief exclusive lock, но запускается раз в неделю
+    ночью — приемлемо для бота с ~10 req/s.
+    incremental_vacuum(N) был no-op без auto_vacuum=INCREMENTAL.
     """
     import sqlite3 as _sqlite
     from services.database import DB_PATH
     def _vacuum_sync():
         conn = _sqlite.connect(str(DB_PATH))
         try:
-            conn.execute("PRAGMA incremental_vacuum(1000)")
-            conn.commit()
+            conn.execute("VACUUM")
         finally:
             conn.close()
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _vacuum_sync)
-    logger.info("weekly incremental_vacuum completed")
+    logger.info("weekly VACUUM completed")
 
 # Inline-кнопка «Продлить» во всех retention-уведомлениях. Открывает Plans
 # внутри Mini App одним кликом — это разница между «продлил из дивана» и

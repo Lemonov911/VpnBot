@@ -814,7 +814,7 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
         await db.execute(
             """UPDATE subscriptions
                SET expires_at = CASE
-                       WHEN expires_at IS NULL OR expires_at < datetime('now')
+                       WHEN expires_at IS NULL OR datetime(expires_at) < datetime('now')
                        THEN datetime('now', ?)
                        ELSE datetime(expires_at, ?)
                    END,
@@ -1842,7 +1842,7 @@ async def get_active_vless_uuids_by_server(server_id: int) -> list[str]:
         async with db.execute(
             """SELECT c.vless_uuid FROM configs c
                JOIN subscriptions s ON c.subscription_id = s.id
-               WHERE c.server_id=? AND c.protocol='vless' AND c.status='active'
+               WHERE c.server_id=? AND c.protocol='vless' AND c.status IN ('active', 'activating')
                  AND c.vless_uuid IS NOT NULL AND c.vless_uuid != ''
                  AND s.status IN ('active', 'grace')""",
             (server_id,),
@@ -2465,7 +2465,11 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
             # active, потом ушёл в grace; всё равно sub та же, expires_at там же.
             await db.execute(
                 """UPDATE subscriptions SET expires_at=datetime(expires_at, ?)
-                   WHERE user_id=? AND status IN ('active', 'grace')""",
+                   WHERE id = (
+                       SELECT id FROM subscriptions
+                       WHERE user_id=? AND status IN ('active', 'grace')
+                       ORDER BY id DESC LIMIT 1
+                   )""",
                 (f"-{days} days", referrer_id),
             )
         else:

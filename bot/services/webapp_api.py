@@ -889,11 +889,107 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning("CryptoBot webhook: invoice status not 'paid': %r", invoice.get("status"))
         return web.Response(status=200)
     raw_payload = invoice.get("payload", "")
+    payment_id  = f"crypto_{invoice.get('invoice_id')}"
     logger.info("CryptoBot payment: invoice_id=%s payload=%s",
                 invoice.get("invoice_id"), raw_payload)
 
-    # payload format: "vpn:USER_ID:PLAN_KEY"
+    # payload format: "vpn:USER_ID:PLAN_KEY" or "plan_upgrade:SUB_ID:PLAN_KEY:AWG:VLESS[:WG]"
     parts = raw_payload.split(":")
+
+    if parts[0] == "plan_upgrade":
+        # ── CryptoBot upgrade payment ──────────────────────────────────────────
+        if len(parts) not in (5, 6):
+            logger.warning("CryptoBot webhook: malformed plan_upgrade payload %r", raw_payload)
+            return web.Response(status=200)
+        try:
+            up_sub_id   = int(parts[1])
+            up_plan_key = parts[2]
+            up_awg      = int(parts[3])
+            up_vless    = int(parts[4])
+            up_wg       = int(parts[5]) if len(parts) == 6 else 0
+        except ValueError:
+            logger.warning("CryptoBot webhook: bad int in plan_upgrade payload %r", raw_payload)
+            return web.Response(status=200)
+
+        from services.database import (
+            get_subscription_by_id, change_subscription_plan,
+            record_payment as _rp, is_payment_recorded,
+            get_configs_for_subscription, get_server_by_id, update_config_data,
+        )
+        if await is_payment_recorded(payment_id):
+            logger.warning("CryptoBot plan_upgrade: already processed invoice %s", invoice.get("invoice_id"))
+            return web.Response(status=200)
+
+        up_sub = await get_subscription_by_id(up_sub_id)
+        if not up_sub:
+            logger.error("CryptoBot plan_upgrade: sub #%d not found invoice %s",
+                         up_sub_id, invoice.get("invoice_id"))
+            return web.Response(status=200)
+        up_user_id = up_sub["user_id"]
+        up_plan    = VPN_PLANS.get(up_plan_key)
+        if not up_plan:
+            logger.warning("CryptoBot plan_upgrade: unknown plan %r", up_plan_key)
+            return web.Response(status=200)
+
+        was_grace_up = up_sub.get("status") == "grace"
+        await change_subscription_plan(up_sub_id, up_plan_key, up_user_id, up_awg, up_vless, up_wg)
+        await _rp(user_id=up_user_id, subscription_id=up_sub_id, method="crypto", tx_id=payment_id)
+
+        if was_grace_up:
+            try:
+                from services.vpnctl_client import client_for_server
+                from services.plans import vless_service_for_plan
+                configs = await get_configs_for_subscription(up_sub_id)
+                for cfg in configs:
+                    srv_id = cfg.get("server_id")
+                    if not srv_id:
+                        continue
+                    server = await get_server_by_id(srv_id)
+                    if not server or not server.get("agent_url"):
+                        continue
+                    try:
+                        client = client_for_server(server)
+                        proto       = cfg.get("protocol", "")
+                        peer_id     = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                        assigned_ip = cfg.get("assigned_ip") or ""
+                        if proto == "awg" and peer_id and assigned_ip:
+                            await client.unthrottle_peer("awg", peer_id, assigned_ip)
+                        elif proto in ("vless", "vless-reality") and peer_id:
+                            target_svc   = vless_service_for_plan(up_plan_key)
+                            normal_added = False
+                            try:
+                                new_peer = await client.add_peer(
+                                    target_svc, f"u{up_user_id}_c{cfg['id']}", peer_id=peer_id,
+                                )
+                                normal_added = True
+                                await client.remove_peer("vless-grace", peer_id)
+                            except Exception:
+                                if normal_added:
+                                    try:
+                                        await client.remove_peer(target_svc, peer_id)
+                                    except Exception:
+                                        pass
+                                raise
+                            if new_peer.config:
+                                await update_config_data(cfg["id"], new_peer.config)
+                    except Exception as e:
+                        logger.warning("CryptoBot plan_upgrade unthrottle cfg #%d: %s", cfg["id"], e)
+            except Exception as e:
+                logger.error("CryptoBot plan_upgrade unthrottle outer: %s", e)
+
+        bot_up: Bot = request.app["bot"]
+        try:
+            await bot_up.send_message(
+                up_user_id,
+                f"✅ <b>Тариф изменён на «{up_plan['name']}»!</b>\n\n"
+                f"💎 Оплата: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
+                "Открой <b>Мои конфиги</b> — новые слоты уже там.",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("CryptoBot plan_upgrade: failed to notify user %d: %s", up_user_id, e)
+        return web.Response(status=200)
+
     if len(parts) != 3 or parts[0] != "vpn":
         logger.warning("CryptoBot webhook: unexpected payload %s", raw_payload)
         return web.Response(status=200)
@@ -933,8 +1029,6 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             invoice.get("invoice_id"), plan_key, fiat, invoice_amount, expected_amount,
         )
         return web.Response(status=400)
-
-    payment_id = f"crypto_{invoice.get('invoice_id')}"
 
     from services.database import (
         get_subscription_by_payment_id, create_subscription,
@@ -2189,8 +2283,9 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "same": True})
 
     from datetime import datetime
-    expires       = datetime.fromisoformat(sub["expires_at"])
-    remaining_days = max(0, (expires - datetime.utcnow()).days)
+    expires          = datetime.fromisoformat(sub["expires_at"])
+    remaining_days_f = max(0.0, (expires - datetime.utcnow()).total_seconds() / 86400)
+    remaining_days   = int(remaining_days_f)  # display only
 
     # Сравниваем per-day цену, не абсолютные stars — иначе multi-period
     # планы (1m/3m/6m/12m, commit 5fab925) классифицируются неправильно:
@@ -2226,7 +2321,7 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
             rub_price = new_rub
             upgrade_desc = f"Подписка «{new_plan['name']}»"
         else:
-            rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days / 30))
+            rub_price = max(1, _ceil((new_rub - cur_rub) * remaining_days_f / 30))
             upgrade_desc = f"Апгрейд до «{new_plan['name']}». Доплата за {remaining_days} дн."
 
         awg_delta   = new_plan["awg_slots"]   - cur_plan["awg_slots"]
@@ -2614,7 +2709,7 @@ def _check_admin_secret(request: web.Request) -> bool:
     import time as _t
     if not ADMIN_API_SECRET:
         return False
-    ip = request.remote or "unknown"
+    ip = _client_ip(request)
     if not _rate_limit_check_evict(_admin_rate, ip, _t.monotonic(), window=2.0):
         return False
     incoming = request.headers.get("X-Admin-Secret", "")
