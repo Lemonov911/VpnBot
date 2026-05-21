@@ -513,9 +513,11 @@ export default function Plans() {
     <>
       <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)]">
         {/* Pending-payment placeholder — юзер ушёл на внешний инвойс, вебхук
-            ещё не вернулся, sub === null. Сидим в «Проверяем оплату…», polling
-            (useEffect выше) автоматически снимет флаг когда sub станет active. */}
-        {pendingPayment && !sub && (
+            ещё не вернулся.  Sub может быть null (первая покупка) ИЛИ
+            grace/expired (юзер платит renewal из текущего grace-state).
+            В обоих случаях нужно показать «Проверяем оплату…» — polling
+            (useEffect выше) снимет флаг когда sub станет active. */}
+        {pendingPayment && (!sub || sub.status === 'grace' || sub.status === 'expired') && (
           <div className="fade-in rounded-2xl p-4 mb-2 bg-[var(--tg-theme-secondary-bg-color,#f1f1f1)] border border-[var(--card-border)] text-center">
             <div className="text-2xl mb-2">⏳</div>
             <div className="font-medium mb-1 text-[var(--tg-theme-text-color,#000)]">{t('vpn_payment_verifying' as never)}</div>

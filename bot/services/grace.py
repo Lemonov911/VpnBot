@@ -107,16 +107,21 @@ async def try_renew_from_grace(
     # TG-сообщение юзеру.
     try:
         from datetime import datetime
+        from services.database import get_user_lang
+        from services.i18n_bot import t
         try:
             exp_dt = datetime.fromisoformat(str(renewed['expires_at']).replace(' ', 'T'))
             exp_str = exp_dt.strftime('%d.%m.%Y')
         except Exception:
             exp_str = str(renewed['expires_at'])[:10]
+        lang = await get_user_lang(user_id) or "ru"
         await bot.send_message(
             user_id,
-            f"✅ <b>Подписка продлена!</b>\n\n"
-            f"📅 Действует до: <b>{exp_str}</b>\n"
-            f"⚡ Полная скорость восстановлена — VPN снова работает без ограничений.",
+            "\n\n".join([
+                t(lang, "bot_grace_renewed_title"),
+                t(lang, "bot_grace_renewed_until", until=exp_str),
+                t(lang, "bot_grace_renewed_speed"),
+            ]),
             parse_mode="HTML",
         )
     except Exception as e:

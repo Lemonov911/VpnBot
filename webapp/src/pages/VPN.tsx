@@ -120,12 +120,18 @@ export default function VPN() {
     try {
       const res = await cancelLavatopRenewal()
       // Stars-recurring: Telegram API не позволяет отменить, показываем
-      // юзеру инструкции как отменить руками в настройках TG. НЕ показываем
-      // success-toast — auto_renew всё ещё true, отмена будет только когда
-      // юзер сам это сделает.
+      // юзеру инструкции как отменить руками в настройках TG.
+      // Backend FF5 fix теперь вызывает disable_auto_renew(sub_id) даже в
+      // manual_cancel-ветке — auto_renew=0, auto_renew_disabled_at != NULL.
+      // Дёргаем свежий sub перед early-return, чтобы UI сразу перерисовал
+      // «работает до X (без автопродления)» вместо stale «следующее списание».
       if (res?.manual_cancel) {
         WebApp.HapticFeedback.impactOccurred('light')
         setCancelModalOpen(false)
+        try {
+          const fresh = await getActiveSubscription()
+          if (mountedRef.current) setSub(fresh)
+        } catch { /* network blip — UI обновится при следующем mount */ }
         WebApp.showAlert(res.instructions || t('vpn_cancel_renewal_stars_hint' as never))
         return
       }
@@ -229,7 +235,7 @@ export default function VPN() {
           if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
           else if (s !== 'cancelled') {
             WebApp.HapticFeedback.notificationOccurred('error')
-            WebApp.showAlert('Ошибка оплаты. Попробуйте ещё раз.')
+            WebApp.showAlert(t('vpn_payment_error'))
           }
         })
       } else if (method === 'oxapay') {
@@ -559,6 +565,19 @@ export default function VPN() {
   return (
     <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
 
+      {/* FFF5: pending-payment placeholder может появиться и для grace-юзера —
+          он оплачивает renewal через Lava/OxaPay, вебхук ещё не вернулся.
+          В main-render sub уже гарантированно non-null + status ∈ {active, grace}
+          (expired-ветка return'нулась ранее).  Polling cleanup useEffect снимет
+          флаг как только status станет active.  Не блокируем UI карточки —
+          показываем узкий статус-баннер сверху. */}
+      {pendingPayment && isGrace && (
+        <div className="fade-in rounded-xl p-3 bg-[var(--tg-theme-secondary-bg-color,#f1f1f1)] border border-[var(--card-border)] text-center">
+          <div className="font-medium mb-0.5 text-[var(--tg-theme-text-color,#000)]">⏳ {t('vpn_payment_verifying' as never)}</div>
+          <div className="text-xs opacity-70 text-[var(--tg-theme-hint-color,#707579)]">{t('vpn_payment_verifying_sub' as never)}</div>
+        </div>
+      )}
+
       {isGrace && (
         <div className="fade-in rounded-xl py-3 px-3.5 flex justify-between items-center border bg-danger/10 border-danger/30">
           <div className="min-w-0 pr-2">
@@ -628,6 +647,18 @@ export default function VPN() {
             <span className="text-xs text-warning">
               {t('vpn_pending_change')} <b>«{pendingName}»</b> {t('vpn_pending_next')}
             </span>
+          </div>
+        )}
+
+        {/* FFF4: yellow banner если последний recurring charge не прошёл.
+            Lava ретраит через сутки — даём юзеру шанс пополнить баланс /
+            проверить карту до следующей попытки.  Рендерим только когда
+            auto_renew всё ещё включено: если юзер уже отменил, баннер не
+            нужен (его подписку всё равно не будут пытаться списывать). */}
+        {sub.auto_renew && sub.last_charge_failed_at && (
+          <div className="mt-3 rounded-xl p-3 bg-warning/15 text-warning">
+            <div className="font-medium">{t('vpn_charge_failed_title' as never)}</div>
+            <div className="text-sm opacity-80 mt-1">{t('vpn_charge_failed_sub' as never)}</div>
           </div>
         )}
 

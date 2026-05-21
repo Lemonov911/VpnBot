@@ -1462,12 +1462,12 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         except Exception as e:
             logger.error("Admin alert failed: %s", e, exc_info=True)
         try:
+            from services.database import get_user_lang as _gul_pf
+            from services.i18n_bot import t as _i18n_t_pf
+            _lang_pf = await _gul_pf(user_id) or "ru"
             await bot.send_message(
                 user_id,
-                "❌ <b>VPN-конфиги не создались</b>\n\n"
-                "Оплата USDT прошла, но сервера временно недоступны. "
-                "Я уже уведомил поддержку — они подключат вручную или вернут средства "
-                "в течение нескольких часов.",
+                _i18n_t_pf(_lang_pf, "bot_provision_failed"),
                 parse_mode="HTML",
             )
         except Exception:
@@ -1746,11 +1746,12 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         except Exception as e:
             logger.error("OxaPay admin alert failed: %s", e, exc_info=True)
         try:
+            from services.database import get_user_lang as _gul_pf
+            from services.i18n_bot import t as _i18n_t_pf
+            _lang_pf = await _gul_pf(user_id) or "ru"
             await bot.send_message(
                 user_id,
-                "❌ <b>VPN-конфиги не создались</b>\n\n"
-                "Оплата прошла, но сервера временно недоступны. "
-                "Поддержка уже уведомлена — подключим вручную или вернём средства.",
+                _i18n_t_pf(_lang_pf, "bot_provision_failed"),
                 parse_mode="HTML",
             )
         except Exception:
@@ -2053,6 +2054,47 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         was_grace = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
 
         if was_grace is None:
+            # FFF3: либо sub уже expired (webhook поздний), либо юзер отменил
+            # автопродление, но Lava cancel-API провалился ранее и шарж всё-таки
+            # пришёл. Различаем по auto_renew_disabled_at.
+            from services.database import get_subscription_by_id as _get_sub_fff3
+            fresh_sub = await _get_sub_fff3(sub["id"])
+            is_user_cancelled = bool(
+                fresh_sub
+                and fresh_sub.get("auto_renew_disabled_at")
+                and not fresh_sub.get("auto_renew")
+            )
+            if is_user_cancelled:
+                logger.error(
+                    "Lava charge on CANCELLED sub #%d user=%d — Lava cancel "
+                    "failed previously. Need manual refund + retry cancel.",
+                    sub["id"], sub["user_id"],
+                )
+                try:
+                    if ADMIN_ID:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>Lava charge on cancelled sub</b>\n\n"
+                            f"Sub: #{sub['id']}\n"
+                            f"User: {sub['user_id']}\n"
+                            f"Plan: {sub.get('plan')}\n"
+                            f"Amount: {amount:.2f} {currency}\n\n"
+                            f"Юзер отменил автопродление, но Lava cancel не сработал ранее. "
+                            f"Refund вручную через Lava-кабинет + повторно cancel contract.",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
+                # Best-effort повторный cancel — Lava должна перестать списывать.
+                _parent = sub.get("parent_contract_id") or contract_id
+                if LAVATOP_API_KEY and _parent:
+                    try:
+                        from services.lavatop import cancel_subscription as _lava_cancel_retry
+                        await _lava_cancel_retry(api_key=LAVATOP_API_KEY, contract_id=_parent)
+                    except Exception as e:
+                        logger.warning("FFF3 lava cancel retry failed: %s", e)
+                return web.Response(status=200)
+
             logger.error(
                 "Lava recurring: sub #%d user=%d already expired — cannot extend, "
                 "alerting admin (юзер заплатил, но VPN-слоты пусты)",
@@ -2140,8 +2182,13 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     # ── 3. Recurring неудача (нет денег и т.д.) ─────────────────────────────
     if event == "subscription.recurring.payment.failed":
-        from services.database import get_subscription_by_parent_contract, get_user_lang as _gul
+        from services.database import (
+            get_subscription_by_parent_contract,
+            get_user_lang as _gul,
+            DB_PATH as _DB_PATH,
+        )
         from services.i18n_bot import t as _i18n_t
+        import aiosqlite as _aiosqlite
         sub = await get_subscription_by_parent_contract(parent_id or contract_id)
         if sub:
             try:
@@ -2153,6 +2200,18 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
                 )
             except Exception as e:
                 logger.warning("Lava recurring fail notify err user=%d: %s", sub["user_id"], e, exc_info=True)
+            # Persist флаг чтобы Mini App мог показать yellow warning
+            # «не удалось списать с карты» рядом с auto-renew баннером.
+            # Сбрасывается в NULL при успешном extend (см. extend_subscription_expires_at).
+            try:
+                async with _aiosqlite.connect(_DB_PATH) as db:
+                    await db.execute(
+                        "UPDATE subscriptions SET last_charge_failed_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (sub["id"],),
+                    )
+                    await db.commit()
+            except Exception as e:
+                logger.warning("Lava recurring fail flag err sub=%d: %s", sub["id"], e, exc_info=True)
         return web.Response(status=200)
 
     # ── 3b. Первая оплата не прошла (payment.failed) ───────────────────────
@@ -2351,11 +2410,12 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         except Exception:
             pass
         try:
+            from services.database import get_user_lang as _gul_pf
+            from services.i18n_bot import t as _i18n_t_pf
+            _lang_pf = await _gul_pf(user_id) or "ru"
             await bot.send_message(
                 user_id,
-                "❌ <b>VPN-конфиги не создались</b>\n\n"
-                "Оплата прошла, но сервера временно недоступны. "
-                "Поддержка уже уведомлена — подключим вручную или вернём средства.",
+                _i18n_t_pf(_lang_pf, "bot_provision_failed"),
                 parse_mode="HTML",
             )
         except Exception:
@@ -2378,10 +2438,12 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     if is_subscription:
         try:
+            from services.database import get_user_lang as _gul_ar
+            from services.i18n_bot import t as _i18n_t_ar
+            _lang_ar = await _gul_ar(user_id) or "ru"
             await bot.send_message(
                 user_id,
-                "🔁 Автопродление включено — продляется автоматически "
-                "каждый месяц. Отменить можно в разделе VPN.",
+                _i18n_t_ar(_lang_ar, "bot_lava_autorenew_note"),
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -2623,6 +2685,10 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         # Нужен фронту чтобы показывать «работает до X (без автопродления)»
         # только тем, кто реально отменил recurring (а не one-time Stars-юзерам).
         "auto_renew_disabled_at": sub.get("auto_renew_disabled_at"),
+        # FFF4: timestamp последнего failed recurring charge. Mini App рисует
+        # yellow warning banner если флаг non-NULL и auto_renew=1 — юзер
+        # видит проблему до того, как Lava сделает следующий retry.
+        "last_charge_failed_at": sub.get("last_charge_failed_at"),
     })
 
 
@@ -3263,11 +3329,18 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
     try:
         bot: Bot = request.app["bot"]
         new_date = result["new_expires_at"][:10]
+        from services.database import get_user_lang as _gul_rb
+        from services.i18n_bot import t as _i18n_t_rb, day_word as _dw_rb
+        _lang_rb = await _gul_rb(user["id"]) or "ru"
+        _days_rb = result["days"]
         await bot.send_message(
             user["id"],
-            f"🎁 <b>Бонусные дни активированы!</b>\n\n"
-            f"Добавлено: <b>+{result['days']} {plural_ru(result['days'], DAYS)}</b>\n"
-            f"Подписка действует до: <b>{new_date}</b>",
+            _i18n_t_rb(
+                _lang_rb, "bot_referral_bonus_activated",
+                days=_days_rb,
+                day_word=_dw_rb(_lang_rb, _days_rb),
+                until=new_date,
+            ),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -4199,12 +4272,12 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
                     try:
                         if user_id not in notified:
                             notified.add(user_id)
+                            from services.database import get_user_lang as _gul_sd
+                            from services.i18n_bot import t as _i18n_t_sd
+                            _lang_sd = await _gul_sd(user_id) or "ru"
                             await bot.send_message(
                                 user_id,
-                                "🔄 <b>Локация VPN обновлена</b>\n\n"
-                                "Один из VPN-серверов выведен из эксплуатации. "
-                                "Открой Happ → потяни вниз для обновления подписки. "
-                                "Остальные локации работают как обычно.",
+                                _i18n_t_sd(_lang_sd, "bot_server_decom"),
                                 parse_mode="HTML",
                             )
                     except Exception as e:
@@ -4244,12 +4317,15 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
                         (target.get("name") or "").strip(),
                     ])) or f"Server {target['id']}"
                     try:
+                        from services.database import get_user_lang as _gul_sm
+                        from services.i18n_bot import t as _i18n_t_sm
+                        _lang_sm = await _gul_sm(user_id) or "ru"
                         await bot.send_message(
                             user_id,
-                            f"🔄 <b>Ваш VPN перенесён</b>\n\n"
-                            f"Сервер заменён на {srv_name}.\n"
-                            f"Скачайте обновлённый конфиг в "
-                            f"<a href=\"{WEBAPP_URL}\">приложении</a>.",
+                            _i18n_t_sm(
+                                _lang_sm, "bot_server_migration",
+                                server=srv_name, url=WEBAPP_URL,
+                            ),
                             parse_mode="HTML",
                             disable_web_page_preview=True,
                         )

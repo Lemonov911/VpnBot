@@ -207,6 +207,11 @@ export interface Subscription {
   // показывать banner «работает до X (без автопродления)» только тем, кто реально
   // отменил подписку (а не one-time Stars/Lava покупателям).
   auto_renew_disabled_at?: string | null
+  // FFF4: timestamp последнего failed recurring charge (Lava webhook
+  // subscription.recurring.payment.failed). Если non-NULL и auto_renew=true —
+  // показываем yellow warning «не удалось списать с карты, проверь баланс».
+  // Сбрасывается в NULL при следующем успешном extend.
+  last_charge_failed_at?: string | null
 }
 
 export function createVpnInvoiceLavatop(

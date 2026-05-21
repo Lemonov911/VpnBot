@@ -563,6 +563,15 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute(
             "ALTER TABLE subscriptions ADD COLUMN ref_bonus_applied_to_sub_id INTEGER"
         )
+    # last_charge_failed_at — timestamp последнего failed recurring charge.
+    # Выставляется webhook'ом subscription.recurring.payment.failed (Lava),
+    # сбрасывается в NULL при успешном extend (см. extend_subscription_expires_at).
+    # Фронт показывает yellow warning banner на /vpn пока флаг non-NULL
+    # и auto_renew=1 — юзер успевает поменять карту до следующего retry.
+    if "last_charge_failed_at" not in sub_cols:
+        await db.execute(
+            "ALTER TABLE subscriptions ADD COLUMN last_charge_failed_at TIMESTAMP NULL"
+        )
 
     # server_health_log — sparse time-series of up/down probes per server.
     # Источник для расчёта uptime % и страницы /status.
@@ -1523,12 +1532,25 @@ async def extend_subscription_expires_at(
     days_int = int(days)  # defensive cast: f-string injection — safe только если int
     async with _connect() as db:
         async with db.execute(
-            "SELECT status FROM subscriptions WHERE id=?", (sub_id,)
+            "SELECT status, auto_renew, auto_renew_disabled_at FROM subscriptions WHERE id=?",
+            (sub_id,),
         ) as cur:
             row = await cur.fetchone()
         if not row or row[0] not in ("active", "grace"):
             return None  # sub expired или not found — не воскрешаем
+        # FFF3: юзер отменил автопродление, провайдер не получил cancel-API → но
+        # recurring charge всё-таки пришёл. Не extend'им против воли юзера.
+        # Caller должен refund'нуть платёж + retry cancel.
+        if row[2] is not None and not row[1]:
+            return None
         was_grace = row[0] == "grace"
+        # FFF3 (financial): если юзер отменил автопродление (auto_renew_disabled_at IS NOT NULL)
+        # и Lava cancel API провалился ранее → recurring charge всё равно прилетает.
+        # Без guard'а ниже мы extend'или бы sub против воли юзера — financial loss.
+        # Расширяем ТОЛЬКО если disabled_at is NULL (никогда не отменялся) ИЛИ
+        # auto_renew=1 (юзер заново включил автопродление, disabled_at — историческое).
+        # Также сбрасываем auto_renew_disabled_at (FFF6) — после extend'а юзер
+        # фактически «не отменён».
         if reset_status:
             cur_ = await db.execute(
                 f"""UPDATE subscriptions
@@ -1543,8 +1565,11 @@ async def extend_subscription_expires_at(
                     status='active',
                     grace_until=NULL,
                     reminded_3d=0, reminded_1d=0,
-                    reminded_renewal_3d=0, reminded_grace_3d=0
-                    WHERE id=? AND status IN ('active', 'grace')""",
+                    reminded_renewal_3d=0, reminded_grace_3d=0,
+                    auto_renew_disabled_at=NULL,
+                    last_charge_failed_at=NULL
+                    WHERE id=? AND status IN ('active', 'grace')
+                      AND (auto_renew_disabled_at IS NULL OR auto_renew = 1)""",
                 (sub_id,),
             )
         else:
@@ -1558,8 +1583,11 @@ async def extend_subscription_expires_at(
                         END,
                         '+{days_int} days'
                     ),
-                    reminded_renewal_3d=0
-                    WHERE id=?""",
+                    reminded_renewal_3d=0,
+                    auto_renew_disabled_at=NULL,
+                    last_charge_failed_at=NULL
+                    WHERE id=?
+                      AND (auto_renew_disabled_at IS NULL OR auto_renew = 1)""",
                 (sub_id,),
             )
         if (cur_.rowcount or 0) == 0:
@@ -2239,6 +2267,9 @@ async def renew_subscription_from_grace(
     extra_params: list = []
     if auto_renew:
         extra_set.append("auto_renew=1")
+        # FFF6: re-enable auto_renew → historical disabled_at стирается, иначе
+        # extend_subscription_expires_at guard на следующем renewal заблокирует.
+        extra_set.append("auto_renew_disabled_at=NULL")
     if payment_provider is not None:
         extra_set.append("payment_provider=?")
         extra_params.append(payment_provider)

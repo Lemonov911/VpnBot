@@ -171,15 +171,18 @@ async def esim_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("vpn:buy:"))
 async def initiate_purchase(callback: CallbackQuery, bot: Bot):
+    from services.database import get_user_lang
+    from services.i18n_bot import t as _i18n_t
+    _lang = await get_user_lang(callback.from_user.id) or "ru"
     plan_key = callback.data.split(":")[-1]
     plan = VPN_PLANS.get(plan_key)
     if not plan:
-        await callback.answer("Неизвестный тариф.", show_alert=True)
+        await callback.answer(_i18n_t(_lang, "bot_precheckout_unknown_plan"), show_alert=True)
         return
 
     if await has_active_subscription(callback.from_user.id):
         await callback.answer(
-            "У тебя уже есть активная подписка.\nСмени тариф в мини-апп.",
+            _i18n_t(_lang, "bot_precheckout_active_sub"),
             show_alert=True,
         )
         return
@@ -207,9 +210,11 @@ async def pre_checkout(query: PreCheckoutQuery):
     pre_checkout с ok=False, Telegram отменит платёж до charge'а."""
     # Ban-гейт: blocked users не должны проходить оплату.  Если бан был
     # выставлен между invoice creation и pre_checkout — отбиваем здесь.
-    from services.database import is_user_banned
+    from services.database import is_user_banned, get_user_lang
+    from services.i18n_bot import t as _i18n_t
+    _lang = await get_user_lang(query.from_user.id) or "ru"
     if await is_user_banned(query.from_user.id):
-        await query.answer(ok=False, error_message="Доступ ограничен. Напиши в поддержку.")
+        await query.answer(ok=False, error_message=_i18n_t(_lang, "bot_precheckout_banned"))
         return
 
     payload = query.invoice_payload or ""
@@ -249,9 +254,9 @@ async def pre_checkout(query: PreCheckoutQuery):
             # либо double-purchase, либо upgrade через wrong flow.
             existing_plan = existing.get("plan", "")
             if existing_plan == payload:
-                msg = f"У тебя уже активная подписка «{VPN_PLANS[payload]['name']}». Открой Mini App."
+                msg = _i18n_t(_lang, "bot_precheckout_active_sub_same", plan=VPN_PLANS[payload]['name'])
             else:
-                msg = "У тебя уже есть активная подписка. Для смены тарифа используй кнопку «Улучшить» в Mini App."
+                msg = _i18n_t(_lang, "bot_precheckout_active_sub")
             logger.warning(
                 "pre_checkout REJECT user=%d: existing active sub plan=%s tried=%s",
                 query.from_user.id, existing_plan, payload,
@@ -263,7 +268,7 @@ async def pre_checkout(query: PreCheckoutQuery):
         return
     # Unknown plan_key (мог быть удалён из VPN_PLANS пока юзер тормозил)
     logger.warning("pre_checkout: unknown payload=%r user=%d", payload, query.from_user.id)
-    await query.answer(ok=False, error_message="Тариф больше недоступен. Открой меню заново.")
+    await query.answer(ok=False, error_message=_i18n_t(_lang, "bot_precheckout_plan_unavailable"))
 
 
 # ── Обработка успешного платежа ────────────────────────────────────────────────
@@ -377,7 +382,8 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
 
     # Fetch updated expires_at для отображения юзеру (SQL посчитал max+days
     # атомарно — пересчитать в Python нельзя без race).
-    from services.database import get_subscription_by_id
+    from services.database import get_subscription_by_id, get_user_lang, get_or_create_sub_token
+    from services.i18n_bot import t as _i18n_t
     updated_sub = await get_subscription_by_id(sub["id"])
     try:
         new_expires_dt = datetime.fromisoformat(
@@ -387,12 +393,41 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         new_expires_dt = datetime.utcnow() + timedelta(days=plan["duration_days"])
 
     try:
+        lang = await get_user_lang(user_id) or "ru"
+        new_expires_str = new_expires_dt.strftime("%d.%m.%Y")
+
+        # Sub URL — idempotent get-or-create (не ротируем при продлении).
+        sub_url = ""
+        try:
+            token = await get_or_create_sub_token(user_id)
+            sub_url = f"https://maxvpnesim.com/sub/{token}"
+        except Exception as e:
+            logger.warning("Stars renewal: sub_token user=%d: %s", user_id, e)
+
+        msg_parts = [_i18n_t(lang, "bot_lava_renewed", plan=plan["name"], until=new_expires_str)]
+        if extended is True:
+            msg_parts.append(_i18n_t(lang, "bot_lava_renewed_grace"))
+        if sub_url:
+            msg_parts.append("")
+            msg_parts.append(_i18n_t(lang, "bot_purchase_success_sub_url", url=sub_url))
+
+        webapp_url = os.getenv("WEBAPP_URL", "")
+        kb_rows: list[list[InlineKeyboardButton]] = []
+        if webapp_url:
+            kb_rows.append([InlineKeyboardButton(
+                text=_i18n_t(lang, "bot_btn_my_configs"),
+                web_app=WebAppInfo(url=f"{webapp_url}/configs"),
+            )])
+        kb_rows.append([InlineKeyboardButton(
+            text=_i18n_t(lang, "bot_btn_howto"),
+            callback_data="vpn:howto",
+        )])
+
         await bot.send_message(
             user_id,
-            f"🔁 <b>Подписка продлена автоматически</b>\n\n"
-            f"VPN {plan['name']} активен до <b>{new_expires_dt.strftime('%d.%m.%Y')}</b>.\n"
-            f"Списано: <b>{payment.total_amount} ⭐</b>",
+            "\n".join(msg_parts),
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows) if kb_rows else None,
         )
     except Exception as e:
         logger.warning("Stars renewal notify failed user=%d: %s", user_id, e, exc_info=True)
@@ -490,16 +525,16 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         logger.warning("Дубль платежа %s проскочил TOCTOU (UNIQUE сработал), user %d", payment_id, user_id)
         return
 
-    # Юзер платит за тариф пока триал ещё active → его trial-VLESS-пир пойдёт
-    # в grace через 1-2 дня (scheduler не различает trial/paid sub'ы при expire).
-    # Happ балансирует subscription-URL между нормальным и grace пиром → юзер
-    # иногда попадает на 256 кбит/с и жалуется «купил, а скорость дрянь».
-    # Закрываем триал сразу: revoke его пиры и mark_expired.
+    # FFF7: Close any active trial IMMEDIATELY — before scheduler can revoke
+    # trial peers (or transition them into grace) while we're still mid-provision.
+    # Раньше close-trial был ниже после provisioning — race-window: scheduler
+    # успевал перевести trial в grace до того, как мы revoke'нем его пиры,
+    # и Happ subscription URL начинал балансировать между новым paid пиром и
+    # тротлированным trial-grace.  Audit 17.05 #C1 + FFF7.
     try:
         from services.database import get_user_subscriptions_by_plan
         # Закрываем И active И grace trial'ы — иначе grace-trial sub висит,
-        # peers продолжают балансироваться в Happ subscription URL юзера
-        # (audit 17.05 #C1).
+        # peers продолжают балансироваться в Happ subscription URL юзера.
         trials = await get_user_subscriptions_by_plan(
             user_id, "vpn_trial", status=("active", "grace"),
         )
