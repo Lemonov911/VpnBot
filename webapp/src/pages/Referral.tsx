@@ -87,8 +87,8 @@ export default function Referral() {
     // — это легко цитируется при подаче на блок. Обобщённая формулировка
     // ниже не реклама обхода, а просто описание категории софта.
     const text = encodeURIComponent(lang === 'ru'
-      ? `🛡 MAX VPN — быстрый VPN для телефона и компьютера\nПопробуй: ${stats.ref_link}`
-      : `🛡 MAX VPN — fast VPN for mobile and desktop\nTry it: ${stats.ref_link}`
+      ? `🛡 MAX VPN — быстрый VPN для телефона и компьютера`
+      : `🛡 MAX VPN — fast VPN for mobile and desktop`
     )
     WebApp.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(stats.ref_link)}&text=${text}`)
   }

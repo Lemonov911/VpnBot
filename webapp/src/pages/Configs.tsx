@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -430,6 +430,12 @@ export default function Configs() {
   // уже есть слоты, fetching не нужен.
   const [trial,    setTrial]    = useState<TrialStatus | null>(null)
   const [claiming, setClaiming] = useState(false)
+  const cancelledRef = useRef(false)
+
+  useEffect(() => {
+    cancelledRef.current = false
+    return () => { cancelledRef.current = true }
+  }, [])
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -446,15 +452,16 @@ export default function Configs() {
       getActiveSubscription().catch(() => null),
     ])
       .then(([data, s]) => {
+        if (cancelledRef.current) return
         setSlots(data as RawSlot[])
         setSub(s)
         // Если ни конфигов, ни подписки — фетчим trial-статус для empty-state CTA
         if ((data as RawSlot[]).length === 0) {
-          getTrialStatus().then(setTrial).catch(() => {})
+          getTrialStatus().then(t => { if (!cancelledRef.current) setTrial(t) }).catch(() => {})
         }
       })
-      .catch(() => setErrMsg(t('configs_err_load')))
-      .finally(() => setLoading(false))
+      .catch(() => { if (!cancelledRef.current) setErrMsg(t('configs_err_load')) })
+      .finally(() => { if (!cancelledRef.current) setLoading(false) })
   }
 
   useEffect(load, [])
@@ -489,7 +496,7 @@ export default function Configs() {
       await revokeConfig(configId)
       setSlots(prev => prev.map(s =>
         s.id === configId
-          ? { ...s, status: 'empty', peer_name: null }
+          ? { ...s, status: 'empty', peer_name: null, vless_url: null }
           : s
       ))
     } catch (e) {

@@ -1,5 +1,6 @@
 import WebApp from '@twa-dev/sdk'
 import { useNavigate } from 'react-router-dom'
+import { useT } from '../i18n'
 
 const APP_LINKS = [
   { label: '🍎 Happ — iOS',     url: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215' },
@@ -10,6 +11,7 @@ const APP_LINKS = [
 
 export default function TrialSuccessSheet({ onClose, days }: { onClose: () => void; days?: number }) {
   const nav = useNavigate()
+  const t = useT()
 
   return (
     <>
@@ -22,10 +24,10 @@ export default function TrialSuccessSheet({ onClose, days }: { onClose: () => vo
           <span className="text-[26px]">🎁</span>
           <div>
             <div className="font-bold text-[17px] text-[var(--tg-theme-text-color,#fff)]">
-              Триал активирован!
+              {t('trial_success_title')}
             </div>
             <div className="text-[12px] text-[var(--tg-theme-hint-color,#8e8e93)]">
-              {days ?? 3} дня бесплатно — AmneziaWG + VLESS
+              {t('trial_success_sub')}
             </div>
           </div>
         </div>
@@ -36,7 +38,7 @@ export default function TrialSuccessSheet({ onClose, days }: { onClose: () => vo
           {/* Left — скачать приложения */}
           <div className="bg-[var(--tg-theme-section-bg-color,#2c2c2e)] rounded-[14px] p-3 flex flex-col gap-2">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--tg-theme-hint-color,#8e8e93)] mb-0.5">
-              📲 Установить
+              📲 {t('trial_install_label' as never)}
             </div>
             {APP_LINKS.map(app => (
               <button
@@ -61,9 +63,9 @@ export default function TrialSuccessSheet({ onClose, days }: { onClose: () => vo
             style={{ background: 'var(--color-primary, #2481cc)' }}
           >
             <span className="text-[38px]">📁</span>
-            <div className="text-[14px] font-bold text-white leading-tight">Мои конфиги</div>
+            <div className="text-[14px] font-bold text-white leading-tight">{t('trial_open_configs')}</div>
             <div className="text-[11px] text-white/75 leading-snug px-2 text-center">
-              Скачать AWG‑файл и VLESS‑ссылку
+              {t('trial_configs_hint' as never)}
             </div>
           </button>
 
@@ -74,7 +76,7 @@ export default function TrialSuccessSheet({ onClose, days }: { onClose: () => vo
           className="w-full py-2 text-[12px] cursor-pointer bg-transparent border-none"
           style={{ color: 'var(--tg-theme-hint-color, #8e8e93)' }}
         >
-          Разберусь позже
+          {t('trial_later' as never)}
         </button>
       </div>
     </>

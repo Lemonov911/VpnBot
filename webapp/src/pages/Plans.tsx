@@ -355,7 +355,12 @@ export default function Plans() {
         WebApp.HapticFeedback.impactOccurred('light')
         setSub(prev => prev ? { ...prev, pending_plan: null } : prev)
         setLoading(null)
-      } else { setLoading(null) }
+      } else {
+        // Immediate upgrade applied on the server side — no invoice, not scheduled.
+        WebApp.HapticFeedback.notificationOccurred('success')
+        getActiveSubscription().then(setSub).catch(() => {})
+        setLoading(null)
+      }
     } catch (e) {
       setLoading(null); setPageStatus('error')
       setErrMsg(e instanceof Error ? e.message : t('plans_error_server'))

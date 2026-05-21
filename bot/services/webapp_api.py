@@ -710,6 +710,7 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     else:
         servers = await get_servers_by_protocol(config["protocol"])
         if not servers:
+            await reset_config_slot(config_id)
             return web.json_response({"error": "Нет доступных серверов"}, status=503)
         server = servers[0]
         server_id = server["id"]
@@ -1763,11 +1764,17 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
 
     from services.database import (
         get_subscription_by_payment_id, create_subscription, create_order, complete_order,
-        record_payment as _rp_lava,
+        record_payment as _rp_lava, is_payment_recorded as _is_recorded_lava,
     )
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
         logger.warning("Lava: duplicate payment %s", payment_id)
+        return web.Response(status=200)
+    # Idempotency for grace-renewal path: try_renew_from_grace records the payment
+    # but does not create a new sub — on retry, get_subscription_by_payment_id returns
+    # None, but the payment is already recorded. Without this check a second sub gets created.
+    if await _is_recorded_lava(payment_id):
+        logger.warning("Lava payment.success: already processed %s (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     # Renew-from-grace: первый платёж по новому Lava-контракту, но у юзера
@@ -2598,6 +2605,9 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
 
+    sub_before = await get_active_subscription(user["id"])
+    was_grace = sub_before is not None and sub_before.get("status") == "grace"
+
     from services.database import redeem_referral_bonus
     result = await redeem_referral_bonus(user["id"])
     if result is None:
@@ -2606,6 +2616,15 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
         if not await has_active_paid_sub(user["id"]):
             return web.json_response({"error": "no_active_sub"}, status=400)
         return web.json_response({"error": "no_bonus"}, status=400)
+
+    # Grace → active transition: unthrottle VPN configs so the user regains
+    # full speed immediately (redeem_referral_bonus flips status to 'active').
+    if was_grace and sub_before is not None:
+        from services.grace import unthrottle_sub_configs
+        _spawn_bg(
+            unthrottle_sub_configs(sub_before["id"], user["id"], sub_before["plan"]),
+            name=f"unthrottle_referral_sub{sub_before['id']}",
+        )
 
     # Notify юзеру в чат бота
     try:

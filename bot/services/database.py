@@ -278,12 +278,13 @@ async def _migrate(db: aiosqlite.Connection):
     async with db.execute("PRAGMA table_info(configs)") as cur:
         cols = {row[1] for row in await cur.fetchall()}
     for col, defn in [
-        ("wg_pubkey",   "TEXT"),
-        ("assigned_ip", "TEXT"),
-        ("rx_bytes",    "INTEGER NOT NULL DEFAULT 0"),
-        ("tx_bytes",    "INTEGER NOT NULL DEFAULT 0"),
-        ("last_seen",   "TIMESTAMP"),
-        ("label",       "TEXT"),
+        ("wg_pubkey",    "TEXT"),
+        ("assigned_ip",  "TEXT"),
+        ("rx_bytes",     "INTEGER NOT NULL DEFAULT 0"),
+        ("tx_bytes",     "INTEGER NOT NULL DEFAULT 0"),
+        ("last_seen",    "TIMESTAMP"),
+        ("label",        "TEXT"),
+        ("activated_at", "DATETIME"),
     ]:
         if col not in cols:
             await db.execute(f"ALTER TABLE configs ADD COLUMN {col} {defn}")
@@ -1105,7 +1106,7 @@ async def claim_config_slot_for_activation(config_id: int) -> bool:
     """
     async with _connect() as db:
         cur = await db.execute(
-            "UPDATE configs SET status='activating' WHERE id=? AND status='empty'",
+            "UPDATE configs SET status='activating', activated_at=datetime('now') WHERE id=? AND status='empty'",
             (config_id,),
         )
         await db.commit()
@@ -1348,7 +1349,7 @@ async def cleanup_stuck_activating_slots() -> int:
                SET status='empty', peer_name=NULL, config_data=NULL,
                    server_id=NULL, vless_uuid=NULL
                WHERE status='activating'
-                 AND created_at < datetime('now', '-5 minutes')"""
+                 AND (activated_at IS NULL OR activated_at < datetime('now', '-5 minutes'))"""
         )
         await db.commit()
         return cur.rowcount
@@ -1692,7 +1693,8 @@ async def renew_subscription_from_grace(
                     pending_plan=NULL,
                     reminded_3d=0,
                     reminded_1d=0,
-                    reminded_grace_3d=0
+                    reminded_grace_3d=0,
+                    reminded_renewal_3d=0
                     {extra_clause}
                 WHERE id=? AND status='grace'""",
             extra_params + [sub_id],

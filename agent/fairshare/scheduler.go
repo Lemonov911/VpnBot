@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -15,12 +17,12 @@ type WGManager interface {
 }
 
 type Scheduler struct {
-	iface      string
-	totalMbit  int
-	minMbit    int
-	interval   time.Duration
-	mgr        WGManager
-	lastCount  int
+	iface     string
+	totalMbit int
+	minMbit   int
+	interval  time.Duration
+	mgr       WGManager
+	lastKey   string
 }
 
 func NewScheduler(iface string, totalMbit, minMbit, intervalSec int, mgr WGManager) *Scheduler {
@@ -46,13 +48,17 @@ func (s *Scheduler) Run() {
 }
 
 func (s *Scheduler) recalc() {
-	active := s.mgr.ActivePeerCount()
+	ips := s.mgr.PeerIPs()
+	sort.Strings(ips)
+	key := strings.Join(ips, ",")
+
+	active := len(ips)
 	if active == 0 {
-		if s.lastCount != 0 {
+		if s.lastKey != "" {
 			log.Printf("fairshare: no active peers, clearing tc rules")
 			s.clearTC()
 		}
-		s.lastCount = 0
+		s.lastKey = ""
 		return
 	}
 
@@ -61,17 +67,16 @@ func (s *Scheduler) recalc() {
 		perPeer = s.minMbit
 	}
 
-	if active == s.lastCount {
+	if key == s.lastKey {
 		return // nothing changed
 	}
 
 	log.Printf("fairshare: %d active peers → %d Mbit each", active, perPeer)
 
-	ips := s.mgr.PeerIPs()
 	if err := s.applyTC(ips, perPeer); err != nil {
 		log.Printf("fairshare: tc error: %v", err)
 	}
-	s.lastCount = active
+	s.lastKey = key
 }
 
 // applyTC sets up HTB qdisc with one class per peer IP.

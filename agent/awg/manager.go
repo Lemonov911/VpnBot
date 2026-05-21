@@ -261,14 +261,17 @@ func (m *Manager) RemovePeer(pubkey string) error {
 }
 
 // Stats обновляет байты/handshake из awg-вывода и возвращает копии пиров.
+// dumpPeers runs `awg show ... dump` — a slow subprocess — outside the lock
+// so it doesn't block AddPeer/RemovePeer.
 func (m *Manager) Stats() ([]*Peer, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	peerLines, err := m.dumpPeers()
 	if err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, line := range peerLines {
 		fields := strings.Fields(line)
 		if len(fields) < 8 {

@@ -291,8 +291,8 @@ func (m *Manager) removeUserAPI(email string) error {
 	cmd := exec.CommandContext(ctx, m.xrayBin, "api", "rmu", "--server="+m.apiAddr, "-tag="+m.inboundTag, email)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// "User ... not found" comes back with exit 0 + "Removed 0"; if exit != 0 it's a real error
-		if strings.Contains(string(out), "User") && strings.Contains(string(out), "not found") {
+		// "not found" responses come back with exit 0; if exit != 0 it's a real error
+		if strings.Contains(string(out), "not found") {
 			return nil
 		}
 		return fmt.Errorf("rmu: %s: %w", out, err)

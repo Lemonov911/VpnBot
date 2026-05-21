@@ -349,9 +349,14 @@ func (m *Manager) ResumePeer(pubkeyStr string) error {
 }
 
 func (m *Manager) SuspendAll(pubkeys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, pk := range pubkeys {
-		if err := m.SuspendPeer(pk); err != nil {
-			n := len(pk); if n > 8 { n = 8 }
+		if err := m.setSuspended(pk, true); err != nil {
+			n := 8
+			if len(pk) < n {
+				n = len(pk)
+			}
 			log.Printf("wg: suspend %s: %v", pk[:n], err)
 		}
 	}
@@ -359,9 +364,14 @@ func (m *Manager) SuspendAll(pubkeys []string) error {
 }
 
 func (m *Manager) ResumeAll(pubkeys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, pk := range pubkeys {
-		if err := m.ResumePeer(pk); err != nil {
-			n := len(pk); if n > 8 { n = 8 }
+		if err := m.setSuspended(pk, false); err != nil {
+			n := 8
+			if len(pk) < n {
+				n = len(pk)
+			}
 			log.Printf("wg: resume %s: %v", pk[:n], err)
 		}
 	}
