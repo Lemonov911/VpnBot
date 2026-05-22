@@ -452,6 +452,49 @@ export function createSupportTicket(
   return post('/api/support/ticket', { category, message })
 }
 
+/**
+ * Multipart upload for tickets carrying screenshot attachments. We use
+ * XMLHttpRequest (not fetch) because fetch has no upload-progress API —
+ * a 25 MB media_group on mobile can take 30+ seconds and the user needs
+ * a progress bar. Auth/headers mirror `post()`.
+ */
+export async function uploadTicketWithPhotos(
+  formData: FormData,
+  onProgress?: (pct: number) => void,
+): Promise<{ ok: boolean; ticket_id: number }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    }
+    xhr.onload = () => {
+      let data: Record<string, unknown> = {}
+      try { data = JSON.parse(xhr.responseText) } catch { /* noop */ }
+      if (xhr.status === 401) {
+        handle401()
+        reject(new Error('session_expired'))
+        return
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as { ok: boolean; ticket_id: number })
+      } else {
+        // Backend returns `message` (bilingual) + `error` (machine code).
+        reject(new Error(
+          (data.message as string) ?? (data.error as string) ?? `HTTP ${xhr.status}`,
+        ))
+      }
+    }
+    xhr.onerror = () => reject(new Error('network'))
+    xhr.open('POST', API_BASE + '/api/support/ticket')
+    // Do NOT set Content-Type — browser must auto-set with multipart boundary.
+    const initData = getInitData()
+    if (initData) xhr.setRequestHeader('X-Telegram-Init-Data', initData)
+    xhr.send(formData)
+  })
+}
+
 // ── Реферальная программа ─────────────────────────────────────────────────────
 
 export interface ReferralStats {

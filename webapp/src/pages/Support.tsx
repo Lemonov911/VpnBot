@@ -1,8 +1,25 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
-import { createSupportTicket, type SupportCategory } from '../api'
+import { createSupportTicket, uploadTicketWithPhotos, type SupportCategory } from '../api'
 import { useT, useLang } from '../i18n'
+
+// Screenshot upload limits — must match backend (handle_support_ticket).
+// If you change these, also update bot/services/webapp_api.py.
+const MAX_FILES = 5
+const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_TOTAL = 25 * 1024 * 1024
+// Files larger than this don't render a base64 preview — generating one
+// from a 5 MB JPEG on a mid-range Android device stalls the UI thread for
+// ~2s. We render a generic placeholder instead.
+const THUMB_LIMIT = 2 * 1024 * 1024
+const ACCEPT_TYPES = 'image/jpeg,image/png,image/webp,image/heic,image/heif'
+
+type AttachedFile = {
+  file: File
+  thumb: string | null
+  id: string
+}
 
 
 // FAQ icons — атрибут вопроса, не индекса.
@@ -245,7 +262,10 @@ export default function Support() {
   const [state,    setState]    = useState<PageState>('form')
   const [ticketId, setTicketId] = useState<number | null>(null)
   const [errMsg,   setErrMsg]   = useState('')
+  const [files, setFiles] = useState<AttachedFile[]>([])
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     WebApp.BackButton.show()
@@ -254,28 +274,107 @@ export default function Support() {
     return () => { WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])
 
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files || [])
+    e.target.value = ''  // allow re-picking the same file after remove
+    if (!picked.length) return
+
+    if (files.length + picked.length > MAX_FILES) {
+      WebApp.showAlert(t('support_too_many_files' as never))
+      return
+    }
+    const currentTotal = files.reduce((a, f) => a + f.file.size, 0)
+    const incomingTotal = picked.reduce((a, f) => a + f.size, 0)
+    if (currentTotal + incomingTotal > MAX_TOTAL) {
+      WebApp.showAlert(t('support_total_too_large' as never))
+      return
+    }
+    for (const f of picked) {
+      if (f.size > MAX_FILE_SIZE) {
+        WebApp.showAlert(t('support_file_too_large' as never))
+        return
+      }
+      // type-based check + HEIC name fallback (iOS Safari often reports
+      // empty type for HEIC files picked from Photos).
+      const accepted = ACCEPT_TYPES.split(',').some(at =>
+        f.type === at || (at.startsWith('image/heic') && /\.(heic|heif)$/i.test(f.name))
+      )
+      if (!accepted) {
+        WebApp.showAlert(t('support_unsupported_type' as never))
+        return
+      }
+    }
+
+    const newAttachments: AttachedFile[] = picked.map(f => ({
+      file: f,
+      thumb: null,
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    }))
+    // Thumbnail generation is async + opt-in for small files only — see
+    // THUMB_LIMIT rationale. We mutate state after FileReader completes.
+    for (const att of newAttachments) {
+      if (att.file.size < THUMB_LIMIT && att.file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = ev => {
+          if (typeof ev.target?.result === 'string') {
+            setFiles(prev => prev.map(p => p.id === att.id ? { ...p, thumb: ev.target!.result as string } : p))
+          }
+        }
+        reader.readAsDataURL(att.file)
+      }
+    }
+    setFiles(prev => [...prev, ...newAttachments])
+  }
+
+  const handleRemoveFile = (id: string) => {
+    WebApp.HapticFeedback.selectionChanged()
+    setFiles(prev => prev.filter(f => f.id !== id))
+  }
+
   const handleSubmit = async () => {
-    if (!message.trim() || state === 'sending') return
+    if (state === 'sending') return
+    const trimmed = message.trim()
+    if (trimmed.length < 10) {
+      WebApp.showAlert(t('support_text_too_short' as never))
+      return
+    }
     WebApp.HapticFeedback.impactOccurred('light')
     setState('sending')
     setErrMsg('')
+    setUploadProgress(null)
     try {
-      const { ticket_id } = await createSupportTicket(category, message.trim())
+      let ticket_id: number
+      if (files.length === 0) {
+        ({ ticket_id } = await createSupportTicket(category, trimmed))
+      } else {
+        // Multipart upload — fields named `photo_1`...`photo_N` so backend
+        // can iterate by `field.name.startswith("photo")`.
+        const fd = new FormData()
+        fd.append('category', category)
+        fd.append('message', trimmed)
+        files.forEach((att, i) => fd.append(`photo_${i + 1}`, att.file))
+        ;({ ticket_id } = await uploadTicketWithPhotos(fd, pct => setUploadProgress(pct)))
+      }
       setTicketId(ticket_id)
       WebApp.HapticFeedback.notificationOccurred('success')
       setState('done')
     } catch (e) {
       const raw = e instanceof Error ? e.message : ''
-      // Whitelist известных error-кодов от бэка → локализованные строки.
-      // Всё остальное (включая stack-traces, network-errors) показываем как
-      // generic `server_error`, чтобы не светить юзеру технические детали.
+      // Whitelist known backend error codes → localised strings. Backend
+      // now also returns bilingual `message` in JSON which xhr propagates
+      // as e.message — show as-is when it doesn't match a legacy code.
       const friendly =
         raw === 'rate_limited'    ? t('support_rate_limited' as never) :
         raw === 'auth_failed'     ? t('server_auth_failed' as never) :
         raw === 'validation_error'? t('server_validation_error' as never) :
-        t('server_error' as never)
-      setErrMsg(friendly)
+        raw === 'session_expired' ? '' :  // handle401 already alerts + closes
+        raw === 'network'         ? t('support_submit_error' as never) :
+        raw && raw.length < 200   ? raw :  // bilingual server msg
+        t('support_submit_error' as never)
+      if (friendly) setErrMsg(friendly)
       setState('error')
+    } finally {
+      setUploadProgress(null)
     }
   }
 
@@ -300,7 +399,7 @@ export default function Support() {
           <p className="text-[var(--tg-theme-hint-color)] text-sm leading-relaxed max-w-[280px]">
             {t('support_ticket')} #{ticketId} {t('support_ticket_accepted')}.<br />{t('support_done_sub')}
           </p>
-          <button className="btn w-full mb-2.5" onClick={() => { setMessage(''); setState('form') }}>
+          <button className="btn w-full mb-2.5" onClick={() => { setMessage(''); setFiles([]); setState('form') }}>
             {t('support_write_more')}
           </button>
           <button className="btn w-full !bg-[var(--tg-theme-section-bg-color)] !text-[var(--tg-theme-text-color)]" onClick={() => nav('/')}>
@@ -373,12 +472,83 @@ export default function Support() {
         </div>
       </div>
 
+      {/* Screenshot attachments */}
+      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+        <div className="py-[10px] px-4 flex items-center justify-between gap-3">
+          <span className="text-[13px] font-semibold text-[var(--tg-theme-text-color)]">
+            {t('support_attach_label' as never)}
+          </span>
+          <button
+            type="button"
+            disabled={files.length >= MAX_FILES || state === 'sending'}
+            onClick={() => { WebApp.HapticFeedback.selectionChanged(); fileInputRef.current?.click() }}
+            className="text-[13px] font-medium border-none bg-transparent cursor-pointer px-2 py-1 disabled:opacity-40"
+            style={{ color: accent }}
+          >
+            + {t('support_attach_btn' as never)} ({files.length}/{MAX_FILES})
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPT_TYPES}
+            multiple
+            onChange={handleFileChange}
+            style={{ display: 'none' }}
+          />
+        </div>
+        {files.length > 0 && (
+          <div className="px-4 pb-3 flex flex-wrap gap-2">
+            {files.map(att => (
+              <div key={att.id} className="relative w-[64px] h-[64px] rounded-lg overflow-hidden border border-[var(--card-border)] bg-[var(--tg-theme-bg-color)] flex items-center justify-center">
+                {att.thumb ? (
+                  <img src={att.thumb} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  // Placeholder for >2MB files: icon + size badge keeps UX
+                  // honest without burning a base64 encode on the main thread.
+                  <div className="flex flex-col items-center text-[var(--tg-theme-hint-color)]">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                      <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.8"/>
+                      <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+                      <path d="M21 15l-5-5L5 21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <span className="text-[9px] mt-0.5">{(att.file.size / 1024 / 1024).toFixed(1)}MB</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleRemoveFile(att.id)}
+                  aria-label={t('support_remove_file' as never)}
+                  className="absolute top-0.5 right-0.5 w-[18px] h-[18px] rounded-full bg-black/60 text-white border-none flex items-center justify-center cursor-pointer text-[12px] leading-none p-0"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Upload progress */}
+      {uploadProgress !== null && (
+        <div className="px-1">
+          <div className="text-[11px] text-[var(--tg-theme-hint-color)] mb-1 text-center">
+            {t('support_upload_progress' as never).replace('{pct}', String(uploadProgress))}
+          </div>
+          <div className="h-1.5 rounded-full bg-[var(--card-border)] overflow-hidden">
+            <div
+              className="h-full transition-all duration-150"
+              style={{ width: `${uploadProgress}%`, background: accent }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Хинт когда юзер ждать ответа (раньше — нечего: тикет уходил «в пустоту») */}
       <div className="text-[11px] text-[var(--tg-theme-hint-color)] px-1 text-center">
         {t('support_reply_hint' as never)}
       </div>
 
-      {state === 'error' && (
+      {state === 'error' && errMsg && (
         <p style={{ color: 'var(--tg-theme-destructive-text-color,#ff3b30)', textAlign: 'center', fontSize: 13, margin: 0 }}>
           {errMsg}
         </p>
@@ -386,7 +556,7 @@ export default function Support() {
 
       <button
         className="btn"
-        disabled={!message.trim() || state === 'sending'}
+        disabled={message.trim().length < 10 || state === 'sending'}
         onClick={handleSubmit}
         style={{ width: '100%' }}
       >

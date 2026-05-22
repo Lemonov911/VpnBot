@@ -166,6 +166,17 @@ const T = {
     support_ticket_accepted: 'принят',
     support_direct_title:'Написать напрямую в Telegram',
     support_direct_sub: 'Отправь команду /help в чат с ботом',
+    // Screenshot attachments
+    support_attach_label:    '📎 Скрин (необязательно)',
+    support_attach_btn:      'Добавить файл',
+    support_remove_file:     'Удалить',
+    support_too_many_files:  'Не больше 5 файлов',
+    support_file_too_large:  'Файл больше 5 МБ',
+    support_total_too_large: 'Суммарный размер больше 25 МБ',
+    support_unsupported_type:'Только JPEG/PNG/WebP/HEIC',
+    support_text_too_short:  'Минимум 10 символов',
+    support_submit_error:    'Не удалось отправить. Попробуй ещё раз.',
+    support_upload_progress: 'Отправка… {pct}%',
 
     faq_q1: 'Какое приложение мне нужно?',
     // faq_a1 рендерится из JSX-компонента <AppChoiceAnswer> в Support.tsx —
@@ -714,6 +725,17 @@ const T = {
     support_ticket_accepted: 'accepted',
     support_direct_title:'Write directly in Telegram',
     support_direct_sub: 'Send /help in the bot chat',
+    // Screenshot attachments
+    support_attach_label:    '📎 Screenshot (optional)',
+    support_attach_btn:      'Add file',
+    support_remove_file:     'Remove',
+    support_too_many_files:  'Up to 5 files',
+    support_file_too_large:  'File over 5 MB',
+    support_total_too_large: 'Total over 25 MB',
+    support_unsupported_type:'Only JPEG/PNG/WebP/HEIC',
+    support_text_too_short:  'At least 10 characters',
+    support_submit_error:    'Submit failed. Try again.',
+    support_upload_progress: 'Sending… {pct}%',
 
     faq_q1: 'Which app do I need?',
     faq_a1: 'See details when expanding the question.',

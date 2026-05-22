@@ -423,6 +423,21 @@ async def _migrate(db: aiosqlite.Connection):
         cols = {row[1] for row in await cur.fetchall()}
     if "admin_msg_id" not in cols:
         await db.execute("ALTER TABLE support_tickets ADD COLUMN admin_msg_id INTEGER")
+    # Screenshot attachments: tickets can now carry up to 5 photos forwarded to
+    # admin as a media_group. We store metadata for downstream reply-relay and
+    # admin-panel display.
+    #   photo_file_ids    — JSON array of Telegram file_ids (largest size)
+    #   admin_msg_ids     — JSON array of admin chat message_ids covering the
+    #                       header + each photo in the group; get_ticket_by_admin_msg
+    #                       matches against any element so reply-relay works whichever
+    #                       message the admin replies to.
+    #   attachment_status — 'ok' | 'failed' | NULL (NULL for legacy/text-only)
+    if "photo_file_ids" not in cols:
+        await db.execute("ALTER TABLE support_tickets ADD COLUMN photo_file_ids TEXT")
+    if "admin_msg_ids" not in cols:
+        await db.execute("ALTER TABLE support_tickets ADD COLUMN admin_msg_ids TEXT")
+    if "attachment_status" not in cols:
+        await db.execute("ALTER TABLE support_tickets ADD COLUMN attachment_status TEXT")
 
     # users — referral tracking + sub_token (for subscription URL)
     async with db.execute("PRAGMA table_info(users)") as cur:
@@ -2314,13 +2329,53 @@ async def update_ticket_admin_msg(ticket_id: int, admin_msg_id: int):
 
 
 async def get_ticket_by_admin_msg(admin_msg_id: int) -> dict | None:
+    """Find ticket by admin chat message_id.
+
+    Matches both legacy single-msg tickets (admin_msg_id column) and new
+    multi-msg tickets with photo attachments (admin_msg_ids JSON array
+    containing this id). When admin replies to ANY message in a media group
+    or the header message, relay_support_reply still finds the right ticket.
+    """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
+        # Legacy single column — fast path for existing text-only tickets.
         async with db.execute(
-            "SELECT * FROM support_tickets WHERE admin_msg_id=?", (admin_msg_id,)
+            "SELECT * FROM support_tickets WHERE admin_msg_id=? LIMIT 1",
+            (admin_msg_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return dict(row)
+        # New multi-id JSON array — uses sqlite json1 (built-in, enabled by default).
+        async with db.execute(
+            """SELECT t.* FROM support_tickets t,
+                       json_each(t.admin_msg_ids) j
+                 WHERE j.value = ? LIMIT 1""",
+            (admin_msg_id,),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def update_support_ticket_metadata(
+    ticket_id: int,
+    photo_file_ids: str | None,
+    admin_msg_ids: str | None,
+    attachment_status: str | None,
+) -> None:
+    """Set photo + admin msg metadata after ticket is forwarded to admin.
+
+    All three values are JSON-encoded strings (or NULL) — we don't validate
+    here, caller serialises. Called once per ticket after the bot finished
+    relaying to admin (either successfully or with failure marker).
+    """
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE support_tickets SET photo_file_ids=?, admin_msg_ids=?, "
+            "attachment_status=? WHERE id=?",
+            (photo_file_ids, admin_msg_ids, attachment_status, ticket_id),
+        )
+        await db.commit()
 
 
 async def get_ticket_by_id(ticket_id: int) -> dict | None:

@@ -46,6 +46,7 @@ from services.database import (
     get_servers_by_protocol, get_server_by_id,
     get_active_subscription, get_last_expired_subscription, change_subscription_plan, schedule_plan_change,
     has_active_subscription, create_support_ticket, update_ticket_admin_msg,
+    update_support_ticket_metadata,
     get_referral_stats as db_get_referral_stats,
 )
 
@@ -3788,9 +3789,24 @@ CATEGORY_LABELS: dict[str, str] = {
 }
 
 async def handle_support_ticket(request: web.Request) -> web.Response:
+    """Create a support ticket. Accepts both JSON (text-only legacy path) and
+    multipart/form-data (text + up to 5 screenshot attachments).
+
+    Attachment rules (multipart):
+      * up to 5 files per ticket; each ≤ 5 MB; total ≤ 25 MB
+      * JPEG/PNG/WebP/HEIC accepted; HEIC is converted server-side to JPEG
+        via pillow-heif before forwarding to admin
+      * text body still required (min 10 chars) even with photos — naked
+        screenshots aren't useful for triage
+      * forwarded as a Telegram media_group with header attached as caption
+        on the first photo, falling back to a separate header message when
+        the caption would exceed 1024 chars (TG media caption limit)
+    """
     user = _resolve_user(request)
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     # Rate-limit: 10 сек / юзер.  Каждый тикет = сообщение админу в TG, спам
     # затопит чат поддержки и DB.  10 сек — успеть исправить опечатку + повторить,
@@ -3798,36 +3814,255 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     if not _rate_limit_check_evict(_ticket_rate, str(user["id"]), _time.monotonic(), window=10.0):
         return web.json_response({"error": "rate_limited"}, status=429)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "Bad request"}, status=400)
+    content_type = (request.content_type or "").lower()
 
-    category = str(body.get("category", "other"))
-    message  = str(body.get("message", "")).strip()
-    if not message:
-        return await _user_err(user["id"], "ticket_empty", "bot_api_err_ticket_empty", 400)
-    if len(message) > 2000:
-        return await _user_err(user["id"], "ticket_too_long", "bot_api_err_ticket_too_long", 400)
+    text = ""
+    category = "other"
+    # list[(bytes, ext_str)] — ext used purely for filename suggestion on upload
+    photo_bytes_list: list[tuple[bytes, str]] = []
 
-    ticket_id = await create_support_ticket(user["id"], category, message)
+    MAX_FILES = 5
+    MAX_FILE_SIZE = 5 * 1024 * 1024
+    MAX_TOTAL = 25 * 1024 * 1024
+    # Magic-byte sniff: ignore Content-Type header from the client (forgeable)
+    # and detect by signature. WebP also requires "WEBP" at offset 8.
+    ALLOWED_MAGIC: dict[bytes, str] = {
+        b"\xff\xd8\xff":             "jpeg",
+        b"\x89PNG\r\n\x1a\n":        "png",
+        b"RIFF":                     "webp",  # extra check at offset 8 below
+    }
+    HEIC_BRANDS = {b"heic", b"heix", b"mif1", b"msf1", b"heim", b"heis", b"hevc", b"hevx"}
+
+    if "multipart/form-data" in content_type:
+        try:
+            reader = await request.multipart()
+        except Exception:
+            return await _user_err(user["id"], "bad_body", "bot_api_err_bad_body", 400)
+        total_size = 0
+        # aiohttp's MultipartReader yields either nested MultipartReader or
+        # BodyPartReader. We expect only BodyPartReader at the top level for
+        # this endpoint; skip anything else so mypy is happy and a misbehaving
+        # client doesn't crash us.
+        from aiohttp.multipart import BodyPartReader  # type: ignore[import-not-found]
+        async for field in reader:
+            if not isinstance(field, BodyPartReader):
+                continue
+            if field.name == "category":
+                category = (await field.text()).strip()
+            elif field.name in ("message", "text"):
+                text = (await field.text()).strip()
+            elif field.name and field.name.startswith("photo"):
+                if len(photo_bytes_list) >= MAX_FILES:
+                    return await _user_err(
+                        user["id"], "too_many_files",
+                        "bot_api_err_too_many_files", 400,
+                    )
+                buf = bytearray()
+                while True:
+                    chunk = await field.read_chunk(64 * 1024)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    if len(buf) > MAX_FILE_SIZE:
+                        return await _user_err(
+                            user["id"], "file_too_large",
+                            "bot_api_err_file_too_large", 400,
+                        )
+                    total_size += len(chunk)
+                    if total_size > MAX_TOTAL:
+                        return await _user_err(
+                            user["id"], "total_too_large",
+                            "bot_api_err_total_too_large", 400,
+                        )
+                if len(buf) == 0:
+                    # Empty photo field — silently skip (browser quirk: some
+                    # send empty parts when picker is cancelled).
+                    continue
+
+                data = bytes(buf)
+                detected_ext: str | None = None
+                for magic, ext in ALLOWED_MAGIC.items():
+                    if data.startswith(magic):
+                        detected_ext = ext
+                        break
+                if detected_ext == "webp":
+                    if len(data) < 12 or data[8:12] != b"WEBP":
+                        detected_ext = None
+                # HEIC/HEIF: brand identifier at offset 4 is `ftyp` + 4-byte brand.
+                if not detected_ext and len(data) >= 12 and data[4:8] == b"ftyp":
+                    brand = data[8:12]
+                    if brand in HEIC_BRANDS:
+                        detected_ext = "heic"
+
+                if not detected_ext:
+                    return await _user_err(
+                        user["id"], "bad_file_type",
+                        "bot_api_err_bad_file_type", 400,
+                    )
+
+                # HEIC → JPEG conversion. Telegram clients on desktop/older
+                # Android can't render HEIC natively, so we normalise.
+                if detected_ext == "heic":
+                    try:
+                        import io
+                        from PIL import Image  # type: ignore[import-not-found]
+                        import pillow_heif  # type: ignore[import-not-found]
+                        pillow_heif.register_heif_opener()
+                        heic_img = Image.open(io.BytesIO(data))
+                        out = io.BytesIO()
+                        heic_img.convert("RGB").save(out, format="JPEG", quality=85)
+                        data = out.getvalue()
+                        detected_ext = "jpeg"
+                    except Exception as e:
+                        logger.warning("HEIC convert failed user=%d: %s", user["id"], e)
+                        return await _user_err(
+                            user["id"], "bad_file_type",
+                            "bot_api_err_bad_file_type", 400,
+                        )
+
+                # Final structural validation — magic bytes alone don't catch
+                # truncated/corrupt streams that would explode Telegram's CDN.
+                try:
+                    import io
+                    from PIL import Image  # type: ignore[import-not-found]
+                    img = Image.open(io.BytesIO(data))
+                    img.verify()
+                except Exception as e:
+                    logger.warning("Image verify failed user=%d: %s", user["id"], e)
+                    return await _user_err(
+                        user["id"], "bad_file_type",
+                        "bot_api_err_bad_file_type", 400,
+                    )
+
+                photo_bytes_list.append((data, detected_ext))
+    else:
+        # JSON path — backward compat for clients that haven't shipped the
+        # multipart upload UI yet.
+        try:
+            body = await request.json()
+        except Exception:
+            return await _user_err(user["id"], "bad_body", "bot_api_err_bad_body", 400)
+        text = str(body.get("message", "")).strip()
+        category = str(body.get("category", "other"))
+
+    # Common validation — even with photos we require a meaningful text body.
+    if len(text) < 10:
+        return await _user_err(
+            user["id"], "text_too_short", "bot_api_err_text_too_short", 400,
+        )
+    if len(text) > 2000:
+        return await _user_err(
+            user["id"], "text_too_long", "bot_api_err_text_too_long", 400,
+        )
+
+    if category not in CATEGORY_LABELS:
+        category = "other"
+
+    # Persist ticket FIRST so failure to relay to admin doesn't lose user input.
+    ticket_id = await create_support_ticket(user["id"], category, text)
+
+    if not ADMIN_ID:
+        logger.warning(
+            "Ticket #%d created but ADMIN_ID not set — admin won't see it",
+            ticket_id,
+        )
+        return web.json_response({"ok": True, "ticket_id": ticket_id})
 
     bot: Bot = request.app["bot"]
     cat_label = CATEGORY_LABELS.get(category, category)
-    username  = f"@{user['username']}" if user.get("username") else f"id:{user['id']}"
-    name      = html_escape(user.get("first_name") or "—")
+    username = f"@{user['username']}" if user.get("username") else f"id:{user['id']}"
+    name_safe = html_escape(user.get("first_name") or "—")
     username_safe = html_escape(username)
-    text = (
+    header_text = (
         f"🎫 <b>Тикет #{ticket_id}</b>\n"
-        f"👤 {name} ({username_safe})\n"
+        f"👤 {name_safe} ({username_safe})\n"
         f"📂 {cat_label}\n\n"
-        f"{html_escape(message)}"
+        f"{html_escape(text)}"
     )
+
+    admin_msg_ids: list[int] = []
+    photo_file_ids: list[str] = []
+    attachment_status: str | None = None
+
     try:
-        sent = await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
-        await update_ticket_admin_msg(ticket_id, sent.message_id)
+        if not photo_bytes_list:
+            # Text-only — preserve legacy single-message path so
+            # update_ticket_admin_msg/get_ticket_by_admin_msg legacy column lookup
+            # keeps working.
+            sent_one = await bot.send_message(ADMIN_ID, header_text, parse_mode="HTML")
+            await update_ticket_admin_msg(ticket_id, sent_one.message_id)
+            return web.json_response({"ok": True, "ticket_id": ticket_id})
+
+        # Multi-photo path.
+        from aiogram.types import InputMediaPhoto, BufferedInputFile
+
+        CAPTION_LIMIT = 1024  # TG send_media_group caption limit per item
+        attach_caption = len(header_text) <= CAPTION_LIMIT
+
+        if not attach_caption:
+            # Send header text first as a regular message so admin sees full
+            # context, then attach photos with no caption.
+            header_msg = await bot.send_message(ADMIN_ID, header_text, parse_mode="HTML")
+            admin_msg_ids.append(header_msg.message_id)
+
+        # Single photo → send_photo (media_group requires ≥2 items).
+        if len(photo_bytes_list) == 1:
+            data0, ext0 = photo_bytes_list[0]
+            sent = await bot.send_photo(
+                ADMIN_ID,
+                photo=BufferedInputFile(data0, filename=f"ticket_{ticket_id}_1.{ext0}"),
+                caption=header_text if attach_caption else None,
+                parse_mode="HTML" if attach_caption else None,
+            )
+            admin_msg_ids.append(sent.message_id)
+            if sent.photo:
+                photo_file_ids.append(sent.photo[-1].file_id)
+        else:
+            # send_media_group expects an invariant list of the union type;
+            # build it pre-typed to keep mypy happy.
+            from aiogram.types import (
+                InputMediaAudio, InputMediaDocument, InputMediaLivePhoto, InputMediaVideo,
+            )
+            MediaItem = (
+                InputMediaAudio | InputMediaDocument | InputMediaLivePhoto
+                | InputMediaPhoto | InputMediaVideo
+            )
+            media_items: list[MediaItem] = []
+            for i, (data_i, ext_i) in enumerate(photo_bytes_list):
+                input_file = BufferedInputFile(
+                    data_i, filename=f"ticket_{ticket_id}_{i + 1}.{ext_i}"
+                )
+                if i == 0 and attach_caption:
+                    media_items.append(InputMediaPhoto(
+                        media=input_file,
+                        caption=header_text,
+                        parse_mode="HTML",
+                    ))
+                else:
+                    media_items.append(InputMediaPhoto(media=input_file))
+            sent_group = await bot.send_media_group(ADMIN_ID, media=media_items)
+            for sm in sent_group:
+                admin_msg_ids.append(sm.message_id)
+                if sm.photo:
+                    photo_file_ids.append(sm.photo[-1].file_id)
+
+        attachment_status = "ok"
     except Exception as e:
-        logger.warning("Не удалось отправить тикет #%d админу: %s", ticket_id, e, exc_info=True)
+        logger.error(
+            "Ticket #%d admin forward failed: %s", ticket_id, e, exc_info=True,
+        )
+        attachment_status = "failed"
+
+    # Persist metadata for reply-relay + admin panel display.
+    try:
+        await update_support_ticket_metadata(
+            ticket_id,
+            photo_file_ids=json.dumps(photo_file_ids) if photo_file_ids else None,
+            admin_msg_ids=json.dumps(admin_msg_ids) if admin_msg_ids else None,
+            attachment_status=attachment_status,
+        )
+    except Exception as e:
+        logger.warning("Failed to update ticket #%d metadata: %s", ticket_id, e)
 
     return web.json_response({"ok": True, "ticket_id": ticket_id})
 
@@ -5002,7 +5237,9 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 def create_api_app(bot: Bot) -> web.Application:
-    app = web.Application(middlewares=[cors_middleware])
+    # client_max_size: tickets with up to 5×5MB photos = 25MB; +5MB headroom
+    # for multipart boundaries and form fields. Default aiohttp limit is 1MB.
+    app = web.Application(middlewares=[cors_middleware], client_max_size=30 * 1024 * 1024)
     app["bot"] = bot
 
     # Health-check — public, для monitoring + version probe
