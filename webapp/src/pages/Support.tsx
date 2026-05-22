@@ -4,21 +4,32 @@ import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, uploadTicketWithPhotos, type SupportCategory } from '../api'
 import { useT, useLang } from '../i18n'
 
-// Screenshot upload limits — must match backend (handle_support_ticket).
+// Screenshot/video upload limits — must match backend (handle_support_ticket).
 // If you change these, also update bot/services/webapp_api.py.
 const MAX_FILES = 5
-const MAX_FILE_SIZE = 5 * 1024 * 1024
-const MAX_TOTAL = 25 * 1024 * 1024
+const MAX_PHOTO_SIZE = 5 * 1024 * 1024
+const MAX_VIDEO_SIZE = 10 * 1024 * 1024
+const MAX_VIDEOS = 1
+const MAX_TOTAL = 30 * 1024 * 1024
 // Files larger than this don't render a base64 preview — generating one
 // from a 5 MB JPEG on a mid-range Android device stalls the UI thread for
 // ~2s. We render a generic placeholder instead.
 const THUMB_LIMIT = 2 * 1024 * 1024
-const ACCEPT_TYPES = 'image/jpeg,image/png,image/webp,image/heic,image/heif'
+const ACCEPT_TYPES =
+  'image/jpeg,image/png,image/webp,image/heic,image/heif,' +
+  'video/mp4,video/quicktime,.mp4,.mov'
+
+function isVideoFile(f: File): boolean {
+  // iOS Safari иногда даёт пустой `type` для .mov из «Файлов» — fallback по расширению.
+  if (f.type.startsWith('video/')) return true
+  return /\.(mp4|mov|m4v)$/i.test(f.name)
+}
 
 type AttachedFile = {
   file: File
   thumb: string | null
   id: string
+  isVideo: boolean
 }
 
 
@@ -289,31 +300,50 @@ export default function Support() {
       WebApp.showAlert(t('support_total_too_large' as never))
       return
     }
+    // Подсчёт уже-прикреплённых видео + проверка лимита заранее
+    // (иначе юзер мог бы накидать 2 видео и получить отказ только при send).
+    const currentVideos = files.filter(f => f.isVideo).length
+    let incomingVideos = 0
     for (const f of picked) {
-      if (f.size > MAX_FILE_SIZE) {
-        WebApp.showAlert(t('support_file_too_large' as never))
-        return
+      const isVid = isVideoFile(f)
+      if (isVid) {
+        incomingVideos += 1
+        if (f.size > MAX_VIDEO_SIZE) {
+          WebApp.showAlert(t('support_video_too_large' as never))
+          return
+        }
+      } else {
+        if (f.size > MAX_PHOTO_SIZE) {
+          WebApp.showAlert(t('support_file_too_large' as never))
+          return
+        }
+        // type-based check + HEIC name fallback (iOS Safari often reports
+        // empty type for HEIC files picked from Photos).
+        const accepted = ACCEPT_TYPES.split(',').some(at =>
+          f.type === at || (at.startsWith('image/heic') && /\.(heic|heif)$/i.test(f.name))
+        )
+        if (!accepted) {
+          WebApp.showAlert(t('support_unsupported_type' as never))
+          return
+        }
       }
-      // type-based check + HEIC name fallback (iOS Safari often reports
-      // empty type for HEIC files picked from Photos).
-      const accepted = ACCEPT_TYPES.split(',').some(at =>
-        f.type === at || (at.startsWith('image/heic') && /\.(heic|heif)$/i.test(f.name))
-      )
-      if (!accepted) {
-        WebApp.showAlert(t('support_unsupported_type' as never))
-        return
-      }
+    }
+    if (currentVideos + incomingVideos > MAX_VIDEOS) {
+      WebApp.showAlert(t('support_too_many_videos' as never))
+      return
     }
 
     const newAttachments: AttachedFile[] = picked.map(f => ({
       file: f,
       thumb: null,
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      isVideo: isVideoFile(f),
     }))
     // Thumbnail generation is async + opt-in for small files only — see
-    // THUMB_LIMIT rationale. We mutate state after FileReader completes.
+    // THUMB_LIMIT rationale. Видео thumbnail не генерируем (тяжело + редко
+    // нужен); рендерим play-icon placeholder.
     for (const att of newAttachments) {
-      if (att.file.size < THUMB_LIMIT && att.file.type.startsWith('image/')) {
+      if (!att.isVideo && att.file.size < THUMB_LIMIT && att.file.type.startsWith('image/')) {
         const reader = new FileReader()
         reader.onload = ev => {
           if (typeof ev.target?.result === 'string') {
@@ -500,10 +530,22 @@ export default function Support() {
           <div className="px-4 pb-3 flex flex-wrap gap-2">
             {files.map(att => (
               <div key={att.id} className="relative w-[64px] h-[64px] rounded-lg overflow-hidden border border-[var(--card-border)] bg-[var(--tg-theme-bg-color)] flex items-center justify-center">
-                {att.thumb ? (
+                {att.isVideo ? (
+                  // Видео-placeholder: фильмо-strip + play-icon overlay.
+                  // Превью первого кадра не генерируем — на Android тяжело
+                  // (требует <video> + canvas snapshot), а юзер и так знает что приложил.
+                  <div className="relative w-full h-full flex items-center justify-center bg-black/60 text-white">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                    <span className="absolute bottom-0.5 right-1 text-[9px] font-medium">
+                      {(att.file.size / 1024 / 1024).toFixed(1)}MB
+                    </span>
+                  </div>
+                ) : att.thumb ? (
                   <img src={att.thumb} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  // Placeholder for >2MB files: icon + size badge keeps UX
+                  // Placeholder for >2MB photo files: icon + size badge keeps UX
                   // honest without burning a base64 encode on the main thread.
                   <div className="flex flex-col items-center text-[var(--tg-theme-hint-color)]">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">

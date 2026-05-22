@@ -3818,17 +3818,18 @@ CATEGORY_LABELS: dict[str, str] = {
 
 async def handle_support_ticket(request: web.Request) -> web.Response:
     """Create a support ticket. Accepts both JSON (text-only legacy path) and
-    multipart/form-data (text + up to 5 screenshot attachments).
+    multipart/form-data (text + up to 5 screenshot/video attachments).
 
     Attachment rules (multipart):
-      * up to 5 files per ticket; each ≤ 5 MB; total ≤ 25 MB
-      * JPEG/PNG/WebP/HEIC accepted; HEIC is converted server-side to JPEG
-        via pillow-heif before forwarding to admin
-      * text body still required (min 10 chars) even with photos — naked
-        screenshots aren't useful for triage
-      * forwarded as a Telegram media_group with header attached as caption
-        on the first photo, falling back to a separate header message when
-        the caption would exceed 1024 chars (TG media caption limit)
+      * up to 5 files per ticket; combined total ≤ 30 MB
+      * photos (JPEG/PNG/WebP/HEIC): ≤ 5 MB each; HEIC is converted server-side
+        to JPEG via pillow-heif before forwarding to admin
+      * videos (MP4/MOV): ≤ 10 MB each, **maximum 1 video per ticket**
+      * text body still required (min 10 chars) even with attachments — naked
+        screenshots/clips aren't useful for triage
+      * forwarded as a Telegram media_group (mixed photos+video) with header
+        attached as caption on the first item, falling back to a separate
+        header message when the caption would exceed 1024 chars
     """
     user = _resolve_user(request)
     if not user:
@@ -3846,12 +3847,15 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 
     text = ""
     category = "other"
-    # list[(bytes, ext_str)] — ext used purely for filename suggestion on upload
-    photo_bytes_list: list[tuple[bytes, str]] = []
+    # list[(bytes, ext_str, is_video)] — ext for filename suggestion, is_video
+    # switches PIL.verify off (images only) and routes to InputMediaVideo on send.
+    photo_bytes_list: list[tuple[bytes, str, bool]] = []
 
     MAX_FILES = 5
-    MAX_FILE_SIZE = 5 * 1024 * 1024
-    MAX_TOTAL = 25 * 1024 * 1024
+    MAX_PHOTO_SIZE = 5 * 1024 * 1024     # per-photo
+    MAX_VIDEO_SIZE = 10 * 1024 * 1024    # per-video
+    MAX_VIDEOS = 1                        # only one clip per ticket
+    MAX_TOTAL = 30 * 1024 * 1024         # 10 video + 4×5 photo = 30 MB
     # Magic-byte sniff: ignore Content-Type header from the client (forgeable)
     # and detect by signature. WebP also requires "WEBP" at offset 8.
     ALLOWED_MAGIC: dict[bytes, str] = {
@@ -3860,6 +3864,12 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
         b"RIFF":                     "webp",  # extra check at offset 8 below
     }
     HEIC_BRANDS = {b"heic", b"heix", b"mif1", b"msf1", b"heim", b"heis", b"hevc", b"hevx"}
+    # Video container detection. MP4 (isom/mp42/iso2/avc1/dash) и MOV (qt) — оба
+    # имеют `ftyp` box в первых 12 байтах. Telegram нативно показывает оба без
+    # перекодирования; ffmpeg / pillow здесь не нужны.
+    MP4_BRANDS = {b"isom", b"mp42", b"mp41", b"iso2", b"iso4", b"iso5",
+                   b"avc1", b"M4V ", b"M4A ", b"dash"}
+    MOV_BRANDS = {b"qt  "}
 
     if "multipart/form-data" in content_type:
         try:
@@ -3885,13 +3895,17 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
                         user["id"], "too_many_files",
                         "bot_api_err_too_many_files", 400,
                     )
+                # Streaming read с per-chunk size guard. Лимит ставим по
+                # MAX_VIDEO_SIZE (10 MB) на всех этапах — если файл окажется
+                # фото >5 МБ, отлуп ниже после magic-detect (видео разрешено
+                # больше, но мы не знаем тип пока не прочли первые ~12 байт).
                 buf = bytearray()
                 while True:
                     chunk = await field.read_chunk(64 * 1024)
                     if not chunk:
                         break
                     buf.extend(chunk)
-                    if len(buf) > MAX_FILE_SIZE:
+                    if len(buf) > MAX_VIDEO_SIZE:
                         return await _user_err(
                             user["id"], "file_too_large",
                             "bot_api_err_file_too_large", 400,
@@ -3909,6 +3923,7 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 
                 data = bytes(buf)
                 detected_ext: str | None = None
+                is_video = False
                 for magic, ext in ALLOWED_MAGIC.items():
                     if data.startswith(magic):
                         detected_ext = ext
@@ -3916,17 +3931,45 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
                 if detected_ext == "webp":
                     if len(data) < 12 or data[8:12] != b"WEBP":
                         detected_ext = None
-                # HEIC/HEIF: brand identifier at offset 4 is `ftyp` + 4-byte brand.
+                # `ftyp` box на offset 4 — общий формат для HEIC/MP4/MOV.
+                # Разделяем по brand'у (offset 8..12).
                 if not detected_ext and len(data) >= 12 and data[4:8] == b"ftyp":
                     brand = data[8:12]
                     if brand in HEIC_BRANDS:
                         detected_ext = "heic"
+                    elif brand in MP4_BRANDS:
+                        detected_ext = "mp4"
+                        is_video = True
+                    elif brand in MOV_BRANDS:
+                        detected_ext = "mov"
+                        is_video = True
 
                 if not detected_ext:
                     return await _user_err(
                         user["id"], "bad_file_type",
                         "bot_api_err_bad_file_type", 400,
                     )
+
+                # Per-type size enforcement (фото 5 МБ / видео 10 МБ).
+                # Read-loop выше ловит >10 МБ, тут добиваем 5–10 МБ для фото.
+                if is_video:
+                    if len(data) > MAX_VIDEO_SIZE:
+                        return await _user_err(
+                            user["id"], "video_too_large",
+                            "bot_api_err_video_too_large", 400,
+                        )
+                    video_count = sum(1 for _, _, v in photo_bytes_list if v)
+                    if video_count >= MAX_VIDEOS:
+                        return await _user_err(
+                            user["id"], "too_many_videos",
+                            "bot_api_err_too_many_videos", 400,
+                        )
+                else:
+                    if len(data) > MAX_PHOTO_SIZE:
+                        return await _user_err(
+                            user["id"], "file_too_large",
+                            "bot_api_err_file_too_large", 400,
+                        )
 
                 # HEIC → JPEG conversion. Telegram clients on desktop/older
                 # Android can't render HEIC natively, so we normalise.
@@ -3963,19 +4006,22 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 
                 # Final structural validation — magic bytes alone don't catch
                 # truncated/corrupt streams that would explode Telegram's CDN.
-                try:
-                    import io
-                    from PIL import Image  # type: ignore[import-not-found]
-                    img = Image.open(io.BytesIO(data))
-                    img.verify()
-                except Exception as e:
-                    logger.warning("Image verify failed user=%d: %s", user["id"], e)
-                    return await _user_err(
-                        user["id"], "bad_file_type",
-                        "bot_api_err_bad_file_type", 400,
-                    )
+                # Только для изображений: PIL.verify не понимает MP4/MOV,
+                # для них валидация = magic-byte match + Telegram-side parse.
+                if not is_video:
+                    try:
+                        import io
+                        from PIL import Image  # type: ignore[import-not-found]
+                        img = Image.open(io.BytesIO(data))
+                        img.verify()
+                    except Exception as e:
+                        logger.warning("Image verify failed user=%d: %s", user["id"], e)
+                        return await _user_err(
+                            user["id"], "bad_file_type",
+                            "bot_api_err_bad_file_type", 400,
+                        )
 
-                photo_bytes_list.append((data, detected_ext))
+                photo_bytes_list.append((data, detected_ext, is_video))
     else:
         # JSON path — backward compat for clients that haven't shipped the
         # multipart upload UI yet.
@@ -4046,18 +4092,34 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
             header_msg = await bot.send_message(ADMIN_ID, header_text, parse_mode="HTML")
             admin_msg_ids.append(header_msg.message_id)
 
-        # Single photo → send_photo (media_group requires ≥2 items).
+        # Single attachment → send_photo / send_video напрямую
+        # (media_group требует ≥2 items).
         if len(photo_bytes_list) == 1:
-            data0, ext0 = photo_bytes_list[0]
-            sent = await bot.send_photo(
-                ADMIN_ID,
-                photo=BufferedInputFile(data0, filename=f"ticket_{ticket_id}_1.{ext0}"),
-                caption=header_text if attach_caption else None,
-                parse_mode="HTML" if attach_caption else None,
+            data0, ext0, is_video0 = photo_bytes_list[0]
+            input_file0 = BufferedInputFile(
+                data0, filename=f"ticket_{ticket_id}_1.{ext0}",
             )
-            admin_msg_ids.append(sent.message_id)
-            if sent.photo:
-                photo_file_ids.append(sent.photo[-1].file_id)
+            if is_video0:
+                sent = await bot.send_video(
+                    ADMIN_ID,
+                    video=input_file0,
+                    caption=header_text if attach_caption else None,
+                    parse_mode="HTML" if attach_caption else None,
+                    supports_streaming=True,
+                )
+                admin_msg_ids.append(sent.message_id)
+                if sent.video:
+                    photo_file_ids.append(sent.video.file_id)
+            else:
+                sent = await bot.send_photo(
+                    ADMIN_ID,
+                    photo=input_file0,
+                    caption=header_text if attach_caption else None,
+                    parse_mode="HTML" if attach_caption else None,
+                )
+                admin_msg_ids.append(sent.message_id)
+                if sent.photo:
+                    photo_file_ids.append(sent.photo[-1].file_id)
         else:
             # send_media_group expects an invariant list of the union type;
             # build it pre-typed to keep mypy happy.
@@ -4069,23 +4131,31 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
                 | InputMediaPhoto | InputMediaVideo
             )
             media_items: list[MediaItem] = []
-            for i, (data_i, ext_i) in enumerate(photo_bytes_list):
+            for i, (data_i, ext_i, is_video_i) in enumerate(photo_bytes_list):
                 input_file = BufferedInputFile(
                     data_i, filename=f"ticket_{ticket_id}_{i + 1}.{ext_i}"
                 )
+                caption_kwargs: dict = {}
                 if i == 0 and attach_caption:
-                    media_items.append(InputMediaPhoto(
+                    caption_kwargs = {"caption": header_text, "parse_mode": "HTML"}
+                if is_video_i:
+                    media_items.append(InputMediaVideo(
                         media=input_file,
-                        caption=header_text,
-                        parse_mode="HTML",
+                        supports_streaming=True,
+                        **caption_kwargs,
                     ))
                 else:
-                    media_items.append(InputMediaPhoto(media=input_file))
+                    media_items.append(InputMediaPhoto(
+                        media=input_file,
+                        **caption_kwargs,
+                    ))
             sent_group = await bot.send_media_group(ADMIN_ID, media=media_items)
             for sm in sent_group:
                 admin_msg_ids.append(sm.message_id)
                 if sm.photo:
                     photo_file_ids.append(sm.photo[-1].file_id)
+                elif sm.video:
+                    photo_file_ids.append(sm.video.file_id)
 
         attachment_status = "ok"
     except Exception as e:
@@ -5292,9 +5362,9 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 def create_api_app(bot: Bot) -> web.Application:
-    # client_max_size: tickets with up to 5×5MB photos = 25MB; +5MB headroom
+    # client_max_size: tickets with 1×10MB video + 4×5MB photos = 30MB; +10MB headroom
     # for multipart boundaries and form fields. Default aiohttp limit is 1MB.
-    app = web.Application(middlewares=[cors_middleware], client_max_size=30 * 1024 * 1024)
+    app = web.Application(middlewares=[cors_middleware], client_max_size=40 * 1024 * 1024)
     app["bot"] = bot
 
     # Health-check — public, для monitoring + version probe
