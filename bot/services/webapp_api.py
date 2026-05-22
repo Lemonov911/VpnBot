@@ -2275,6 +2275,43 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
                 pass
             return web.Response(status=200)
 
+        # T2: bot-blocked gate on recurring charge. Юзер заблокировал бота
+        # → smysl auto-renew нет (доставить нечего, юзер ушёл). Отменяем
+        # Lava-контракт + alert админу для refund'a.
+        from services.database import is_user_bot_blocked as _is_blocked_lv, disable_auto_renew as _dar_blocked
+        if await _is_blocked_lv(sub["user_id"]):
+            logger.warning(
+                "Lava recurring webhook for bot-blocked user=%d sub=%d contract=%s",
+                sub["user_id"], sub["id"], contract_id,
+            )
+            try:
+                await _dar_blocked(sub["id"])
+            except Exception as e:
+                logger.warning("blocked-on-recur disable_auto_renew failed sub=%d: %s", sub["id"], e)
+            _parent_cancel = sub.get("parent_contract_id") or contract_id
+            if LAVATOP_API_KEY and _parent_cancel:
+                try:
+                    from services.lavatop import cancel_subscription as _lava_cancel_blk
+                    await _lava_cancel_blk(api_key=LAVATOP_API_KEY, contract_id=_parent_cancel)
+                except Exception as e:
+                    logger.warning("blocked-on-recur Lava cancel failed: %s", e)
+            try:
+                if ADMIN_ID:
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"⚠️ <b>Lava recurring (user blocked bot)</b>\n\n"
+                        f"User: <code>{sub['user_id']}</code>\n"
+                        f"Sub: #{sub['id']}\n"
+                        f"Plan: {sub.get('plan')}\n"
+                        f"Contract: <code>{contract_id}</code>\n"
+                        f"Amount: {amount:.2f} {currency}\n\n"
+                        "Auto-renew disabled + Lava cancel attempted. Refund manually.",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
+            return web.Response(status=200)
+
         # Sanity: amount должна совпадать с plan.rub ± 10% (audit 17.05 #7).
         # Без проверки Lava-misconfig или mock event мог бы экстендить
         # подписку любого плана при любом amount.

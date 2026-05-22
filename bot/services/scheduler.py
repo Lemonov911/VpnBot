@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from html import escape as html_escape
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -131,18 +132,38 @@ _TG_SEND_DELAY = 0.04  # 25 msg/sec
 
 
 async def _send_throttled(bot: Bot, user_id: int, text: str, **kwargs) -> bool:
-    """Шлёт сообщение с защитой от flood-control. Возвращает True если успешно."""
-    from aiogram.exceptions import TelegramRetryAfter
+    """Шлёт сообщение с защитой от flood-control. Возвращает True если успешно.
+
+    TelegramForbiddenError (юзер заблокировал бота / удалил аккаунт) → ставит
+    users.bot_blocked_at чтобы дальнейший scheduler не спамил, и recurring
+    auto-renewal паузил продление.
+    """
+    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError
     try:
         await bot.send_message(user_id, text, **kwargs)
         await asyncio.sleep(_TG_SEND_DELAY)
         return True
+    except TelegramForbiddenError:
+        from services.database import mark_user_bot_blocked
+        try:
+            await mark_user_bot_blocked(user_id)
+        except Exception as mb_err:
+            logger.warning("mark_user_bot_blocked failed user=%d: %s", user_id, mb_err)
+        logger.info("user %d blocked bot → marked, skip notify", user_id)
+        return False
     except TelegramRetryAfter as e:
         logger.warning("TG flood control: sleep %ds then retry user=%d", e.retry_after, user_id, exc_info=True)
         await asyncio.sleep(e.retry_after + 1)
         try:
             await bot.send_message(user_id, text, **kwargs)
             return True
+        except TelegramForbiddenError:
+            from services.database import mark_user_bot_blocked
+            try:
+                await mark_user_bot_blocked(user_id)
+            except Exception:
+                pass
+            return False
         except Exception as retry_err:
             logger.warning("TG retry failed user=%d: %s", user_id, retry_err, exc_info=True)
             return False
@@ -321,8 +342,8 @@ async def _process_expired_subscriptions(bot: Bot):
                                     ADMIN_ID,
                                     f"⚠️ <b>AWG grace throttle SKIPPED</b>\n\n"
                                     f"cfg #{cfg_id} sub #{sub_id} — assigned_ip="
-                                    f"<code>{assigned_ip or 'NULL'}</code>, "
-                                    f"peer_name=<code>{peer_name or 'NULL'}</code>\n\n"
+                                    f"<code>{html_escape(assigned_ip or 'NULL')}</code>, "
+                                    f"peer_name=<code>{html_escape(peer_name or 'NULL')}</code>\n\n"
                                     f"Юзер сейчас на full speed в grace. "
                                     f"Найди и пофикси data drift вручную.",
                                     parse_mode="HTML",
@@ -381,7 +402,7 @@ async def _process_expired_subscriptions(bot: Bot):
                                                 f"⚠️ <b>VLESS split-brain</b>\n\n"
                                                 f"Cfg #{cfg_id}: пир одновременно в двух inbound.\n"
                                                 f"Нужен ручной фикс на сервере.\n\n"
-                                                f"<code>{cleanup_err}</code>",
+                                                f"<code>{html_escape(str(cleanup_err))}</code>",
                                                 parse_mode="HTML",
                                             )
                                         except Exception:
@@ -613,8 +634,8 @@ async def _reconcile_partial_refunds(bot: Bot) -> None:
                         f"♻️ <b>Partial refund reconciled</b>\n\n"
                         f"Sub: #{sub_id}\n"
                         f"User: <code>{sub['user_id']}</code>\n"
-                        f"Plan: {sub['plan']}\n"
-                        f"Status was: <code>{sub['status']}</code>\n"
+                        f"Plan: {html_escape(str(sub['plan']))}\n"
+                        f"Status was: <code>{html_escape(str(sub['status']))}</code>\n"
                         f"Active configs cleaned: {sub.get('active_config_count', 0)}\n\n"
                         "Likely cause: bot crashed mid-refund.",
                         parse_mode="HTML",
@@ -1117,20 +1138,49 @@ async def _daily_backup(bot: Bot):
     loop = asyncio.get_event_loop()
     data = await loop.run_in_executor(None, _backup_blocking)
 
+    delivered = False
     try:
-        await bot.send_document(
-            ADMIN_ID,
-            BufferedInputFile(
-                data,
-                filename=f"bot-db-{today}-{_bot_version()[:7]}.gz",
-            ),
-            caption=f"📦 Daily backup · {today} · {len(data)//1024} KB · sub_tokens redacted",
-        )
-        with open(state_file, "w") as f:
-            f.write(today)
-        logger.info("daily backup отправлен (%d KB)", len(data) // 1024)
-    except Exception as e:
-        logger.warning("daily backup не отправлен: %s", e, exc_info=True)
+        try:
+            await bot.send_document(
+                ADMIN_ID,
+                BufferedInputFile(
+                    data,
+                    filename=f"bot-db-{today}-{_bot_version()[:7]}.gz",
+                ),
+                caption=f"📦 Daily backup · {today} · {len(data)//1024} KB · sub_tokens redacted",
+            )
+            delivered = True
+            logger.info("daily backup отправлен (%d KB)", len(data) // 1024)
+        except Exception as e:
+            logger.warning("daily backup не отправлен в TG: %s — сохраняем локально", e, exc_info=True)
+            # Local rotation fallback — keep last 7 backups under /opt/vpnbot/.backups/.
+            # Если Telegram-канал админа упал, диск переполнен, или bot.send_document
+            # отклонён — у нас остаётся локальный snapshot чтобы вручную выкачать
+            # rsync'ом. Без этого fallback'а единственная копия — текущая БД и
+            # один pre-migrate snapshot, что критично мало.
+            try:
+                from pathlib import Path as _Path
+                backup_dir = _Path("/opt/vpnbot/.backups")
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                local_path = backup_dir / f"bot.db.{ts}.gz"
+                local_path.write_bytes(data)
+                # Rotate: keep last 7 (date-sorted by filename = timestamp).
+                files = sorted(backup_dir.glob("bot.db.*.gz"))
+                for old in files[:-7]:
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+                logger.info("daily backup saved locally: %s", local_path)
+            except Exception as inner_e:
+                logger.error("daily backup local save also failed: %s", inner_e, exc_info=True)
+
+        # State file обновляем только при успешной TG-доставке — иначе health-alert
+        # «N дней без backup'a» начнёт работать как и задумано.
+        if delivered:
+            with open(state_file, "w") as f:
+                f.write(today)
     finally:
         # cleanup
         for p in (snap, snap + ".gz"):

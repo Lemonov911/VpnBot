@@ -71,11 +71,32 @@ async def _pre_migrate_snapshot():
     inconsistent snapshot если есть незачекпоинченные транзакции).
     """
     import sqlite3 as _sqlite3
+    import shutil as _shutil
     if not DB_PATH.exists():
         return  # первая инициализация, нет что снапшотить
     snap_dir = DB_PATH.parent / ".snapshots"
     snap_dir.mkdir(exist_ok=True)
     snap_path = snap_dir / f"pre-migrate-{int(datetime.utcnow().timestamp())}.db"
+
+    # Disk-space precheck: if there's not enough room for snapshot + WAL
+    # checkpointing + safety margin, REFUSE the migration entirely. Better
+    # to fail fast than corrupt the snapshot mid-write and leave operator
+    # with no rollback option.
+    try:
+        db_size = DB_PATH.stat().st_size
+        free_bytes = _shutil.disk_usage(DB_PATH.parent).free
+        needed = db_size * 2 + 50 * 1024 * 1024  # 2x DB + 50MB margin
+        if db_size > 0 and free_bytes < needed:
+            logger.error(
+                "_pre_migrate_snapshot: insufficient disk space "
+                "(need %d MB, have %d MB) — REFUSING migration",
+                needed // (1024 * 1024), free_bytes // (1024 * 1024),
+            )
+            raise RuntimeError("disk_full_before_migration")
+    except RuntimeError:
+        raise  # propagate so init_db fails loud
+    except Exception as e:
+        logger.warning("pre-migrate disk space check failed: %s", e)
 
     def _backup_sync():
         src = _sqlite3.connect(str(DB_PATH))
@@ -114,7 +135,11 @@ async def init_db():
         # 1-2 минуты транзакций при power-loss).
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
-        await db.execute("PRAGMA busy_timeout=5000")
+        # init_db выполняет ALTER TABLE + длинные backfill-UPDATEs. На больших
+        # БД (50+ MB) с конкурентным read'ом из webapp_api SQLITE_BUSY может
+        # стрелять в 5 сек. 30 сек хватает для самых тяжёлых backfill'ов
+        # (traffic_source, null_expires). Regular _connect() остаётся на 5 сек.
+        await db.execute("PRAGMA busy_timeout=30000")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INTEGER PRIMARY KEY,
@@ -463,6 +488,15 @@ async def _migrate(db: aiosqlite.Connection):
         await db.execute("ALTER TABLE users ADD COLUMN traffic_source TEXT")
     if "traffic_source_at" not in cols:
         await db.execute("ALTER TABLE users ADD COLUMN traffic_source_at TIMESTAMP")
+    # bot_blocked_at — timestamp когда юзер заблокировал бота
+    # (TelegramForbiddenError при send_message). Используется чтобы:
+    #   1) не повторно слать reminder'ы (scheduler._send_throttled пропускает);
+    #   2) пропускать recurring auto-renewal — нет смысла продлевать sub
+    #      юзеру, который ушёл (Stars charge → refund, Lava → cancel contract).
+    # NULL → юзер не блокирован. Сбрасывается при следующем успешном /start
+    # (mark_user_bot_unblocked в upsert_user).
+    if "bot_blocked_at" not in cols:
+        await db.execute("ALTER TABLE users ADD COLUMN bot_blocked_at TIMESTAMP")
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_users_traffic_source ON users(traffic_source)"
     )
@@ -472,18 +506,27 @@ async def _migrate(db: aiosqlite.Connection):
     # реф-ссылке мы знаем из referred_by). Без этого первые недели после
     # деплоя весь старый трафик в админке отметится как 'direct' что искажает
     # картину "реф vs реклама".
+    # SELECT-then-UPDATE-then-INSERT-marker: если UPDATE упадёт (crash
+    # mid-flight), маркер не ставится и миграция повторится на следующем
+    # старте. Раньше порядок был INSERT-marker → UPDATE: partial failure
+    # → marker есть, данные не мигрированы, никогда не отдиагностируешь.
     try:
-        await db.execute(
-            "INSERT INTO schema_state (key) VALUES ('traffic_source_backfill_v1')"
-        )
-        await db.execute(
-            "UPDATE users SET traffic_source = 'referral:' || referred_by, "
-            "                  traffic_source_at = created_at "
-            "WHERE referred_by IS NOT NULL AND traffic_source IS NULL"
-        )
-        logger.info("traffic_source backfilled for users with referred_by (one-time)")
-    except _sqlite.IntegrityError:
-        pass  # уже backfilled раньше
+        async with db.execute(
+            "SELECT 1 FROM schema_state WHERE key='traffic_source_backfill_v1'"
+        ) as cur:
+            already_done = await cur.fetchone() is not None
+        if not already_done:
+            await db.execute(
+                "UPDATE users SET traffic_source = 'referral:' || referred_by, "
+                "                  traffic_source_at = created_at "
+                "WHERE referred_by IS NOT NULL AND traffic_source IS NULL"
+            )
+            await db.execute(
+                "INSERT INTO schema_state (key) VALUES ('traffic_source_backfill_v1')"
+            )
+            logger.info("traffic_source backfilled for users with referred_by (one-time)")
+    except _sqlite.OperationalError:
+        pass  # schema_state может отсутствовать на очень старых БД
 
     # subscriptions — recurring tracking для Lava.top
     async with db.execute("PRAGMA table_info(subscriptions)") as cur:
@@ -657,7 +700,24 @@ async def _migrate(db: aiosqlite.Connection):
     # (UPDATE ниже устанавливает им backfilled=1, иначе живой прод сломался бы).
     if "backfilled" not in srv_cols:
         await db.execute("ALTER TABLE servers ADD COLUMN backfilled INTEGER NOT NULL DEFAULT 0")
-        await db.execute("UPDATE servers SET backfilled=1")
+
+    # Backfill existing servers — gated by schema_state, idempotent.
+    # Раньше UPDATE сидел в той же ветке `if column missing`: если ALTER
+    # успел, а UPDATE упал (kill mid-migration), на следующем старте
+    # колонка уже есть → UPDATE никогда не повторится → existing servers
+    # остаются backfilled=0 → их VLESS URLs выпадают из /sub/.
+    try:
+        async with db.execute(
+            "SELECT 1 FROM schema_state WHERE key='backfilled_existing_servers_v1'"
+        ) as cur:
+            already_done = await cur.fetchone() is not None
+        if not already_done:
+            await db.execute("UPDATE servers SET backfilled=1 WHERE backfilled=0")
+            await db.execute(
+                "INSERT INTO schema_state (key) VALUES ('backfilled_existing_servers_v1')"
+            )
+    except _sqlite.OperationalError:
+        pass
 
     # users.vless_uuid — canonical Reality credential. UNIQUE partial index
     # (ignores NULL) защищает от двух юзеров с одинаковым UUID при гонке
@@ -751,7 +811,8 @@ async def upsert_user(
                 "traffic_source, traffic_source_at, lang) "
                 "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "  lang = COALESCE(excluded.lang, users.lang)",
+                "  lang = COALESCE(excluded.lang, users.lang), "
+                "  bot_blocked_at = NULL",
                 (user_id, username, first_name, traffic_source, lang),
             )
         else:
@@ -759,10 +820,51 @@ async def upsert_user(
                 "INSERT INTO users (id, username, first_name, lang) "
                 "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
-                "  lang = COALESCE(excluded.lang, users.lang)",
+                "  lang = COALESCE(excluded.lang, users.lang), "
+                "  bot_blocked_at = NULL",
                 (user_id, username, first_name, lang),
             )
         await db.commit()
+
+
+async def mark_user_bot_blocked(user_id: int) -> None:
+    """Помечает юзера как заблокировавшего бота.
+
+    Idempotent: WHERE bot_blocked_at IS NULL не позволяет перезатирать
+    оригинальный timestamp (важно для аналитики «когда юзер ушёл»).
+    """
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE users SET bot_blocked_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND bot_blocked_at IS NULL",
+            (user_id,),
+        )
+        await db.commit()
+
+
+async def mark_user_bot_unblocked(user_id: int) -> None:
+    """Сбрасывает bot_blocked_at — юзер снова доступен.
+
+    Вызывается из upsert_user автоматически при следующем /start, либо
+    вручную из webhook'ов «получили действие от юзера → значит не заблокирован».
+    """
+    async with _connect() as db:
+        await db.execute(
+            "UPDATE users SET bot_blocked_at=NULL WHERE id=?",
+            (user_id,),
+        )
+        await db.commit()
+
+
+async def is_user_bot_blocked(user_id: int) -> bool:
+    """True если юзер заблокировал бота (bot_blocked_at IS NOT NULL)."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT bot_blocked_at FROM users WHERE id=?",
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return bool(row and row[0])
 
 
 async def get_user_lang(user_id: int) -> str | None:

@@ -59,6 +59,11 @@ import services.esim_api as esim_api
 logger = logging.getLogger(__name__)
 
 router = Router()
+# Private-chats only — bot is consumer product, group/channel posts are noise
+# and crash on missing from_user. Admin router stays unfiltered (admin uses
+# the same private chat anyway).
+router.message.filter(F.chat.type == "private")
+router.callback_query.filter(F.message.chat.type == "private")
 
 # Тарифы импортируются из services.plans — единственный источник истины.
 
@@ -353,6 +358,41 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
     )
     if await is_payment_recorded(payment_id):
         logger.info("Stars renewal: duplicate charge_id %s, ignored", payment_id)
+        return
+
+    # Если юзер заблокировал бота — нет смысла продлевать sub.
+    # Telegram уже списал ★, refund'им и алёртим админу. По-хорошему ещё бы
+    # отменять auto_renew, но Stars subscription cancellation требует
+    # явного юзер-действия — alert админу достаточно для ручной отмены.
+    from services.database import is_user_bot_blocked
+    if await is_user_bot_blocked(user_id):
+        logger.warning(
+            "Stars renewal SKIPPED user=%d blocked bot — refunding charge_id=%s",
+            user_id, payment_id,
+        )
+        try:
+            await bot.refund_star_payment(
+                user_id=user_id, telegram_payment_charge_id=payment_id,
+            )
+        except Exception as refund_err:
+            logger.error("Stars refund failed user=%d charge=%s: %s",
+                         user_id, payment_id, refund_err, exc_info=True)
+        try:
+            from config import ADMIN_ID
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ <b>Stars recurring SKIPPED (user blocked bot)</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Plan: {plan_key}\n"
+                    f"Amount: {payment.total_amount}★\n"
+                    f"Charge ID: <code>{payment_id}</code>\n\n"
+                    "Refund attempted. Отмени Stars-подписку вручную "
+                    "(юзер всё равно ушёл).",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
         return
 
     sub = await get_recurring_sub_for_renewal(user_id, plan_key)
@@ -1389,9 +1429,18 @@ async def deliver_esim_to_user(bot: Bot, profile_id: int):
     matching  = profile["matching_id"] or ""
     pkg_name  = profile["package_name"] or "eSIM"
 
+    # T5: manual SM-DP+/activation codes идут ПЕРВЫМИ в caption.
+    # Telegram caption limit = 1024 символов; если упрёмся, truncate срежет
+    # хвост — а хвост был именно с manual codes, и юзер без QR-сканера
+    # оставался без вариантов восстановления. Теперь truncate срезает
+    # cosmetic-suffix (Android tips / "1 раз"-warning), не recovery codes.
     caption_lines = [
         "✅ <b>eSIM готова!</b>",
         f"📦 <b>{pkg_name}</b>",
+        "",
+        "📝 <b>Коды для ручной активации</b> (если QR/ссылка не работают):",
+        f"   SM-DP+ адрес: <code>{html_escape(smdp)}</code>",
+        f"   Код активации: <code>{html_escape(matching)}</code>",
         "",
         "📲 <b>iPhone — самый простой путь:</b>",
     ]
@@ -1408,10 +1457,6 @@ async def deliver_esim_to_user(bot: Bot, profile_id: int):
     caption_lines += [
         "",
         "🤖 <b>Android:</b> Настройки → SIM-карты → Добавить eSIM → Сканируй QR",
-        "",
-        "📝 <b>Вручную</b> (если QR/ссылка не работают):",
-        f"   SM-DP+ адрес: <code>{html_escape(smdp)}</code>",
-        f"   Код активации: <code>{html_escape(matching)}</code>",
         "",
         "⚠️ <b>Установить можно только 1 раз</b> — сохрани QR до активации.",
         "⚡ eSIM активируется при первом подключении к сети.",

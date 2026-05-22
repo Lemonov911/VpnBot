@@ -1,6 +1,6 @@
 import os
 import re
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message,
@@ -17,6 +17,10 @@ from services.database import (
 from services.trial import can_claim_trial, TRIAL_DAYS
 
 router = Router()
+# Private-chats only. Channel posts / group messages have no `from_user`
+# (channel posts) or different semantics — handlers crash on from_user.id.
+router.message.filter(F.chat.type == "private")
+router.callback_query.filter(F.message.chat.type == "private")
 
 # UTM-payload разрешает только [a-z0-9_-], lowercase. Telegram сам ограничивает
 # start-param ровно этим алфавитом (+ длина <=64), но мы дополнительно

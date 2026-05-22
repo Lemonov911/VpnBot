@@ -63,10 +63,20 @@ async def relay_support_reply(message: Message):
 
     user_id = ticket["user_id"]
     ticket_id = ticket["id"]
+    # Reject empty body — раньше отправляли «Ответ от поддержки:\n\n» (пустой)
+    # и админу показывали ✅. Юзер получал «привет от поддержки» без содержимого.
+    # Стикеры/voice/photo — пока не поддерживаются; админ должен ответить текстом.
+    text = (message.text or message.caption or "").strip()
+    if not text:
+        await message.reply(
+            "⚠️ Текст ответа пуст. Стикеры/голос/медиа пока не поддерживаются — "
+            "ответь юзеру текстом (или caption к фото)."
+        )
+        return
     try:
         await message.bot.send_message(
             user_id,
-            f"💬 <b>Ответ от поддержки (тикет #{ticket_id}):</b>\n\n{message.text or message.caption or ''}",
+            f"💬 <b>Ответ от поддержки (тикет #{ticket_id}):</b>\n\n{text}",
             parse_mode="HTML",
         )
         await message.reply("✅ Ответ отправлен пользователю")
@@ -123,6 +133,11 @@ async def cmd_stats(message: Message):
             "AND datetime(REPLACE(expires_at, 'T', ' ')) <= datetime('now','+3 days')"
         )).fetchone()
 
+    # T7: cap row counts to keep final text < Telegram 4096-char message limit.
+    # На крупном проде (>30 серверов или >30 планов) /stats упирался в лимит
+    # и aiogram.send_message бросал исключение — админ /stats не получал вообще.
+    rows_plan = list(rows_plan)[:30]
+    rows_srv = list(rows_srv)[:30]
     plans = "\n".join(f"  • {r['plan']}: <b>{r['c']}</b>" for r in rows_plan) or "  (нет)"
     protos = "\n".join(f"  • {r['protocol']}: <b>{r['c']}</b>" for r in rows_proto) or "  (нет)"
     srvs = "\n".join(
@@ -146,6 +161,11 @@ async def cmd_stats(message: Message):
         f"💰 Доход сегодня: <b>{today_stars} ⭐</b> / <b>{today_rub} ₽</b>\n"
         f"👤 Всего юзеров: <b>{total_users}</b>"
     )
+    # Final-text guard: cap'ы выше обычно покрывают, но если plans/serverов
+    # длинные строки names — добиваем общим truncate'ом до 3900 (с запасом
+    # под HTML-tag overhead на стороне Telegram).
+    if len(text) > 3900:
+        text = text[:3900] + "\n...[truncated]"
     await message.answer(text, parse_mode="HTML")
 
 
