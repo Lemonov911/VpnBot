@@ -4859,6 +4859,20 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
             name=f"unthrottle_grant_sub{result['subscription_id']}",
         )
 
+    # VLESS bootstrap для свежесозданной grant-sub. Без этого юзер получает
+    # подписку с N empty VLESS-слотов, sub_url=None, и в Mini App VLESS-
+    # карточки вообще нет (per-slot UI для VLESS отфильтрован). На trial /
+    # paid-flow первый VLESS-пир активируется автоматически; gift был
+    # исключением — теперь паритет восстановлен.
+    if result.get("action") == "created" and result.get("subscription_id"):
+        plan_def = VPN_PLANS.get(plan_key, {})
+        if plan_def.get("vless_slots", 0) > 0:
+            from services.trial import bootstrap_vless_for_sub
+            _spawn_bg(
+                bootstrap_vless_for_sub(result["subscription_id"], target_id, plan_key),
+                name=f"vless_bootstrap_grant_sub{result['subscription_id']}",
+            )
+
     # Best-effort notify юзера. Если он не /start'нул бота — get 403/400 и
     # игнорируем (юзер увидит подписку при первом /start).
     bot: Bot = request.app["bot"]

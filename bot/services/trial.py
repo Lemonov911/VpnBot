@@ -321,3 +321,82 @@ async def _provision_trial_locked(user_id: int) -> dict:
         # Backward-compat: старые callers ждут "config_id"
         "config_id":       vless_cfg_id,
     }
+
+
+async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> int:
+    """Активирует VLESS на всех active VLESS-серверах для свежей grant-sub.
+
+    Зачем: admin-grant создаёт только empty слоты (см. admin_grant_subscription
+    в database.py). У платных flow'ов VLESS bootstrap'ится через successful_payment-
+    handler'ы (cryptobot/oxapay/lava/stars), у trial — через provision_trial.
+    У gift-sub этого шага не было — юзер получал sub_url=None в /api/vpn/subscription
+    (т.к. _sub_url_for требует ≥1 active VLESS-конфиг), а UI per-slot VLESS не
+    показывает (filter s.protocol !== 'vless'). Результат — VLESS физически
+    купленный, но недоступный в Mini App.
+
+    Re-uses первые N empty VLESS-слотов этой sub (по числу active VLESS-серверов).
+    Best-effort: ошибка одного сервера не останавливает остальные. Если все
+    серверы упали — sub остаётся без VLESS, log + админ-алёрт через caller.
+
+    Returns: число успешно прованизированных пиров.
+    """
+    import uuid as _uuid
+    from urllib.parse import quote as _q
+
+    from services.database import get_configs_for_subscription
+    from services.plans import vless_service_for_plan
+
+    vless_servers = await get_all_active_servers("vless")
+    if not vless_servers:
+        logger.warning("bootstrap_vless: no active VLESS servers, sub=%d skipped", sub_id)
+        return 0
+
+    cfgs = await get_configs_for_subscription(sub_id)
+    empty_vless = [c for c in cfgs if c["protocol"] == "vless" and c["status"] == "empty"]
+    if not empty_vless:
+        # Уже бутстраплено ранее (idempotency: повторный вызов = no-op)
+        # ИЛИ план без VLESS-слотов вообще (vpn_start) — не наша проблема.
+        logger.info("bootstrap_vless: sub=%d has no empty VLESS slots — skip", sub_id)
+        return 0
+
+    # Tier по плану: vpn_max → vless-max, vpn_base → vless-base, etc.
+    # Без этого все grant'ы шли бы на base (медленный inbound), а юзер платил
+    # за max — UX-несоответствие.
+    tier_svc = vless_service_for_plan(plan_key)
+
+    # Один UUID на все серверы — Happ subscription с multi-location.
+    slot_uuid = str(_uuid.uuid4())
+    provisioned = 0
+    for i, server in enumerate(vless_servers):
+        if i >= len(empty_vless):
+            break  # серверов больше чем плановых слотов — оставляем хвост (rare)
+        cfg = empty_vless[i]
+        try:
+            flag = (server.get("flag") or "").replace(" ", "")
+            label = f"grant_{user_id}_{flag or server['id']}"
+            peer = await provision_peer(server, label, tier_svc, peer_id=slot_uuid)
+            loc = " ".join(filter(None, [
+                (server.get("flag") or "").strip(),
+                (server.get("city") or server.get("name") or "").strip(),
+            ])).strip() or f"Server {server['id']}"
+            cfg_data = peer.config or ""
+            if cfg_data.startswith("vless://"):
+                base = cfg_data.split("#", 1)[0]
+                cfg_data = f"{base}#{_q(loc, safe='')}"
+            await save_peer_to_config(
+                cfg["id"], server["id"], peer.id, "",
+                cfg_data, label,
+                vless_uuid=slot_uuid,
+            )
+            await update_server_peer_count(server["id"], +1)
+            provisioned += 1
+        except VpnctlError as e:
+            logger.warning("bootstrap_vless cfg=%d server=%s: %s",
+                            cfg["id"], server.get("id"), e, exc_info=True)
+        except Exception as e:
+            logger.error("bootstrap_vless unexpected cfg=%d: %s",
+                          cfg["id"], e, exc_info=True)
+
+    logger.info("bootstrap_vless: sub=%d user=%d provisioned %d/%d VLESS peers (tier=%s)",
+                sub_id, user_id, provisioned, len(vless_servers), tier_svc)
+    return provisioned
