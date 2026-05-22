@@ -666,7 +666,6 @@ export default function VPN() {
             </div>
             <div className="text-xs text-[var(--tg-theme-hint-color,#707579)] mt-0.5">
               {t('vpn_grace_banner_body')
-                .replace('{days}', String(sub.grace_days_left ?? 0))
                 .replace('{plural}', p(sub.grace_days_left ?? 0, { ru: [t('vpn_day_left_1'), t('vpn_day_left_2'), t('days')], en: ['day', 'days'] }))
               }
             </div>
