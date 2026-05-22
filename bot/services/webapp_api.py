@@ -2961,12 +2961,15 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    # MD-F8: per-user rate-limit. UI polls at 8s; this catches multi-tab
-    # amplification (each tab polls independently) and accidental tight
-    # loops from buggy frontends. 1s window is generous.
+    # MD-F8: per-user rate-limit. UI polls at 8s; this catches accidental
+    # tight loops from buggy frontends. Window kept tight (250ms) — wider
+    # values reject legitimate BottomNav tab-switching (Home → VPN → Home
+    # within 1s) because `visibilitychange` doesn't fire on in-app SPA
+    # navigation, so the skeleton state from a 429 never refreshes itself.
+    # See bug 23.05 (user-reported "тарифа нет при переключении вкладок").
     now_rl = _time.monotonic()
     last_rl = _vpn_sub_rate.get(user["id"], 0.0)
-    if now_rl - last_rl < 1.0:
+    if now_rl - last_rl < 0.25:
         return web.json_response({"error": "rate_limited"}, status=429)
     _vpn_sub_rate[user["id"]] = now_rl
     # Lazy eviction — keep the dict from growing unbounded under churn.

@@ -261,8 +261,20 @@ export function cancelLavatopRenewal(): Promise<{
   return post('/api/vpn/subscription/cancel-renewal', {})
 }
 
-export function getActiveSubscription(): Promise<Subscription | null> {
-  return get('/api/vpn/subscription')
+export async function getActiveSubscription(): Promise<Subscription | null> {
+  // Auto-retry once on 429. BottomNav tab-switch (Home → VPN → Home within
+  // <1s) triggers backend per-user rate-limit. visibilitychange doesn't
+  // fire on in-app SPA nav, so the skeleton state would otherwise stick.
+  // 400ms covers the 250ms backend window with margin.
+  try {
+    return await get('/api/vpn/subscription')
+  } catch (e) {
+    if (e instanceof Error && e.message === 'rate_limit') {
+      await new Promise(r => setTimeout(r, 400))
+      return await get('/api/vpn/subscription')
+    }
+    throw e
+  }
 }
 
 export function changeSubscriptionPlan(planKey: string): Promise<{
