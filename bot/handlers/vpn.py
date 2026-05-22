@@ -361,9 +361,9 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         return
 
     # Если юзер заблокировал бота — нет смысла продлевать sub.
-    # Telegram уже списал ★, refund'им и алёртим админу. По-хорошему ещё бы
-    # отменять auto_renew, но Stars subscription cancellation требует
-    # явного юзер-действия — alert админу достаточно для ручной отмены.
+    # Telegram уже списал ★, refund'им и сбрасываем наш auto_renew флаг,
+    # чтобы reminder/scheduler перестали мучить sub. Telegram-side cancel
+    # требует явного юзер-действия — alert админу для ручной отмены.
     from services.database import is_user_bot_blocked
     if await is_user_bot_blocked(user_id):
         logger.warning(
@@ -377,6 +377,19 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         except Exception as refund_err:
             logger.error("Stars refund failed user=%d charge=%s: %s",
                          user_id, payment_id, refund_err, exc_info=True)
+        # Сбрасываем auto_renew на нашей стороне — иначе reminder продолжит
+        # ходить, и если юзер разблокирует бота — мы снова пойдём в этот же
+        # бот-blocked branch на следующем charge'е.
+        try:
+            sub_to_disable = await get_recurring_sub_for_renewal(user_id, plan_key)
+            if sub_to_disable:
+                from services.database import disable_auto_renew
+                await disable_auto_renew(sub_to_disable["id"])
+        except Exception as e:
+            logger.warning(
+                "Stars renewal: disable_auto_renew failed user=%d sub=%s: %s",
+                user_id, sub_to_disable.get("id") if 'sub_to_disable' in locals() and sub_to_disable else "?", e,
+            )
         try:
             from config import ADMIN_ID
             if ADMIN_ID:
@@ -387,8 +400,8 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
                     f"Plan: {plan_key}\n"
                     f"Amount: {payment.total_amount}★\n"
                     f"Charge ID: <code>{payment_id}</code>\n\n"
-                    "Refund attempted. Отмени Stars-подписку вручную "
-                    "(юзер всё равно ушёл).",
+                    "Refund attempted, auto_renew снят. Отмени Stars-подписку "
+                    "вручную в TG (юзер всё равно ушёл).",
                     parse_mode="HTML",
                 )
         except Exception:
@@ -837,6 +850,20 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     # Cryptomus/Lava webhook'ах — единый код для всех payment-методов.
     await maybe_award_referral_bonus(message.bot, user_id, sub_id)
 
+    # Cross-plan upgrade: если у юзера была grace-sub на другом плане, она
+    # пережила create_subscription (по дизайну EU-F7, чтобы не было даунтайма).
+    # Теперь новый план провижится, можно безопасно закрыть старую grace.
+    # Иначе до 14 дней overlap: старые throttled пиры + новые full speed,
+    # Happ балансирует, peer_count на агенте drift.
+    try:
+        from services.grace import close_dangling_grace_subs_after_upgrade
+        await close_dangling_grace_subs_after_upgrade(message.bot, user_id, sub_id)
+    except Exception as e:
+        logger.warning(
+            "close_dangling_grace_subs_after_upgrade Stars user=%d sub=%d: %s",
+            user_id, sub_id, e,
+        )
+
 
 async def send_purchase_success_message(
     bot: Bot,
@@ -1013,33 +1040,50 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
                 return
 
             configs = await get_configs_for_subscription(trial_sub_id)
-            for cfg in configs:
-                server_id = cfg.get("server_id")
-                if server_id:
-                    server = await get_server_by_id(server_id)
-                    if server and server.get("agent_url"):
-                        try:
-                            client = client_for_server(server)
-                            proto = cfg.get("protocol", "")
-                            peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
-                            config_data = cfg.get("config_data") or ""
-                            if peer_id:
-                                if proto == "awg":
-                                    await client.remove_peer("awg", peer_id)
-                                elif proto in ("vless", "vless-reality"):
-                                    # Используем current_vless_service (обрабатывает
-                                    # vless-base / vless-base-slow / vless-grace по порту
-                                    # в config_data), иначе throttled trial peer в
-                                    # vless-base-slow не удалится, а счётчик уйдёт в минус.
-                                    from services.revoke import current_vless_service
-                                    inbound = current_vless_service(config_data, "vpn_trial")
-                                    await client.remove_peer(inbound, peer_id)
-                                await update_server_peer_count(server_id, -1)
-                        except Exception as e:
-                            logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
-                await reset_config_slot(cfg["id"])
-            await mark_subscription_expired(trial_sub_id)
-            logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
+            # try/finally — даже если revoke / reset_config_slot упадёт на каком-то
+            # конфиге, trial-sub ОБЯЗАТЕЛЬНО должна быть помечена expired. Иначе
+            # paid sub active + trial sub active одновременно → Happ subscription
+            # URL отдаёт оба пира, юзер «оплатил, а скорость не та». scheduler-sync
+            # подберёт ghost-пиры на агенте, а DB-сторона будет чистой сразу.
+            try:
+                for cfg in configs:
+                    server_id = cfg.get("server_id")
+                    if server_id:
+                        server = await get_server_by_id(server_id)
+                        if server and server.get("agent_url"):
+                            try:
+                                client = client_for_server(server)
+                                proto = cfg.get("protocol", "")
+                                peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
+                                config_data = cfg.get("config_data") or ""
+                                if peer_id:
+                                    if proto == "awg":
+                                        await client.remove_peer("awg", peer_id)
+                                    elif proto in ("vless", "vless-reality"):
+                                        # Используем current_vless_service (обрабатывает
+                                        # vless-base / vless-base-slow / vless-grace по порту
+                                        # в config_data), иначе throttled trial peer в
+                                        # vless-base-slow не удалится, а счётчик уйдёт в минус.
+                                        from services.revoke import current_vless_service
+                                        inbound = current_vless_service(config_data, "vpn_trial")
+                                        await client.remove_peer(inbound, peer_id)
+                                    await update_server_peer_count(server_id, -1)
+                            except Exception as e:
+                                logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
+                    try:
+                        await reset_config_slot(cfg["id"])
+                    except Exception as e:
+                        logger.warning("trial close: reset_config_slot cfg #%d failed: %s", cfg["id"], e, exc_info=True)
+            finally:
+                try:
+                    await mark_subscription_expired(trial_sub_id)
+                    logger.info("trial закрыт после платной покупки: sub=%d user=%d", trial_sub_id, user_id)
+                except Exception as me:
+                    logger.error(
+                        "trial close: mark_subscription_expired sub=%d FAILED: %s — "
+                        "trial остаётся active в БД, _reconcile_orphans подберёт",
+                        trial_sub_id, me, exc_info=True,
+                    )
 
 
 async def _apply_plan_upgrade(message: Message, payment):

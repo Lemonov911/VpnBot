@@ -223,6 +223,47 @@ async def unthrottle_sub_configs(sub_id: int, user_id: int, plan_key: str) -> No
         logger.error("unthrottle_sub_configs sub=%d outer: %s", sub_id, e, exc_info=True)
 
 
+async def close_dangling_grace_subs_after_upgrade(
+    bot: Bot, user_id: int, new_sub_id: int,
+) -> int:
+    """После успешного provisioning'а новой sub на cross-plan upgrade —
+    закрывает все ОСТАЛЬНЫЕ grace-subs юзера. Раньше (EU-F7) их оставляли
+    до natural grace_until expire (14 дней overlap), но это:
+      - 14 дней Happ балансирует между старым throttle и новым full speed
+      - peer_count на агенте раздут (старые пиры висят)
+      - `get_active_subscription` логирует warning о 2 active rows
+
+    Безопаснее закрывать сейчас, ПОСЛЕ provisioning'а нового — мы гарантируем
+    что у юзера есть рабочий новый VPN до того как тушим старый. Best-effort:
+    если revoke упадёт, _sync_vless_active_uuids подберёт ghost-пиры.
+
+    Returns: число закрытых grace-sub'ов.
+    """
+    from services.database import get_dangling_grace_subs_for_user
+    closed = 0
+    try:
+        dangling = await get_dangling_grace_subs_for_user(user_id, new_sub_id)
+    except Exception as e:
+        logger.warning("close_dangling_grace_subs: query failed user=%d: %s", user_id, e)
+        return 0
+    for old_sub in dangling:
+        try:
+            await _close_dangling_grace(bot, old_sub["id"], old_sub["plan"])
+            closed += 1
+        except Exception as e:
+            logger.warning(
+                "close_dangling_grace sub=%d (user=%d, plan=%s) failed: %s — "
+                "scheduler reap подберёт по grace_until",
+                old_sub["id"], user_id, old_sub.get("plan"), e,
+            )
+    if closed:
+        logger.info(
+            "Cross-plan upgrade: closed %d dangling grace sub(s) for user=%d after new sub=%d",
+            closed, user_id, new_sub_id,
+        )
+    return closed
+
+
 async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
     """Закрывает grace-sub (status='grace' → 'expired') + revoke агент-side
     конфигов. Используется когда юзер в grace на одном плане покупает другой

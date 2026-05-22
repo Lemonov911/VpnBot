@@ -422,6 +422,13 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     if not plan:
         return await _user_err(user["id"], "Unknown plan", "bot_api_err_unknown_plan", 400)
 
+    # Legacy planы (vpn_1m / vpn_3m / vpn_1y / vpn_start / vpn_popular / vpn_pro /
+    # vpn_family) скрыты из UI Plans.tsx, но прямой POST с initData мог бы их
+    # купить — особенно с recurring=True. Защита: legacy не должны создавать
+    # новые subs (живут только для unwinding старых платежей и legacy reports).
+    if plan.get("legacy"):
+        return await _user_err(user["id"], "legacy_plan", "bot_api_err_unknown_plan", 400)
+
     # Блокируем покупку если уже есть активная подписка
     existing_sub = await get_active_subscription(user["id"])
     # Триал — не платная подписка, юзер должен иметь возможность купить
@@ -1543,6 +1550,21 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # Crypto refund невозможен через API — алертим админа для ручного возврата.
     _racing = await get_active_subscription(user_id)
     if _racing and _racing.get("plan") != "vpn_trial" and _racing.get("status") == "active":
+        # Sentinel payment-row: без этого CryptoBot ретраи каждый раз попадают
+        # сюда и спамят админу alert. record_payment(method='crypto', tx_id=payment_id)
+        # с UNIQUE(tx_id) — первый прошёл (inserted=True), второй False → silent.
+        from services.database import record_payment as _rp_dedup_cb
+        _inserted_cb = await _rp_dedup_cb(
+            user_id=user_id, subscription_id=_racing["id"],
+            method="crypto", tx_id=payment_id,
+            amount_usd=float(invoice.get("paid_amount", 0) or 0),
+        )
+        if not _inserted_cb:
+            logger.info(
+                "CryptoBot dedup: retry of already-alerted payment %s — silent",
+                payment_id,
+            )
+            return web.Response(status=200)
         logger.error(
             "CryptoBot cross-method duplicate: user=%d already has sub=%d plan=%s, "
             "received payment=%s for plan=%s — manual refund needed",
@@ -1675,6 +1697,16 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning(
             "CryptoBot: send_purchase_success_message failed user=%d: %s",
             user_id, e, exc_info=True,
+        )
+
+    # Cross-plan grace cleanup — см. handlers/vpn.py:_deliver_vpn для контекста.
+    try:
+        from services.grace import close_dangling_grace_subs_after_upgrade
+        await close_dangling_grace_subs_after_upgrade(bot, user_id, sub_id)
+    except Exception as e:
+        logger.warning(
+            "CryptoBot close_dangling_grace user=%d sub=%d: %s",
+            user_id, sub_id, e,
         )
 
     return web.Response(status=200)
@@ -1879,6 +1911,19 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     # Cross-method dedup (см. CryptoBot handler выше для контекста).
     _racing_ox = await get_active_subscription(user_id)
     if _racing_ox and _racing_ox.get("plan") != "vpn_trial" and _racing_ox.get("status") == "active":
+        # Sentinel payment-row для idempotency webhook retries (OxaPay тоже ретраит).
+        from services.database import record_payment as _rp_dedup_ox
+        _inserted_ox = await _rp_dedup_ox(
+            user_id=user_id, subscription_id=_racing_ox["id"],
+            method="oxapay", tx_id=payment_id,
+            amount_usd=float(plan.get("usd", 0)),
+        )
+        if not _inserted_ox:
+            logger.info(
+                "OxaPay dedup: retry of already-alerted payment %s — silent",
+                payment_id,
+            )
+            return web.Response(status=200)
         logger.error(
             "OxaPay cross-method duplicate: user=%d already has sub=%d plan=%s, "
             "received payment=%s for plan=%s — manual refund needed",
@@ -1991,6 +2036,16 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         logger.warning(
             "OxaPay: send_purchase_success_message failed user=%d: %s",
             user_id, e, exc_info=True,
+        )
+
+    # Cross-plan grace cleanup — см. handlers/vpn.py:_deliver_vpn.
+    try:
+        from services.grace import close_dangling_grace_subs_after_upgrade
+        await close_dangling_grace_subs_after_upgrade(bot, user_id, sub_id)
+    except Exception as e:
+        logger.warning(
+            "OxaPay close_dangling_grace user=%d sub=%d: %s",
+            user_id, sub_id, e,
         )
     return web.Response(status=200)
 
@@ -2644,6 +2699,21 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     # привязан к карте, нужно отменить иначе будет повторно списывать.
     _racing_lv = await get_active_subscription(user_id)
     if _racing_lv and _racing_lv.get("plan") != "vpn_trial" and _racing_lv.get("status") == "active":
+        # Sentinel payment-row для idempotency: Lava webhooks ретраит, без
+        # записи payment-row каждая попытка триггерила бы и Lava-cancel API,
+        # и admin alert. UNIQUE(payments.tx_id) защищает.
+        from services.database import record_payment as _rp_dedup_lv
+        _inserted_lv = await _rp_dedup_lv(
+            user_id=user_id, subscription_id=_racing_lv["id"],
+            method="lavatop", tx_id=payment_id,
+            amount_usd=float(amount),  # фактически ₽, поле для аналитики
+        )
+        if not _inserted_lv:
+            logger.info(
+                "Lava dedup: retry of already-alerted payment %s — silent",
+                payment_id,
+            )
+            return web.Response(status=200)
         logger.error(
             "Lava cross-method duplicate: user=%d already has sub=%d plan=%s, "
             "received contract=%s for plan=%s — cancelling Lava + admin alert",
@@ -2785,6 +2855,16 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         logger.warning(
             "Lava: send_purchase_success_message failed user=%d: %s",
             user_id, e, exc_info=True,
+        )
+
+    # Cross-plan grace cleanup — см. handlers/vpn.py:_deliver_vpn.
+    try:
+        from services.grace import close_dangling_grace_subs_after_upgrade
+        await close_dangling_grace_subs_after_upgrade(bot, user_id, sub_id)
+    except Exception as e:
+        logger.warning(
+            "Lava close_dangling_grace user=%d sub=%d: %s",
+            user_id, sub_id, e,
         )
 
     if is_subscription:
@@ -3451,6 +3531,40 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
 
 # ── Subscription URL для VPN-клиентов ──────────────────────────────────────────
 
+def _parse_expires_at_utc(raw: str | None) -> int:
+    """Парсит DB-формат expires_at в Unix UTC-timestamp. Returns 0 если не парсится.
+
+    Раньше парсер был inline в handle_user_subscription с 3 форматами и
+    `except: pass` — любое изменение схемы (миграция, новый ISO-offset) даёт
+    silent expire_unix=0, который дальше превращается в past-timestamp и
+    Happ показывает «истекло» для рабочей подписки. Helper форматов больше,
+    и caller логирует warning если raw был непустой а вернули 0 — будет
+    видно в журнале при первом проявлении.
+    """
+    if not raw:
+        return 0
+    from datetime import datetime, timezone
+    s = str(raw).strip().rstrip("Z")
+    # ISO с явным offset ("+00:00", "+03:00"): отбрасываем — invariant БД =
+    # naive UTC, любые offset'ы — посторонние клиенты.
+    plus_pos = s.find("+", 10)
+    if plus_pos > 0:
+        s = s[:plus_pos]
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+    ):
+        try:
+            naive = datetime.strptime(s, fmt)
+            return int(naive.replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            continue
+    return 0
+
+
 async def handle_user_subscription(request: web.Request) -> web.Response:
     """GET /sub/{token} — возвращает base64-encoded список vless URL клиента.
     Happ / Streisand / sing-box обновляют его в фоне, поэтому при throttle
@@ -3601,26 +3715,17 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
                 if row:
                     rx_total = int(row["rx"] or 0)
                     tx_total = int(row["tx"] or 0)
-                # expire_at
-                try:
-                    exp = sub["expires_at"]
-                    if exp:
-                        # формат может быть "2026-05-28 21:00:58" или ISO
-                        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
-                                    "%Y-%m-%d %H:%M:%S"):
-                            try:
-                                # expires_at is UTC by convention — attach tzinfo before
-                                # .timestamp() so it isn't reinterpreted as local time
-                                # on a MSK-tz bot server.
-                                naive_dt = datetime.strptime(exp, fmt)
-                                expire_unix = int(
-                                    naive_dt.replace(tzinfo=timezone.utc).timestamp()
-                                )
-                                break
-                            except ValueError:
-                                continue
-                except Exception:
-                    pass
+                # expire_at — через _parse_expires_at_utc (расширенный набор
+                # форматов + warning при невозможности распарсить, иначе
+                # silent zero маскирует миграции схемы).
+                exp_raw = sub["expires_at"]
+                expire_unix = _parse_expires_at_utc(exp_raw)
+                if exp_raw and expire_unix == 0:
+                    logger.warning(
+                        "/sub/{token}: failed to parse expires_at %r (sub=%d) — "
+                        "Happ покажет sub как expired",
+                        exp_raw, sub["id"],
+                    )
     except Exception as e:
         logger.warning("subscription header build failed: %s", e, exc_info=True)
 
@@ -4063,9 +4168,12 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
     # U+2060-2064, U+FEFF, U+00AD) визуально пустые, но проходят len()-check.
     # Без фильтра юзер мог писать «​ × 10» и обойти min-10.
     # NFKC normalize чтобы full-width / compatibility варианты сжимались.
+    # html.unescape — иначе bypass через &#8203; (HTML entity → zero-width
+    # после клиентского decode, но raw-байты на бэке проходят len-check).
     import unicodedata as _ud
     import re as _re
-    _normalized = _ud.normalize("NFKC", text)
+    import html as _html
+    _normalized = _ud.normalize("NFKC", _html.unescape(text))
     _visible = _re.sub(
         r"[​-‏‪-‮⁠-⁤﻿­]"
         r"|[\x00-\x1F\x7F]",
@@ -4495,12 +4603,31 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     )
 
     # Если sub была в grace — снять throttle на агентах (AWG tc + VLESS inbound).
-    # DB уже active; делаем в фоне чтобы не задерживать ответ admin-панели.
+    # Await (не _spawn_bg): без него агент-ошибка теряется, юзер залипает на
+    # slow tier, scheduler уже не возьмёт sub (expires_at в будущем, status=active).
+    # Зеркало scheduler.py:451 fix'а.
     if was_grace:
-        _spawn_bg(
-            unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"]),
-            name=f"unthrottle_admin_sub{updated['id']}",
-        )
+        try:
+            await unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"])
+        except Exception as e:
+            logger.error(
+                "admin extend unthrottle sub #%d FAILED: %s — user может остаться на slow tier",
+                updated["id"], e, exc_info=True,
+            )
+            try:
+                if ADMIN_ID:
+                    bot_obj: Bot = request.app["bot"]
+                    await bot_obj.send_message(
+                        ADMIN_ID,
+                        f"⚠️ <b>Admin extend: unthrottle FAILED</b>\n\n"
+                        f"sub <code>#{updated['id']}</code> user <code>{updated['user_id']}</code> "
+                        f"plan {updated['plan']}\n"
+                        f"DB active, но пиры могли остаться на slow inbound.\n"
+                        f"Error: <code>{e}</code>",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
 
     # Notify user: без этого юзер видит «доступ работает дольше» и не понимает
     # почему. Best-effort — если send_message упало, extend всё равно прошёл.
@@ -4550,6 +4677,7 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         get_subscription_by_id, mark_subscription_refunded,
         is_payment_refunded, mark_payment_refunded,
         rollback_referral_bonus, audit_log_record,
+        get_latest_stars_charge_for_sub,
     )
     sub = await get_subscription_by_id(sub_id)
     if not sub:
@@ -4560,27 +4688,13 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
             status=400,
         )
 
-    # Получаем payment_id отдельным запросом — get_subscription_by_id его не возвращает.
     # R8: для Stars refund приоритизируем ПОСЛЕДНИЙ Stars-charge для этой
     # подписки (могла быть doplata за upgrade), потом фолбэчим на оригинальный
     # subscriptions.payment_id. Если оба отличаются — это upgrade-сценарий,
     # автоматом возвращается только последний; админ видит warning.
-    import aiosqlite
-    from services.database import DB_PATH
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT tx_id FROM payments WHERE subscription_id=? AND method='stars' "
-            "AND COALESCE(refunded_at, '') = '' "
-            "ORDER BY id DESC LIMIT 1",
-            (sub_id,),
-        ) as cur:
-            row = await cur.fetchone()
-            latest_stars_tx = row[0] if row else None
-        async with db.execute(
-            "SELECT payment_id FROM subscriptions WHERE id=?", (sub_id,),
-        ) as cur:
-            row = await cur.fetchone()
-            sub_payment_id = row[0] if row else None
+    # Через _connect()-хелпер (busy_timeout=5000) — прямой aiosqlite.connect
+    # под нагрузкой admin-операций ловил SQLITE_BUSY.
+    latest_stars_tx, sub_payment_id = await get_latest_stars_charge_for_sub(sub_id)
     payment_id = latest_stars_tx or sub_payment_id
     if latest_stars_tx and sub_payment_id and latest_stars_tx != sub_payment_id:
         logger.warning(
@@ -4971,12 +5085,30 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     # Если extend поднял sub из grace — снять throttle на агентах (AWG tc +
     # VLESS inbound). Без этого DB показывает active, а пиры остаются на
     # 256 кбит/с — зеркало того что делает handle_admin_sub_extend.
+    # Await (не _spawn_bg): fire-and-forget терял агент-ошибки, юзер залипал.
     if result.get("was_grace") and result.get("subscription_id"):
         from services.grace import unthrottle_sub_configs
-        _spawn_bg(
-            unthrottle_sub_configs(result["subscription_id"], target_id, plan_key),
-            name=f"unthrottle_grant_sub{result['subscription_id']}",
-        )
+        try:
+            await unthrottle_sub_configs(result["subscription_id"], target_id, plan_key)
+        except Exception as e:
+            logger.error(
+                "admin grant unthrottle sub #%d FAILED: %s — user может остаться на slow tier",
+                result["subscription_id"], e, exc_info=True,
+            )
+            try:
+                if ADMIN_ID:
+                    bot_obj_g: Bot = request.app["bot"]
+                    await bot_obj_g.send_message(
+                        ADMIN_ID,
+                        f"⚠️ <b>Admin grant: unthrottle FAILED</b>\n\n"
+                        f"sub <code>#{result['subscription_id']}</code> user <code>{target_id}</code> "
+                        f"plan {plan_key}\n"
+                        f"DB active, но пиры могли остаться на slow inbound.\n"
+                        f"Error: <code>{e}</code>",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
 
     # VLESS bootstrap для свежесозданной grant-sub. Без этого юзер получает
     # подписку с N empty VLESS-слотов, sub_url=None, и в Mini App VLESS-

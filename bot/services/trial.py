@@ -63,6 +63,16 @@ async def trial_days_for(user_id: int) -> int:
 # С одной стороны защищаем от халявы (один и тот же юзер не сидит на цикле
 # триалов), с другой — даём вернуться людям, которые попробовали и забыли.
 TRIAL_COOLDOWN_DAYS = 30
+# Для referred-юзеров (взяли расширенный 7-day trial) — длиннее окно,
+# иначе abuse: 12 trial-циклов в год = 84 free дня на каждом alt-account'е.
+TRIAL_COOLDOWN_DAYS_REFERRED = 90
+
+
+async def trial_cooldown_days_for(user_id: int) -> int:
+    """Сколько дней между триалами — 30 (regular) или 90 (referred)."""
+    from services.database import get_referred_by
+    referrer = await get_referred_by(user_id)
+    return TRIAL_COOLDOWN_DAYS_REFERRED if referrer else TRIAL_COOLDOWN_DAYS
 
 TRIAL_PLAN = "vpn_trial"
 
@@ -116,11 +126,12 @@ async def can_claim_trial(user_id: int) -> bool:
         # окончания первого. trial_rolled_back маркер ставится ТОЛЬКО при
         # rollback-пути provision_trial (provision упал) — в этом случае
         # cooldown не применяется, юзер может повторить попытку сразу.
+        cooldown = await trial_cooldown_days_for(user_id)
         row = await (await db.execute(
             f"""SELECT 1 FROM subscriptions
                 WHERE user_id=? AND plan=?
                   AND COALESCE(trial_rolled_back, 0) = 0
-                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                  AND created_at > datetime('now', '-{cooldown} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()
@@ -159,9 +170,10 @@ async def _provision_trial_locked(user_id: int) -> dict:
     if await has_active_subscription(user_id):
         raise TrialBlockedByActiveSub()
 
+    cooldown = await trial_cooldown_days_for(user_id)
     async with aiosqlite.connect(DB_PATH) as db:
-        # Триал доступен раз в TRIAL_COOLDOWN_DAYS дней — не «никогда».
-        # Старые истёкшие триалы > 30 дней назад не блокируют новый.
+        # Триал доступен раз в cooldown дней (30 regular / 90 referred).
+        # Старые истёкшие триалы > cooldown дней назад не блокируют новый.
         # См. can_claim_trial для объяснения trial_rolled_back маркера —
         # rollback-случай не блокирует cooldown'ом, нормальное истечение
         # (status='expired' без флага) — блокирует.
@@ -169,7 +181,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
             f"""SELECT id FROM subscriptions
                 WHERE user_id=? AND plan=?
                   AND COALESCE(trial_rolled_back, 0) = 0
-                  AND created_at > datetime('now', '-{TRIAL_COOLDOWN_DAYS} days')
+                  AND created_at > datetime('now', '-{cooldown} days')
                 LIMIT 1""",
             (user_id, TRIAL_PLAN),
         )).fetchone()

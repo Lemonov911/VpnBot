@@ -1689,6 +1689,48 @@ async def apply_pending_plan_change(sub_id: int, new_plan: str) -> str | None:
         return new_plan if cur.rowcount > 0 else None
 
 
+async def ensure_empty_slots_match_plan(
+    sub_id: int, user_id: int, plan_key: str,
+) -> dict[str, int]:
+    """После apply_pending_plan_change добавляет недостающие empty слоты до
+    target_counts нового плана (только для upgrade-сценария — downgrade
+    revoke'ится отдельно через revoke_excess_configs_on_downgrade).
+
+    Returns: {'awg': N, 'vless': N, 'wg': N} — сколько новых empty slot-row
+    создано. Пустой dict если ничего не нужно (current >= target по всем
+    протоколам). Slot-row создаётся со status='empty' — юзер сам активирует
+    через Mini App (нет автопровижининга).
+
+    Сценарий: юзер на vpn_base (2 AWG + 1 VLESS) поставил pending=vpn_max
+    (3 AWG + 5 VLESS). Без этого helper'а apply_pending перевёл plan на
+    vpn_max, но в configs только 2+1 — юзер платит за vpn_max видит 2+1.
+    """
+    from services.plans import VPN_PLANS
+    plan = VPN_PLANS.get(plan_key, {})
+    if not plan:
+        return {}
+    targets = {
+        "awg":   int(plan.get("awg_slots", 0) or 0),
+        "vless": int(plan.get("vless_slots", 0) or 0),
+        "wg":    int(plan.get("wg_slots", 0) or 0),
+    }
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT protocol, COUNT(*) FROM configs WHERE subscription_id=? "
+            "GROUP BY protocol",
+            (sub_id,),
+        ) as cur:
+            current = {row[0]: row[1] for row in await cur.fetchall()}
+    created: dict[str, int] = {}
+    for proto, target in targets.items():
+        delta = target - current.get(proto, 0)
+        if delta > 0:
+            for _ in range(delta):
+                await create_config_record(sub_id, user_id, protocol=proto)
+            created[proto] = delta
+    return created
+
+
 # ── Lava.top recurring helpers ────────────────────────────────────────────────
 
 async def set_user_email(user_id: int, email: str):
@@ -1964,15 +2006,19 @@ async def audit_log_record(admin_id: int, action: str,
 
 
 async def cleanup_stuck_activating_slots() -> int:
-    """Сбрасывает в 'empty' слоты которые застряли в 'activating' >5 минут.
+    """Сбрасывает в 'empty' слоты которые застряли в 'activating' >15 минут.
 
     Race: claim_config_slot_for_activation переводит slot в 'activating',
     потом идёт provision_peer (3-10 сек), потом activate_config_slot →
     'active'. Если бот рестартанётся между claim и activate — слот
     зависает 'activating' навсегда (юзер не может ни добавить, ни отозвать).
 
-    Вызывается при старте бота: если activating-record старше 5 минут —
-    активация точно провалилась, чистим в 'empty'. Возвращает count.
+    Окно 15 мин (раньше 5): provision на slow agent + ssh retries может
+    длиться до 30-60 сек, плюс TG-retry. На рестарте бота слоты mid-provision
+    с peer уже созданным на агенте раньше получали reset за 5 мин = ghost-пир
+    на агенте, slot пустой в БД. 15 мин даёт больше шансов на recovery,
+    плюс scheduler пропускает первый cleanup-tick после рестарта (см.
+    main loop в scheduler.py).
     """
     async with _connect() as db:
         cur = await db.execute(
@@ -1980,7 +2026,7 @@ async def cleanup_stuck_activating_slots() -> int:
                SET status='empty', peer_name=NULL, config_data=NULL,
                    server_id=NULL, vless_uuid=NULL
                WHERE status='activating'
-                 AND (activated_at IS NULL OR activated_at < datetime('now', '-5 minutes'))"""
+                 AND (activated_at IS NULL OR activated_at < datetime('now', '-15 minutes'))"""
         )
         await db.commit()
         return cur.rowcount
@@ -2084,6 +2130,35 @@ async def get_subscription_by_id(sub_id: int) -> dict | None:
             return dict(row) if row else None
 
 
+async def get_latest_stars_charge_for_sub(sub_id: int) -> tuple[str | None, str | None]:
+    """Возвращает (latest_stars_tx_id, original_sub_payment_id) для refund-flow.
+
+    Зачем оба:
+      - `payments.tx_id` (latest Stars charge с этой sub) — приоритет, т.к.
+        upgrade-сценарий мог добавить doplata-charge поверх оригинального.
+      - `subscriptions.payment_id` — fallback на оригинальный charge_id.
+
+    Раньше handle_admin_sub_refund делал прямой `aiosqlite.connect(DB_PATH)`,
+    пропуская PRAGMA busy_timeout=5000 — под нагрузкой admin-операций
+    параллельные refund'ы могли получить SQLITE_BUSY.
+    """
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT tx_id FROM payments WHERE subscription_id=? AND method='stars' "
+            "AND COALESCE(refunded_at, '') = '' "
+            "ORDER BY id DESC LIMIT 1",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            latest_stars_tx = row[0] if row else None
+        async with db.execute(
+            "SELECT payment_id FROM subscriptions WHERE id=?", (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            sub_payment_id = row[0] if row else None
+    return latest_stars_tx, sub_payment_id
+
+
 async def get_user_subscriptions_by_plan(
     user_id: int, plan: str,
     status: str | tuple[str, ...] = "active",
@@ -2105,6 +2180,28 @@ async def get_user_subscriptions_by_plan(
                 WHERE user_id=? AND plan=? AND status IN ({placeholders})
                 ORDER BY created_at DESC""",
             (user_id, plan, *statuses),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_dangling_grace_subs_for_user(
+    user_id: int, exclude_sub_id: int,
+) -> list[dict]:
+    """Все grace-подписки юзера кроме указанной. Для cross-plan upgrade:
+    юзер заплатил новый план пока старый был в grace → grace-sub нужно
+    закрыть после успешного provisioning'а нового, иначе 14 дней overlap
+    (старый throttled VLESS-grace inbound + новый full speed на агенте =
+    Happ балансирует, активные пиры в двух подписках, peer counters drift).
+
+    Используется в Stars/CryptoBot/OxaPay/Lava happy-path после successful
+    provisioning. _close_dangling_grace берёт это и revoke'ит пиры старой sub.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, user_id, plan, status FROM subscriptions
+               WHERE user_id=? AND status='grace' AND id != ?""",
+            (user_id, exclude_sub_id),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -3387,6 +3484,14 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
     2. CAS-claim `UPDATE users SET ref_bonus_days=0 WHERE id=? AND ref_bonus_days=?`
        — rowcount=0 если кто-то параллельно уже редимнул
     3. Если claim успешен — extend sub.expires_at + ставим redeemed_at
+
+    Транзакционность: все 3 UPDATE'а внутри одного `_connect()`-контекста.
+    aiosqlite default isolation_level дёргает implicit BEGIN перед первым
+    UPDATE, явный `await db.commit()` в конце фиксирует все 3 операции
+    атомарно. Любой exception до commit() → context-manager закрывает
+    connection → rollback → bank восстанавливается, extend не применяется.
+    Не выносить отдельные операции в отдельные `_connect()` — потеряется
+    атомарность и юзер сможет потерять bank без extend'a при сбое DB.
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -3502,7 +3607,10 @@ async def is_eligible_referrer(referrer_id: int) -> bool:
          молча возвращал False для несуществующих юзеров, но запрос к
          subscriptions всё равно бил DB.
       2. Юзер не забанен — у забаненного нет права делиться ссылками.
-      3. Есть активная или grace платная подписка (не trial).
+      3. Юзер не заблокировал бота — иначе bank наполняется но TG-уведомление
+         о +7 днях упирается в TelegramForbiddenError → юзер не узнаёт что
+         у него есть бонус, ref_bonus_days растёт мёртвым весом.
+      4. Есть активная или grace платная подписка (не trial).
     """
     async with _connect() as db:
         async with db.execute(
@@ -3511,6 +3619,7 @@ async def is_eligible_referrer(referrer_id: int) -> bool:
                JOIN subscriptions s ON s.user_id = u.id
                WHERE u.id=?
                  AND COALESCE(u.is_banned, 0) = 0
+                 AND u.bot_blocked_at IS NULL
                  AND s.status IN ('active', 'grace')
                  AND s.plan != 'vpn_trial'
                LIMIT 1""",

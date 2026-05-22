@@ -283,7 +283,9 @@ async def _process_expired_subscriptions(bot: Bot):
 
                 # 2) Apply pending plan change. WHERE pending_plan=? защищает
                 #    от race с параллельным upgrade (тогда no-op).
-                from services.database import apply_pending_plan_change
+                from services.database import (
+                    apply_pending_plan_change, ensure_empty_slots_match_plan,
+                )
                 applied = await apply_pending_plan_change(sub_id, pending)
                 if applied:
                     logger.info(
@@ -291,6 +293,24 @@ async def _process_expired_subscriptions(bot: Bot):
                         sub_id, plan_key, applied,
                     )
                     plan_key = applied  # throttle-loop ниже работает с новым планом
+                    # 3) Upgrade-pending: новый план может иметь БОЛЬШЕ слотов
+                    # чем revoke_excess затронул. Достраиваем missing empty
+                    # слоты — иначе юзер на новом тарифе видит меньше слотов,
+                    # чем заявлено (платит за vpn_max, получает 2+1 вместо 3+5).
+                    try:
+                        added = await ensure_empty_slots_match_plan(
+                            sub_id, sub["user_id"], applied,
+                        )
+                        if added:
+                            logger.info(
+                                "Подписка #%d: после pending-upgrade добавлены empty слоты: %s",
+                                sub_id, added,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Подписка #%d: ensure_empty_slots_match_plan failed: %s",
+                            sub_id, e, exc_info=True,
+                        )
                 else:
                     logger.info(
                         "Подписка #%d: pending downgrade no-op (race? pending уже NULL)",
@@ -415,7 +435,17 @@ async def _process_expired_subscriptions(bot: Bot):
 
         # NB: pending downgrade применяется ВЫШЕ — до throttle-loop'а, чтобы
         # revoke лишних слотов прошёл первым (crash-safe ordering).
-
+        #
+        # ⚠️ Ordering invariant: throttle-loop ПЕРЕД mark_subscription_grace.
+        # CAS внутри mark_grace позволяет атомарно откатить throttle если sub
+        # был продлён recurring webhook'ом за время throttle-loop'а
+        # (см. rollback path ниже). Перестановка mark_grace вверх дала бы
+        # короткое окно "status=grace + peers ещё в normal inbound" →
+        # /sub/{token} вернул бы vless-grace URLs где пиров нет → Happ
+        # connection-fail. Лучше 1-5 сек free-speed чем 1-5 сек disconnect.
+        # Crash mid-throttle: следующий scheduler-tick (1h) re-обработает sub
+        # (всё idempotent — revoke/throttle/apply_pending), inconsistency
+        # window ограничен 1h в худшем случае.
         transitioned = await mark_subscription_grace(sub_id, grace_until)
         if transitioned:
             # Audit F5: invalidate cache чтобы Mini App быстрее показал grace-banner.
@@ -1662,7 +1692,12 @@ async def run_scheduler(bot: Bot):
         # Stuck activating slots — каждые 4 часа. Слоты зависают в
         # 'activating' если provision упал (агент недоступен, таймаут).
         # Без этого юзер видит "слот занят" бесконечно до рестарта бота.
-        if _TICK % 4 == 0:
+        # Пропускаем первый cleanup-tick после старта бота: если бот упал
+        # mid-provision, peer мог успеть создаться на агенте, но slot завис
+        # в 'activating'. На первом tick сразу cleanup → reset slot → ghost
+        # peer на агенте. Лучше подождать ещё одну итерацию (8h после boot),
+        # чтобы оставшиеся retry-механизмы и юзер успели среагировать.
+        if _TICK > 0 and _TICK % 4 == 0:
             from services.database import cleanup_stuck_activating_slots
             n = await cleanup_stuck_activating_slots()
             if n:
