@@ -16,7 +16,7 @@ function formatNiceDate(iso: string, lang: 'ru' | 'en'): string {
     const d = new Date(iso.replace(' ', 'T'))
     if (isNaN(d.getTime())) return ''
     return new Intl.DateTimeFormat(lang === 'ru' ? 'ru-RU' : 'en-US', {
-      day: 'numeric', month: 'short',
+      day: 'numeric', month: 'short', year: 'numeric',
     }).format(d)
   } catch { return '' }
 }
