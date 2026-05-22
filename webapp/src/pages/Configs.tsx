@@ -434,6 +434,12 @@ export default function Configs() {
   const [sub,      setSub]      = useState<Subscription | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [errMsg,  setErrMsg]   = useState('')
+  // First-load vs background-refresh. Skeleton-плейсхолдеры показываем только на
+  // первой загрузке; visibilitychange/focus в Telegram Mini App срабатывают
+  // часто (на каждый touch при показе модалки/клавиатуры), и без этого флага
+  // вся страница «моргает» серыми карточками на любой refocus.
+  const initialLoadedRef = useRef(false)
+  const inflightRef = useRef(false)
   // Lazy-fetch trial status — нужен только для empty state. Если у юзера
   // уже есть слоты, fetching не нужен.
   const [trial,    setTrial]    = useState<TrialStatus | null>(null)
@@ -454,7 +460,13 @@ export default function Configs() {
   }, [nav])
 
   const load = useCallback(() => {
-    setLoading(true)
+    // Защита от параллельных вызовов: visibilitychange+focus могут стрельнуть
+    // одновременно, без guard'а летят 2 одинаковых запроса в API.
+    if (inflightRef.current) return
+    inflightRef.current = true
+    // Skeleton показываем только до первой успешной загрузки. После — background
+    // refresh не трогает UI (stale-while-revalidate), карточки не моргают.
+    if (!initialLoadedRef.current) setLoading(true)
     // Параллельно: конфиги (для AWG/WG slot-листа) + подписка (sub_url для VLESS).
     Promise.all([
       getUserConfigs().catch(() => [] as VpnConfig[]),
@@ -470,7 +482,13 @@ export default function Configs() {
         }
       })
       .catch(() => { if (!cancelledRef.current) setErrMsg(t('configs_err_load')) })
-      .finally(() => { if (!cancelledRef.current) setLoading(false) })
+      .finally(() => {
+        inflightRef.current = false
+        if (!cancelledRef.current) {
+          initialLoadedRef.current = true
+          setLoading(false)
+        }
+      })
   }, [t])
 
   useEffect(() => { load() }, [load])
