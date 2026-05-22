@@ -659,10 +659,21 @@ _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
 _trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
 _admin_rate:    dict[str, float] = {}  # /api/admin/* — брутфорс-защита
-# MD-F8: per-user rate limit for /api/vpn/subscription. UI polls every 8s
-# from one tab; multi-tab amplification could send 4+ rps. 1s window is
-# generous and well under legitimate usage.
-_vpn_sub_rate:  dict[int, float] = {}
+# Per-user in-memory cache for /api/vpn/subscription. Кешируем готовый payload
+# на 2 секунды — UI polls 8s + multi-tab + BottomNav refocus легко выдают
+# 5-10 rps на пиковый момент; кеш режет DB-нагрузку до 1 запроса/2с/юзер и
+# полностью убирает мигание «тарифа нет» при быстром переключении вкладок
+# (раньше 429 → frontend ловил error → renders empty state).
+# Bot — single-replica, поэтому простой dict, без Redis.
+_vpn_sub_cache: dict[int, tuple[float, dict | None]] = {}
+_VPN_SUB_TTL = 2.0  # seconds
+
+
+def _invalidate_vpn_sub_cache(user_id: int) -> None:
+    """Сбросить кеш подписки для юзера — вызывать из любой мутации
+    (activate/revoke/change-plan/trial-claim/cancel-renewal/payment-webhook),
+    чтобы следующий GET вернул свежий payload а не stale-данные до 2 секунд."""
+    _vpn_sub_cache.pop(user_id, None)
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -1039,6 +1050,8 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
             )
 
     logger.info("Слот #%d активирован на %s (%s)", config_id, server["name"], peer_name)
+    # sub_url меняется при первой активации VLESS-слота — сбрасываем кеш подписки.
+    _invalidate_vpn_sub_cache(user["id"])
     return web.json_response({"ok": True})
 
 
@@ -1111,6 +1124,8 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
         from services.database import update_server_peer_count
         await update_server_peer_count(config["server_id"], -1)
     logger.info("Слот #%d сброшен в empty пользователем %s", config_id, user["id"])
+    # Revoke последнего VLESS-слота инвалидирует sub_url — сбрасываем кеш.
+    _invalidate_vpn_sub_cache(user["id"])
     return web.json_response({"ok": True})
 
 
@@ -2956,30 +2971,9 @@ async def handle_my_esims(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
-async def handle_vpn_subscription(request: web.Request) -> web.Response:
-    """GET /api/vpn/subscription — активная подписка пользователя."""
-    user = _resolve_user(request)
-    if user is None:
-        return _unauthorized()
-
-    # MD-F8: per-user rate-limit. UI polls at 8s; this catches accidental
-    # tight loops from buggy frontends. Window kept tight (250ms) — wider
-    # values reject legitimate BottomNav tab-switching (Home → VPN → Home
-    # within 1s) because `visibilitychange` doesn't fire on in-app SPA
-    # navigation, so the skeleton state from a 429 never refreshes itself.
-    # See bug 23.05 (user-reported "тарифа нет при переключении вкладок").
-    now_rl = _time.monotonic()
-    last_rl = _vpn_sub_rate.get(user["id"], 0.0)
-    if now_rl - last_rl < 0.25:
-        return web.json_response({"error": "rate_limited"}, status=429)
-    _vpn_sub_rate[user["id"]] = now_rl
-    # Lazy eviction — keep the dict from growing unbounded under churn.
-    if len(_vpn_sub_rate) > 1000:
-        cutoff = now_rl - 60.0
-        for k in list(_vpn_sub_rate.keys()):
-            if _vpn_sub_rate[k] < cutoff:
-                del _vpn_sub_rate[k]
-
+async def _build_vpn_subscription_payload(user_id: int) -> dict | None:
+    """Собрать payload для /api/vpn/subscription. Вынесено из handler'а
+    чтобы кешировать готовый dict (см. _vpn_sub_cache)."""
     from datetime import datetime
     from services.database import get_or_create_sub_token, get_active_vless_configs_for_user
 
@@ -2996,12 +2990,12 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         sub_host = SUB_URL_BASE or "https://maxvpnesim.com"
         return f"{sub_host.rstrip('/')}/sub/{tok}"
 
-    sub = await get_active_subscription(user["id"])
+    sub = await get_active_subscription(user_id)
     if sub is None:
-        expired = await get_last_expired_subscription(user["id"])
+        expired = await get_last_expired_subscription(user_id)
         if expired is None:
-            return web.json_response(None)
-        return web.json_response({
+            return None
+        return {
             "id":             expired["id"],
             "plan":           expired["plan"],
             "stars_paid":     expired["stars_paid"],
@@ -3009,8 +3003,8 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "pending_plan":   None,
             "days_remaining": 0,
             "status":         "expired",
-            "sub_url":        await _sub_url_for(user["id"]),
-        })
+            "sub_url":        await _sub_url_for(user_id),
+        }
 
     # EU-F4: defensive NULL/bad-format guard. legacy rows or partial migrations
     # can leave expires_at = NULL or non-ISO; an unguarded fromisoformat() raises
@@ -3020,7 +3014,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "handle_vpn_subscription: sub #%d has NULL expires_at — treating as expired",
             sub["id"],
         )
-        return web.json_response({
+        return {
             "id":             sub["id"],
             "plan":           sub.get("plan", ""),
             "stars_paid":     sub.get("stars_paid", 0),
@@ -3028,8 +3022,8 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "pending_plan":   sub.get("pending_plan"),
             "days_remaining": 0,
             "status":         "expired",
-            "sub_url":        await _sub_url_for(user["id"]),
-        })
+            "sub_url":        await _sub_url_for(user_id),
+        }
     try:
         expires = datetime.fromisoformat(sub["expires_at"])
     except (TypeError, ValueError) as e:
@@ -3037,7 +3031,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "handle_vpn_subscription: bad expires_at %r sub=%d: %s",
             sub.get("expires_at"), sub["id"], e,
         )
-        return web.json_response({
+        return {
             "id":             sub["id"],
             "plan":           sub.get("plan", ""),
             "stars_paid":     sub.get("stars_paid", 0),
@@ -3045,8 +3039,8 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "pending_plan":   sub.get("pending_plan"),
             "days_remaining": 0,
             "status":         "expired",
-            "sub_url":        await _sub_url_for(user["id"]),
-        })
+            "sub_url":        await _sub_url_for(user_id),
+        }
     now = datetime.utcnow()
     remaining_days = max(0, (expires - now).days)
 
@@ -3058,7 +3052,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         grace_until = datetime.fromisoformat(sub["grace_until"])
         grace_days_left = max(0, (grace_until - now).days)
 
-    return web.json_response({
+    return {
         "id":              sub["id"],
         "plan":            sub["plan"],
         "stars_paid":      sub["stars_paid"],
@@ -3068,7 +3062,7 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         "status":          "grace" if is_grace else "active",
         "grace_until":     sub.get("grace_until"),
         "grace_days_left": grace_days_left,
-        "sub_url":         await _sub_url_for(user["id"]),
+        "sub_url":         await _sub_url_for(user_id),
         # Lava recurring: показываем юзеру статус автопродления и даём отменить
         "auto_renew":      bool(sub.get("auto_renew")),
         "payment_provider": sub.get("payment_provider"),
@@ -3081,7 +3075,35 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
         # yellow warning banner если флаг non-NULL и auto_renew=1 — юзер
         # видит проблему до того, как Lava сделает следующий retry.
         "last_charge_failed_at": sub.get("last_charge_failed_at"),
-    })
+    }
+
+
+async def handle_vpn_subscription(request: web.Request) -> web.Response:
+    """GET /api/vpn/subscription — активная подписка пользователя.
+
+    In-memory TTL cache (_VPN_SUB_TTL=2s) per user_id: режет DB-нагрузку и
+    убирает мигание «тарифа нет» при быстром tab-switching. Cache
+    invalidate-нят из всех мутаций (см. _invalidate_vpn_sub_cache).
+    """
+    user = _resolve_user(request)
+    if user is None:
+        return _unauthorized()
+
+    uid = user["id"]
+    now_mono = _time.monotonic()
+    cached = _vpn_sub_cache.get(uid)
+    if cached is not None and now_mono - cached[0] < _VPN_SUB_TTL:
+        return web.json_response(cached[1])
+
+    payload = await _build_vpn_subscription_payload(uid)
+    _vpn_sub_cache[uid] = (now_mono, payload)
+    # Lazy eviction — keep dict bounded under churn (10K active users edge case).
+    if len(_vpn_sub_cache) > 5000:
+        cutoff = now_mono - 60.0
+        for k in list(_vpn_sub_cache.keys()):
+            if _vpn_sub_cache[k][0] < cutoff:
+                del _vpn_sub_cache[k]
+    return web.json_response(payload)
 
 
 async def handle_cancel_renewal(request: web.Request) -> web.Response:
@@ -3091,6 +3113,8 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    # Auto_renew флипается → инвалидируем кеш чтобы фронт сразу увидел новый статус.
+    _invalidate_vpn_sub_cache(user["id"])
 
     sub = await get_active_subscription(user["id"])
     if sub is None:
@@ -3270,6 +3294,8 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     except Exception as e:
         logger.warning("trial notify failed for user=%d: %s", user["id"], e, exc_info=True)
 
+    # Trial создал новую подписку → старый кеш (вероятно None/expired) невалиден.
+    _invalidate_vpn_sub_cache(user["id"])
     return web.json_response({
         "sub_id":         result["sub_id"],
         "sub_url":        result["sub_url"],
@@ -3293,6 +3319,8 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     # EU-F1: ban gate — change_plan triggers upgrade-invoice / downgrade.
     if await _check_banned(user["id"]):
         return await _banned_response(user["id"])
+    # pending_plan/plan/expires_at могут поменяться → сбрасываем кеш.
+    _invalidate_vpn_sub_cache(user["id"])
 
     body     = await request.json()
     plan_key = body.get("plan_key", "")
