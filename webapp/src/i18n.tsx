@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
 
 export type Lang = 'ru' | 'en'
 
@@ -1193,7 +1193,13 @@ export function useLang() { return useContext(LangCtx) }
 
 export function useT() {
   const { lang } = useContext(LangCtx)
-  return (key: TKey) => {
+  // ⚠️ useCallback ОБЯЗАТЕЛЕН. Без него `t` — это fresh arrow fn каждый
+  // render. Если кто-то юзает `t` в `useCallback(fn, [t])` или `useEffect(_, [t])`,
+  // получаем infinite re-render loop:
+  //   t→new ref → useCallback deps changed → load→new ref → useEffect fires →
+  //   setState → re-render → t→new ref → ...
+  // Configs.tsx ловил это 20+ запросов/сек на /api/vpn/configs (диагноз 22.05).
+  return useCallback((key: TKey) => {
     // Missing-key resilience: if a translation is missing in the active
     // locale, fall back to RU (the canonical source). Final fallback is the
     // key itself — better to render the key than crash downstream code
@@ -1202,19 +1208,24 @@ export function useT() {
     const cur = T[lang] as Record<string, string>
     const k = key as unknown as string
     return cur[k] ?? ru[k] ?? k
-  }
+  }, [lang])
 }
 
 export function usePlural() {
   const { lang } = useContext(LangCtx)
-  return (n: number, forms: { ru: [string, string, string]; en: [string, string] }) => {
-    if (lang === 'en') return `${n} ${n === 1 ? forms.en[0] : forms.en[1]}`
-    const abs = Math.abs(n)
-    const mod10 = abs % 10
-    const mod100 = abs % 100
-    if (mod100 >= 11 && mod100 <= 19) return `${n} ${forms.ru[2]}`
-    if (mod10 === 1) return `${n} ${forms.ru[0]}`
-    if (mod10 >= 2 && mod10 <= 4) return `${n} ${forms.ru[1]}`
-    return `${n} ${forms.ru[2]}`
-  }
+  // useCallback по той же причине что и useT — иначе jеncoder-cache,
+  // useEffect/useMemo/useCallback с `[plural]` в deps будут retrigger каждый рендер.
+  return useCallback(
+    (n: number, forms: { ru: [string, string, string]; en: [string, string] }) => {
+      if (lang === 'en') return `${n} ${n === 1 ? forms.en[0] : forms.en[1]}`
+      const abs = Math.abs(n)
+      const mod10 = abs % 10
+      const mod100 = abs % 100
+      if (mod100 >= 11 && mod100 <= 19) return `${n} ${forms.ru[2]}`
+      if (mod10 === 1) return `${n} ${forms.ru[0]}`
+      if (mod10 >= 2 && mod10 <= 4) return `${n} ${forms.ru[1]}`
+      return `${n} ${forms.ru[2]}`
+    },
+    [lang],
+  )
 }
