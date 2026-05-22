@@ -4,6 +4,7 @@ import WebApp from '@twa-dev/sdk'
 import {
   getActiveSubscription, getUserStats,
   getTrialStatus, claimTrial,
+  redeemReferralBonus,
   type Subscription, type UserStats, type TrialStatus,
 } from '../api'
 import { useT, usePlural, useLang } from '../i18n'
@@ -40,7 +41,48 @@ export default function Home() {
 
   const busyRef = useRef(false)
   const mountedRef = useRef(true)
+  const [redeeming, setRedeeming] = useState(false)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+
+  // Activate accumulated referral bonus days on the current subscription.
+  // Backend redeem_referral_bonus() требует active/grace sub — иначе 400.
+  // На Home показываем кнопку только когда обе условия выполнены, без sub
+  // её вообще не рисуем (или дисэйблим с подсказкой).
+  const handleRedeemBonus = async () => {
+    if (redeeming || !stats || stats.bonus_days <= 0) return
+    if (!sub) {
+      WebApp.showAlert(t('home_bonus_redeem_no_sub' as never))
+      return
+    }
+    setRedeeming(true)
+    WebApp.HapticFeedback.impactOccurred('medium')
+    try {
+      const res = await redeemReferralBonus()
+      WebApp.HapticFeedback.notificationOccurred('success')
+      const dateStr = new Date(res.new_expires_at).toLocaleDateString(
+        lang === 'en' ? 'en-US' : 'ru-RU',
+        { day: '2-digit', month: 'long', year: 'numeric' })
+      WebApp.showAlert(
+        (t('home_bonus_redeem_done' as never) as string)
+          .replace('{days}', String(res.days_applied))
+          .replace('{date}', dateStr)
+      )
+      // refresh sub + stats после redeem
+      const [s, st] = await Promise.all([
+        getActiveSubscription().catch(() => null),
+        getUserStats().catch(() => null),
+      ])
+      if (mountedRef.current) {
+        setSub(s)
+        setStats(st)
+      }
+    } catch {
+      WebApp.HapticFeedback.notificationOccurred('error')
+      WebApp.showAlert(t('home_bonus_redeem_err' as never))
+    } finally {
+      if (mountedRef.current) setRedeeming(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -133,9 +175,10 @@ export default function Home() {
   }
 
   // EU-F6: RUB-paying users (CryptoBot/OxaPay/Lava) have stars_spent=0; include rub_spent in card visibility.
-  // invited вытащен из stats-grid (см. ниже) — он показывается только на /referral
-  // чтобы не дублировать метрики на главной dashboard'е.
-  const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0)
+  // invited вернули в stats — у юзера без активной sub полезно видеть свои lifetime
+  // метрики (сколько пригласил, сколько копится). Это «портфель», должно жить отдельно
+  // от subscription state.
+  const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0 || stats.invited > 0)
 
   const quickActions = [
     {
@@ -520,8 +563,10 @@ export default function Home() {
               // Без пробела между числом и единицей выглядело как «+12дн.»
               { value: `+${p(stats!.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}`,
                 label: t('home_bonus_label'),  show: stats!.bonus_days > 0 },
-              // «Приглашено N» убрано — дублировало инфу со страницы /referral.
-              // hasStats тоже не учитывает invited (см. выше).
+              // Lifetime метрика — сколько привёл друзей. Видна даже на expired sub
+              // (юзер без подписки тоже хочет помнить что у него уже есть N
+              // приглашённых, копящих бонус — мотивирует продлить).
+              { value: String(stats!.invited),       label: t('home_invited_label'),      show: stats!.invited > 0     },
             ].filter(x => x.show).map(({ value, label }) => (
               <div key={label} className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] px-2 py-3 text-center">
                 <div className="text-base font-extrabold text-[var(--tg-theme-text-color)]">{value}</div>
@@ -529,6 +574,38 @@ export default function Home() {
               </div>
             ))}
           </div>
+        )}
+
+        {/* Накоплены реф-бонусные дни → CTA «Активировать»
+            (redeem_referral_bonus добавляет дни к expires_at текущей sub).
+            Если sub нет — кнопка disabled с alert'ом «сначала продли». */}
+        {stats && stats.bonus_days > 0 && (
+          <button
+            type="button"
+            disabled={redeeming}
+            onClick={handleRedeemBonus}
+            className="w-full fade-in flex items-center justify-between gap-3 rounded-2xl py-3 px-4 cursor-pointer disabled:opacity-50 border-[1.5px] border-success/30 bg-success/10"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-[12px] shrink-0 bg-success flex items-center justify-center shadow-[0_4px_10px_rgba(39,174,96,0.3)]">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 8v8M8 12h8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <div className="text-left">
+                <div className="text-sm font-bold text-[var(--tg-theme-text-color)]">
+                  {(t('home_bonus_redeem_title' as never) as string)
+                    .replace('{days}', p(stats.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] }))}
+                </div>
+                <div className="text-xs text-[var(--tg-theme-hint-color)] mt-0.5">
+                  {sub ? t('home_bonus_redeem_sub' as never) : t('home_bonus_redeem_no_sub_hint' as never)}
+                </div>
+              </div>
+            </div>
+            <span className="text-[13px] font-semibold text-success shrink-0">
+              {redeeming ? t('home_bonus_redeem_loading' as never) : t('home_bonus_redeem_btn' as never)}
+            </span>
+          </button>
         )}
 
       </div>

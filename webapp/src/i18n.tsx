@@ -563,6 +563,15 @@ const T = {
     home_stars_spent_label: 'Потрачено звёзд',
     home_bonus_label:  'Бонусных дней',
     home_invited_label:'Приглашено',
+    // Реф-бонус redeem на Home (CTA если у юзера накоплены ref_bonus_days)
+    home_bonus_redeem_title:    '🎁 У тебя {days} в банке',
+    home_bonus_redeem_sub:      'Активируй — добавятся к текущей подписке',
+    home_bonus_redeem_no_sub_hint: 'Сначала продли подписку — иначе бонус некуда применить',
+    home_bonus_redeem_btn:      'Активировать',
+    home_bonus_redeem_loading:  'Активируем…',
+    home_bonus_redeem_done:     '✅ Активировано: +{days}. Подписка продлена до {date}.',
+    home_bonus_redeem_err:      'Не удалось активировать бонус. Попробуй ещё раз.',
+    home_bonus_redeem_no_sub:   'Для активации бонуса нужна подписка. Сначала выбери тариф.',
 
     // Common
     day: 'дн.',
@@ -1118,6 +1127,15 @@ const T = {
     home_stars_spent_label: 'Stars spent',
     home_bonus_label:  'Bonus days',
     home_invited_label:'Invited',
+    // Referral bonus redeem CTA on Home (when ref_bonus_days > 0)
+    home_bonus_redeem_title:    '🎁 You have {days} in the bank',
+    home_bonus_redeem_sub:      'Tap to apply to your current subscription',
+    home_bonus_redeem_no_sub_hint: 'Renew your plan first — bonus needs an active sub',
+    home_bonus_redeem_btn:      'Activate',
+    home_bonus_redeem_loading:  'Activating…',
+    home_bonus_redeem_done:     '✅ Activated: +{days}. Subscription extended until {date}.',
+    home_bonus_redeem_err:      'Could not activate bonus. Please try again.',
+    home_bonus_redeem_no_sub:   'You need an active subscription to redeem the bonus. Pick a plan first.',
 
     // Common
     day: 'd.',
