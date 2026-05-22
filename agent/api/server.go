@@ -25,6 +25,8 @@ type Server struct {
 	token                 string
 	startTime             time.Time
 	selfUpdateServiceName string // systemd unit для restart после self-update
+	xrayConfigPath        string // для /admin/diag — путь к Xray config.json
+	tcShapeIface          string // для /admin/diag — interface где смотреть tc state
 }
 
 func NewServer(services map[string]service.Service, wgMgr *wg.Manager, token string) *Server {
@@ -42,6 +44,14 @@ func NewServer(services map[string]service.Service, wgMgr *wg.Manager, token str
 // другим service name, нужно вызвать это до Handler().
 func (s *Server) SetSelfUpdateServiceName(name string) {
 	s.selfUpdateServiceName = name
+}
+
+// SetDiagPaths настраивает пути для /admin/diag endpoint'а: xrayConfigPath
+// (откуда читать inbounds для Reality диагностики) и tcShapeIface (interface
+// где смотреть tc class/qdisc/filter). Вызывать до Handler().
+func (s *Server) SetDiagPaths(xrayConfigPath, tcShapeIface string) {
+	s.xrayConfigPath = xrayConfigPath
+	s.tcShapeIface = tcShapeIface
 }
 
 func (s *Server) Handler() http.Handler {
@@ -100,6 +110,15 @@ func (s *Server) Handler() http.Handler {
 		// SHA256 hash скачанного бинаря должен совпадать с переданным.
 		r.Post("/admin/self-update", s.HandleSelfUpdate(SelfUpdateConfig{
 			ServiceName: s.selfUpdateServiceName,
+		}))
+
+		// Diagnostic endpoint: возвращает tc-state, Xray inbounds (с SNI/dest
+		// для Reality troubleshooting) и DNS+TCP-проверки фронтинг-хостов.
+		// Нужен когда на сервере НЕТ SSH-доступа (Charlotte) — иначе пришлось
+		// бы вживую гонять `cat config.json && tc class show && curl ...`.
+		r.Get("/admin/diag", s.HandleDiag(DiagConfig{
+			XrayConfigPath: s.xrayConfigPath,
+			TCShapeIface:   s.tcShapeIface,
 		}))
 	})
 

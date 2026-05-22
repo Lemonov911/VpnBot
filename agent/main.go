@@ -159,6 +159,8 @@ func main() {
 	go wd.Run(ctx)
 
 	srv := api.NewServer(services, wgMgr, cfg.AgentToken)
+	// /admin/diag читает Xray-config + tc-state — передаём пути из cfg.
+	srv.SetDiagPaths(cfg.XrayConfigPath, cfg.TCShapeIface)
 	httpServer := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           srv.Handler(),
