@@ -94,30 +94,40 @@ async def test_upgrade_changes_plan_and_clears_pending(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_upgrade_adds_correct_slot_deltas(fresh_db):
-    """awg_delta / vless_delta / wg_delta создают новые пустые слоты."""
+async def test_upgrade_creates_target_slot_count_idempotently(fresh_db):
+    """PS3 round 10: change_subscription_plan теперь использует «reach target
+    count from VPN_PLANS», а не slot-delta — иначе retry/race создавали
+    дубликаты. Создаёт max(0, target - existing) для каждого протокола.
+
+    Здесь sub стартует с 0 слотов → upgrade vpn_base→vpn_max → создаются
+    3 AWG + 5 VLESS (полный target vpn_max из VPN_PLANS).
+    """
     await upsert_user(USER_ID, "u", "U")
     sub_id = await _make_sub(plan="vpn_base")
-    # vpn_base — slots создаются вручную в флоу _deliver_vpn. Тут проверяем
-    # только дельту: было 0 слотов на sub_id, добавляем 1+4+0.
     await change_subscription_plan(sub_id, "vpn_max", USER_ID,
                                     awg_delta=1, vless_delta=4, wg_delta=0)
 
-    assert await _count_configs(fresh_db, sub_id, "awg") == 1
-    assert await _count_configs(fresh_db, sub_id, "vless") == 4
+    # vpn_max target: 3 awg / 5 vless / 0 wg
+    assert await _count_configs(fresh_db, sub_id, "awg") == 3
+    assert await _count_configs(fresh_db, sub_id, "vless") == 5
     assert await _count_configs(fresh_db, sub_id, "wg") == 0
 
 
 @pytest.mark.asyncio
-async def test_upgrade_zero_deltas_creates_no_slots(fresh_db):
-    """delta=0 → ни одного слота не создаётся (например, downgrade-форма
-    которая использует change_plan но без расширения)."""
+async def test_downgrade_creates_target_count_no_revoke(fresh_db):
+    """Downgrade vpn_max→vpn_base: target= 2 awg + 1 vless. existing=0 →
+    создаст те же 2+1 (target_count, не delta). Удаление лишних слотов это
+    отдельный вызов revoke_excess_configs_on_downgrade (см.
+    test_revoke_excess_on_downgrade)."""
     await upsert_user(USER_ID, "u", "U")
     sub_id = await _make_sub(plan="vpn_max")
     await change_subscription_plan(sub_id, "vpn_base", USER_ID,
                                     awg_delta=0, vless_delta=0, wg_delta=0)
 
-    assert await _count_configs(fresh_db, sub_id) == 0
+    # vpn_base target: 2 awg / 1 vless / 0 wg
+    assert await _count_configs(fresh_db, sub_id, "awg") == 2
+    assert await _count_configs(fresh_db, sub_id, "vless") == 1
+    assert await _count_configs(fresh_db, sub_id) == 3
 
 
 @pytest.mark.asyncio
@@ -151,8 +161,18 @@ async def test_upgrade_from_grace_restores_active_and_extends_expiry(fresh_db):
     остался в прошлом)."""
     await upsert_user(USER_ID, "u", "U")
     sub_id = await _make_sub(plan="vpn_base")
+    # mark_subscription_grace CAS-rejects unless expires_at <= now — backdate first.
+    past = (datetime.utcnow() - timedelta(days=1)).isoformat()
+    async with aiosqlite.connect(fresh_db) as db:
+        await db.execute(
+            "UPDATE subscriptions SET expires_at=? WHERE id=?", (past, sub_id)
+        )
+        await db.commit()
     # Истекла + переведена в grace
-    await mark_subscription_grace(sub_id, (datetime.utcnow() + timedelta(days=5)).isoformat())
+    ok = await mark_subscription_grace(
+        sub_id, (datetime.utcnow() + timedelta(days=5)).isoformat()
+    )
+    assert ok, "fixture: grace CAS failed"
 
     sub_before = await get_subscription_by_id(sub_id)
     assert sub_before["status"] == "grace"
@@ -321,13 +341,21 @@ async def test_handler_upgrade_from_grace_calls_unthrottle(user_with_sub):
     через vpnctl_client (иначе юзер заплатил, plan=Max в UI, но 256kbps реально).
     """
     user_id, sub_id = user_with_sub
+    # mark_subscription_grace CAS-rejects unless expires_at <= now — backdate.
+    import services.database as db_mod
+    past = (datetime.utcnow() - timedelta(days=1)).isoformat()
+    async with aiosqlite.connect(db_mod.DB_PATH) as db:
+        await db.execute(
+            "UPDATE subscriptions SET expires_at=? WHERE id=?", (past, sub_id)
+        )
+        await db.commit()
     # Pre-seed: sub в grace + один AWG слот с server_id и assigned_ip
-    await mark_subscription_grace(sub_id, (datetime.utcnow() + timedelta(days=5)).isoformat())
-    async with aiosqlite.connect(fresh_db := await _get_db_path()) as db:
-        pass  # placeholder; we use fresh_db indirectly through fixtures
+    ok = await mark_subscription_grace(
+        sub_id, (datetime.utcnow() + timedelta(days=5)).isoformat()
+    )
+    assert ok, "fixture: grace CAS failed"
 
     # We need to seed a config with server_id. Insert directly.
-    import services.database as db_mod
     async with aiosqlite.connect(db_mod.DB_PATH) as db:
         await db.execute(
             """INSERT INTO servers (name, host, agent_url, agent_token, is_active)
@@ -353,7 +381,11 @@ async def test_handler_upgrade_from_grace_calls_unthrottle(user_with_sub):
     mock_client.add_peer = AsyncMock()
     mock_client.remove_peer = AsyncMock()
 
-    with patch("services.vpnctl_client.client_for_server", return_value=mock_client):
+    # PS3 round 10: unthrottle path lives in services.grace.unthrottle_sub_configs
+    # which uses its own (module-local) client_for_server binding — patching
+    # services.vpnctl_client.client_for_server alone would be a no-op.
+    with patch("services.grace.client_for_server", return_value=mock_client), \
+         patch("services.vpnctl_client.client_for_server", return_value=mock_client):
         from handlers.vpn import _apply_plan_upgrade
         await _apply_plan_upgrade(msg, payment)
 

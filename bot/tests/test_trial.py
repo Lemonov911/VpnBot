@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from services.database import (
+    upsert_user,
     create_subscription,
     has_active_subscription,
     get_active_subscription,
@@ -31,6 +32,8 @@ async def test_D1_user_with_zero_subs_can_be_granted_trial(fresh_db):
     """D1. Brand new user (no subs) → has_active_subscription is False, so the
     trial guard would allow issuance."""
     assert await has_active_subscription(123) is False
+    # FK guard: create_subscription needs a users-row, else returns None.
+    await upsert_user(123, "test", "Test")
     # Simulate granting a trial — should succeed (no DB constraint blocks it)
     sub_id = await create_subscription(
         user_id=123, plan="vpn_trial", payment_id="trial_123_xyz",
@@ -51,6 +54,7 @@ async def test_D2_user_with_prior_trial_blocked_by_active_check(fresh_db):
     but the existing-trial path already works.)
     """
     user_id = 456
+    await upsert_user(user_id, "test", "Test")
     await create_subscription(
         user_id=user_id, plan="vpn_trial", payment_id="trial_456_abc",
         stars_paid=0, expires_at=datetime.utcnow() + timedelta(days=3),
@@ -66,6 +70,7 @@ async def test_D3_db_layer_does_not_enforce_trial_paid_exclusivity(fresh_db):
     schema constraint — see D4 for the handler-level guard.
     """
     user_id = 789
+    await upsert_user(user_id, "test", "Test")
     # User has a paid vpn_base sub
     await create_subscription(
         user_id=user_id, plan="vpn_base", payment_id="paid_789",
@@ -103,6 +108,7 @@ async def test_D4_cmd_trial_rejects_user_with_active_paid_sub(fresh_db):
     from unittest.mock import AsyncMock, MagicMock, patch
 
     user_id = 555
+    await upsert_user(user_id, "test", "Test")
     # User already has an active paid sub
     await create_subscription(
         user_id=user_id, plan="vpn_max", payment_id="paid_555",
@@ -127,7 +133,12 @@ async def test_D4_cmd_trial_rejects_user_with_active_paid_sub(fresh_db):
     # The handler must have answered with the refusal text...
     message.answer.assert_awaited_once()
     refusal_text = message.answer.await_args.args[0]
-    assert refusal_text.startswith("У тебя уже активная подписка"), refusal_text
+    # cmd_trial picks RU vs EN based on user.lang (default EN when no lang
+    # set). Accept either flavour — both anchor on "active subscription".
+    assert (
+        refusal_text.startswith("У тебя уже активная подписка")
+        or refusal_text.startswith("You already have an active subscription")
+    ), refusal_text
 
     # ...and must NOT have proceeded to provision a peer or pick a server.
     prov_mock.assert_not_awaited()

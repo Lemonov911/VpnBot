@@ -98,13 +98,17 @@ async def test_referrer_link_immutable_once_set(fresh_db):
 
 @pytest.mark.asyncio
 async def test_bonus_awarded_on_first_paid_subscription(fresh_db):
-    """Базовый flow: реферал → первая платная подписка → реферер получает +7 дней.
-    У реферера тоже есть активная подписка → её expires_at сдвигается на +7 дней."""
+    """Базовый flow: реферал → первая платная подписка → реферер получает +7 дней
+    в bank (users.ref_bonus_days). Manual-redeem семантика (изменилось 04.2026):
+    bonus НЕ применяется к expires_at автоматически — реферер должен сам нажать
+    «Активировать» в Mini App «Мои бонусы».
+    """
     await _add_user(REFERRER_ID)
     await _add_user(NEWBIE_ID)
     await set_referred_by(NEWBIE_ID, REFERRER_ID)
 
-    # У реферера есть активная подписка (иначе сдвигать нечего)
+    # Реферер должен быть paid юзером — try_award_referral_bonus отказывает
+    # иначе (защита против zero-cost referral farming).
     ref_sub_id = await _make_paid_sub(REFERRER_ID, payment_id="ref_own_sub")
     ref_sub_before = await get_subscription_by_id(ref_sub_id)
     expires_before = datetime.fromisoformat(ref_sub_before["expires_at"])
@@ -120,12 +124,14 @@ async def test_bonus_awarded_on_first_paid_subscription(fresh_db):
     assert stats["bonus_days"] == 7
     assert stats["converted"] == 1
 
-    # И его активная подписка сдвинута на +7 дней. SQLite datetime(..., '+7 days')
-    # обрезает миллисекунды, поэтому сравниваем по total_seconds с допуском.
+    # MANUAL-REDEEM: expires_at реферера НЕ меняется автоматом. Применение —
+    # отдельный endpoint redeem_referral_bonus, который пишет redeemed_at.
     ref_sub_after = await get_subscription_by_id(ref_sub_id)
     expires_after = datetime.fromisoformat(ref_sub_after["expires_at"])
     delta_days = (expires_after - expires_before).total_seconds() / 86400
-    assert 6.9 < delta_days < 7.1, f"expected ~7 days, got {delta_days}"
+    assert abs(delta_days) < 0.01, (
+        f"manual-redeem: expires_at should NOT change on award, got delta={delta_days}d"
+    )
 
     # Tracking-поля проставлены на платной подписке newbie (для rollback).
     # get_subscription_by_id не возвращает их — читаем напрямую.
@@ -170,6 +176,9 @@ async def test_no_double_award_on_second_paid_purchase(fresh_db):
     await _add_user(REFERRER_ID)
     await _add_user(NEWBIE_ID)
     await set_referred_by(NEWBIE_ID, REFERRER_ID)
+    # Referrer must be a paid user — try_award_referral_bonus refuses
+    # otherwise (prevents zero-cost referral farming).
+    await _make_paid_sub(REFERRER_ID, payment_id="ref_own_sub")
 
     sub1 = await _make_paid_sub(NEWBIE_ID, payment_id="chg_1")
     r1 = await try_award_referral_bonus(NEWBIE_ID, days=7, paid_sub_id=sub1)

@@ -143,6 +143,12 @@ async def test_provision_trial_uses_users_vless_uuid(fresh_db, monkeypatch):
     не uuid.uuid4() — потому что после triаl юзер сразу пользуется sub_url'ом,
     и mismatch сломает первую же сессию."""
     from services import trial
+    # services/trial.py does `from services.database import DB_PATH` at module
+    # top — that binding is stale w.r.t. fresh_db's monkeypatch. Re-point it
+    # so any aiosqlite.connect(DB_PATH) inside trial.py hits the test DB,
+    # not whatever was originally imported (or worse, mutated by a sibling
+    # test fixture like test_trial_cooldown_referred's autouse patch).
+    monkeypatch.setattr(trial, "DB_PATH", fresh_db)
 
     user_id = 7004
     # Нужно создать user-row до provision_trial (FK constraint на subscriptions).
@@ -151,9 +157,14 @@ async def test_provision_trial_uses_users_vless_uuid(fresh_db, monkeypatch):
 
     # provision_trial вызывает create_config_record(server_id=11) — FK на servers.
     # Вставляем fake row напрямую (не через add_server, который требует много полей).
+    #
+    # IMPORTANT: read DB_PATH via the module ref (services.database.DB_PATH),
+    # NOT `from services.database import DB_PATH`. The latter snapshots the
+    # binding at import time and misses fresh_db's monkeypatch — writes land
+    # in whatever the prod DB_PATH was when the module loaded.
     import aiosqlite
-    from services.database import DB_PATH
-    async with aiosqlite.connect(DB_PATH) as db:
+    import services.database as _db_mod
+    async with aiosqlite.connect(_db_mod.DB_PATH) as db:
         await db.execute(
             "INSERT INTO servers (id, name, host, protocol, is_active, agent_url) "
             "VALUES (?, ?, ?, ?, 1, ?)",

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from services.database import (
+    upsert_user,
     create_subscription,
     create_config_record,
     activate_config_slot,
@@ -31,6 +32,10 @@ LONG_AGO = (datetime.utcnow() - timedelta(days=20)).isoformat()  # > GRACE_DAYS=
 
 async def _make_sub(user_id: int = 1, plan: str = "vpn_trial",
                     expires_at: str = FUTURE) -> int:
+    # FK guard: create_subscription needs a users-row, otherwise the FK to
+    # users.id fires and create_subscription returns None — subsequent
+    # config inserts then fail with NOT NULL on subscription_id.
+    await upsert_user(user_id, username=f"u{user_id}", first_name=f"User{user_id}")
     return await create_subscription(
         user_id=user_id, plan=plan,
         payment_id=f"test_{user_id}_{plan}_{expires_at[:10]}",
@@ -38,9 +43,27 @@ async def _make_sub(user_id: int = 1, plan: str = "vpn_trial",
     )
 
 
+async def _ensure_test_server(server_id: int = 1) -> None:
+    """Inserts a stub server row if none exists. FK guard on configs.server_id."""
+    import aiosqlite
+    import services.database as _db_mod
+    async with aiosqlite.connect(_db_mod.DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM servers WHERE id=?", (server_id,)) as cur:
+            if await cur.fetchone():
+                return
+        await db.execute(
+            """INSERT INTO servers (id, name, host, agent_url, agent_token, is_active)
+               VALUES (?, 'Test', '1.2.3.4', 'http://agent:8080', 'tok', 1)""",
+            (server_id,),
+        )
+        await db.commit()
+
+
 async def _make_active_config(sub_id: int, user_id: int = 1,
                                protocol: str = "awg",
                                assigned_ip: str = "10.0.0.2") -> int:
+    # Insert a stub server row — configs.server_id is FK on servers.id.
+    await _ensure_test_server(1)
     cfg_id = await create_config_record(sub_id, user_id, protocol=protocol, server_id=1)
     # MD-F6: activate_config_slot now requires status='activating' (CAS).
     # Use the public claim helper to mirror the production code path.
@@ -65,8 +88,13 @@ async def test_active_future_sub_not_in_expired_list(fresh_db):
 
 @pytest.mark.asyncio
 async def test_active_past_sub_appears_in_expired_list(fresh_db):
-    """Sub with expires_at in the past IS returned."""
-    sub_id = await _make_sub(expires_at=PAST)
+    """Sub with expires_at in the past IS returned.
+
+    EU-F-r4: get_expired_subscriptions excludes plan='vpn_trial' (trials use
+    a separate get_expired_trials helper). Use a paid plan to exercise the
+    main expiry path.
+    """
+    sub_id = await _make_sub(plan="vpn_base", expires_at=PAST)
     expired = await get_expired_subscriptions()
     assert len(expired) == 1
     assert expired[0]["id"] == sub_id
@@ -76,7 +104,7 @@ async def test_active_past_sub_appears_in_expired_list(fresh_db):
 async def test_expired_query_includes_expires_at_and_pending_plan(fresh_db):
     """expires_at and pending_plan must be present in the result so the
     scheduler bot-offline guard and downgrade logic can read them."""
-    await _make_sub(expires_at=PAST)
+    await _make_sub(plan="vpn_base", expires_at=PAST)
     row = (await get_expired_subscriptions())[0]
     assert "expires_at" in row
     assert "pending_plan" in row
@@ -86,7 +114,7 @@ async def test_expired_query_includes_expires_at_and_pending_plan(fresh_db):
 async def test_long_ago_sub_has_expires_at_before_grace_cutoff(fresh_db):
     """Sub expired 20 days ago has expires_at < (now - 14d) — the scheduler
     should skip grace and go straight to expired.  We verify the DB field."""
-    await _make_sub(expires_at=LONG_AGO)
+    await _make_sub(plan="vpn_base", expires_at=LONG_AGO)
     row = (await get_expired_subscriptions())[0]
     cutoff = (datetime.utcnow() - timedelta(days=14)).isoformat()
     assert row["expires_at"] < cutoff, "expires_at should be before grace cutoff"

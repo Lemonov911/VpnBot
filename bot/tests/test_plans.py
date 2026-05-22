@@ -41,9 +41,12 @@ def test_E1_v2_plan_core_fields_match():
 @pytest.mark.parametrize("plan_key,expected", [
     ("vpn_base", "vless-base"),
     ("vpn_max",  "vless-max"),
-    ("vpn_pro",  "vless"),       # legacy
-    ("vpn_family", "vless"),     # legacy
-    ("unknown_xyz", "vless"),    # fallback
+    # EU-F-r2: legacy plans + unknown keys fall back to vless-base (the agent
+    # doesn't register a bare "vless" service, so bare fallback would 404
+    # provision_peer). See services/plans.py:vless_service_for_plan.
+    ("vpn_pro",  "vless-base"),
+    ("vpn_family", "vless-base"),
+    ("unknown_xyz", "vless-base"),
 ])
 def test_E2_vless_service_for_plan(plan_key, expected):
     assert vless_service_for_plan(plan_key) == expected
@@ -52,9 +55,11 @@ def test_E2_vless_service_for_plan(plan_key, expected):
 @pytest.mark.parametrize("plan_key,expected", [
     ("vpn_base", "vless-base-slow"),
     ("vpn_max",  "vless-max-slow"),
-    ("vpn_pro",  None),
-    ("vpn_family", None),
-    ("anything", None),
+    # Same EU-F-r2 reasoning: legacy/unknown also fall back to vless-base-slow
+    # (bare "vless-slow" isn't a real agent service).
+    ("vpn_pro",  "vless-base-slow"),
+    ("vpn_family", "vless-base-slow"),
+    ("anything", "vless-base-slow"),
 ])
 def test_E3_vless_slow_service_for_plan(plan_key, expected):
     assert vless_slow_service_for_plan(plan_key) == expected

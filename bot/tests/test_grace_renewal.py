@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.database import (
+    upsert_user,
     create_subscription,
     mark_subscription_grace,
     mark_subscription_expired,
@@ -29,7 +30,19 @@ USER_ID = 8001
 
 async def _make_sub(plan: str = "vpn_base", days_until_expiry: float = 30,
                     status: str = "active") -> int:
-    """Создаёт sub с заданными expires_at и status."""
+    """Создаёт sub с заданными expires_at и status.
+
+    For status='grace' we backdate expires_at into the past — mark_subscription_grace
+    CAS-rejects unless expires_at <= now (guard against admin extend / recurring
+    renew racing the scheduler throttler).
+    """
+    # FK guard: create_subscription needs a users-row, else returns None.
+    await upsert_user(USER_ID, username="u", first_name="U")
+    # For grace status we need expires_at in the past so mark_subscription_grace's
+    # CAS guard accepts the transition. Override only if caller passed a positive
+    # value (callers explicitly passing negative still get their value).
+    if status == "grace" and days_until_expiry > 0:
+        days_until_expiry = -1
     expires_at = datetime.utcnow() + timedelta(days=days_until_expiry)
     sub_id = await create_subscription(
         user_id=USER_ID, plan=plan,
@@ -38,7 +51,8 @@ async def _make_sub(plan: str = "vpn_base", days_until_expiry: float = 30,
     )
     if status == "grace":
         grace_until = (datetime.utcnow() + timedelta(days=10)).isoformat()
-        await mark_subscription_grace(sub_id, grace_until)
+        ok = await mark_subscription_grace(sub_id, grace_until)
+        assert ok, "fixture: mark_subscription_grace rejected — check expires_at"
     elif status == "expired":
         await mark_subscription_expired(sub_id)
     return sub_id
@@ -227,9 +241,18 @@ async def test_renew_clears_pending_plan(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_cross_plan_grace_closes_dangling(fresh_db):
-    """Audit 17.05 #8: юзер в grace на vpn_max покупает vpn_base — старая
-    grace sub должна быть закрыта (expired), не оставаться висеть."""
+async def test_cross_plan_grace_left_for_scheduler(fresh_db):
+    """EU-F7: юзер в grace на vpn_max покупает vpn_base — старая grace sub
+    НЕ закрывается eagerly. Раньше (audit 17.05 #8) закрывали сразу до
+    provision'а новой sub'ы — если provision падал, юзер оставался без
+    рабочего VPN. Теперь оставляем grace до natural grace_until — scheduler
+    подберёт. Юзер получит overlap (новый full-speed + старый throttled),
+    но не downtime.
+
+    Helper close_dangling_grace_subs_after_upgrade (services/grace.py) теперь
+    вызывается caller'ом ПОСЛЕ успешного provision'а — это отдельный путь
+    (test_close_dangling_grace.py).
+    """
     from services.grace import try_renew_from_grace
     from services.database import get_subscription_by_id
 
@@ -243,9 +266,11 @@ async def test_cross_plan_grace_closes_dangling(fresh_db):
 
     # Result = False (caller должен создать новую sub)
     assert result is False
-    # Старая grace sub теперь expired
+    # Старая grace sub НЕ закрыта eagerly — ждёт scheduler-grace-reap.
     old = await get_subscription_by_id(old_sub_id)
-    assert old["status"] == "expired", "old grace sub must be closed"
+    assert old["status"] == "grace", (
+        "EU-F7: old grace sub must be left to expire naturally, not closed eagerly"
+    )
 
 
 @pytest.mark.asyncio

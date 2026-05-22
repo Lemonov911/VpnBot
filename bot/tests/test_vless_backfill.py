@@ -11,6 +11,7 @@ import pytest
 import aiosqlite
 
 from services.database import (
+    upsert_user,
     create_subscription,
     create_config_record,
     save_peer_to_config,
@@ -36,6 +37,8 @@ async def _insert_server(db_path, *, name: str, protocol: str = "vless",
 
 
 async def _make_sub(user_id: int, plan: str = "vpn_base") -> int:
+    # FK guard: subscriptions.user_id → users.id, so the row must exist.
+    await upsert_user(user_id, username=f"u{user_id}", first_name=f"U{user_id}")
     return await create_subscription(
         user_id=user_id, plan=plan,
         payment_id=f"test_{user_id}_{plan}",
@@ -146,8 +149,16 @@ async def test_grace_subs_included(fresh_db):
     s2 = await _insert_server(fresh_db, name="frankfurt")
 
     sub = await _make_sub(user_id=100)
+    # mark_subscription_grace CAS-rejects unless expires_at <= now — backdate.
+    past = (datetime.utcnow() - timedelta(days=1)).isoformat()
+    async with aiosqlite.connect(fresh_db) as db:
+        await db.execute(
+            "UPDATE subscriptions SET expires_at=? WHERE id=?", (past, sub)
+        )
+        await db.commit()
     grace_until = (datetime.utcnow() + timedelta(days=14)).isoformat()
-    await mark_subscription_grace(sub, grace_until)
+    ok = await mark_subscription_grace(sub, grace_until)
+    assert ok, "fixture: grace CAS failed"
     await _replicate_vless_slot(sub, 100, "uuid-grace", [s1])
 
     missing = await get_vless_slots_missing_from_server(s2)
