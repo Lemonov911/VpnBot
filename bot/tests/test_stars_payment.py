@@ -55,6 +55,7 @@ def _make_message(user_id: int, payment) -> MagicMock:
     msg.answer_document = AsyncMock()
     msg.bot = MagicMock()
     msg.bot.refund_star_payment = AsyncMock()
+    msg.bot.send_message = AsyncMock()
     return msg
 
 
@@ -384,3 +385,143 @@ async def test_deliver_vpn_already_refunded_charge_no_double_refund(db_with_serv
 
     # Idempotent: no second refund_star_payment call
     message.bot.refund_star_payment.assert_not_awaited()
+
+
+# ── _apply_plan_upgrade guards (Stars upgrade flow) ────────────────────────
+# Симметрично CryptoBot T1-T3: race/multi-period/status guards в Stars-flow
+# тоже были covered только ручными audit'ами. Тесты вызывают _apply_plan_upgrade
+# напрямую (как Telegram-handler делает) и проверяют admin alert + user-facing
+# error + отсутствие slot-инсерта.
+
+
+def _make_upgrade_payment(payload: str, charge_id: str) -> MagicMock:
+    """plan_upgrade payload, total_amount произвольный (валидировался в
+    pre_checkout, сюда уже не относится)."""
+    p = MagicMock()
+    p.invoice_payload = payload
+    p.total_amount = 100
+    p.telegram_payment_charge_id = charge_id
+    return p
+
+
+async def _seed_upgrade_sub(user_id: int, plan: str = "vpn_base",
+                             *, refunded: bool = False) -> int:
+    """Pre-seed: user + subscription in given state. Returns sub_id."""
+    from datetime import datetime, timedelta
+    from services.database import (
+        create_subscription, upsert_user, mark_subscription_refunded,
+    )
+    await upsert_user(user_id, username=f"u{user_id}", first_name="U")
+    sub_id = await create_subscription(
+        user_id=user_id, plan=plan,
+        payment_id=f"seed_{user_id}_{plan}_{datetime.utcnow().timestamp()}",
+        stars_paid=100,
+        expires_at=datetime.utcnow() + timedelta(days=30),
+    )
+    if refunded:
+        await mark_subscription_refunded(sub_id)
+    return sub_id
+
+
+async def _count_configs_for_user(db_path, user_id: int) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM configs WHERE user_id=?", (user_id,)
+        ) as cur:
+            return (await cur.fetchone())[0]
+
+
+@pytest.mark.asyncio
+async def test_T4_stars_upgrade_race_guard_alerts_and_no_slots(fresh_db, monkeypatch):
+    """T4. Stars _apply_plan_upgrade race-guard: expected_from mismatch (sub
+    already moved to a different plan by a parallel upgrade). Must send admin
+    alert via message.bot.send_message + user-facing error via message.answer,
+    and MUST NOT insert any new slots.
+    """
+    import config as cfg
+    monkeypatch.setattr(cfg, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 8001
+    # Sub уже в vpn_max — webhook ожидает expected_from=vpn_base (stale).
+    sub_id = await _seed_upgrade_sub(user_id, plan="vpn_max")
+    configs_before = await _count_configs_for_user(fresh_db, user_id)
+
+    payload = f"plan_upgrade:{sub_id}:vpn_max:vpn_base"  # PS2 new format
+    payment = _make_upgrade_payment(payload, charge_id="stars_race_001")
+    message = _make_message(user_id, payment)
+
+    from handlers.vpn import _apply_plan_upgrade
+    await _apply_plan_upgrade(message, payment)
+
+    # Admin alert
+    message.bot.send_message.assert_awaited_once()
+    alert_text = message.bot.send_message.await_args.args[1]
+    assert "Stars upgrade race" in alert_text
+    # User-facing error
+    message.answer.assert_awaited()
+    # No new slots inserted
+    assert await _count_configs_for_user(fresh_db, user_id) == configs_before
+
+
+@pytest.mark.asyncio
+async def test_T5_stars_upgrade_multi_period_guard_alerts_and_no_slots(
+    fresh_db, monkeypatch,
+):
+    """T5. Stars _apply_plan_upgrade multi-period guard: target plan
+    duration_days != 30 (vpn_max_3m = 90). Must reject, alert admin, message
+    user, NO slot insert. Even though Stars upgrade is disabled in prod right
+    now, in-flight invoices могут долететь после re-enable — guard должен
+    держать оборону.
+    """
+    import config as cfg
+    monkeypatch.setattr(cfg, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 8002
+    sub_id = await _seed_upgrade_sub(user_id, plan="vpn_base")
+    configs_before = await _count_configs_for_user(fresh_db, user_id)
+
+    payload = f"plan_upgrade:{sub_id}:vpn_max_3m:vpn_base"  # 90-day target
+    payment = _make_upgrade_payment(payload, charge_id="stars_mp_001")
+    message = _make_message(user_id, payment)
+
+    from handlers.vpn import _apply_plan_upgrade
+    await _apply_plan_upgrade(message, payment)
+
+    message.bot.send_message.assert_awaited_once()
+    alert_text = message.bot.send_message.await_args.args[1]
+    assert "multi-period guard" in alert_text
+    message.answer.assert_awaited()
+    assert await _count_configs_for_user(fresh_db, user_id) == configs_before
+
+
+@pytest.mark.asyncio
+async def test_T6_stars_upgrade_status_guard_alerts_and_no_slots(
+    fresh_db, monkeypatch,
+):
+    """T6. Stars _apply_plan_upgrade status guard: sub already refunded by the
+    time successful_payment arrives → change_subscription_plan returns False
+    (WHERE status IN ('active','grace') filters refunded out). Handler must
+    alert admin + user, NOT insert slots.
+
+    NB: expected_from matches sub.plan (so race-guard is skipped) и target plan
+    тоже 30-дневный (multi-period guard skipped) — изолируем status-guard branch.
+    """
+    import config as cfg
+    monkeypatch.setattr(cfg, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 8003
+    sub_id = await _seed_upgrade_sub(user_id, plan="vpn_base", refunded=True)
+    configs_before = await _count_configs_for_user(fresh_db, user_id)
+
+    payload = f"plan_upgrade:{sub_id}:vpn_max:vpn_base"
+    payment = _make_upgrade_payment(payload, charge_id="stars_status_001")
+    message = _make_message(user_id, payment)
+
+    from handlers.vpn import _apply_plan_upgrade
+    await _apply_plan_upgrade(message, payment)
+
+    message.bot.send_message.assert_awaited_once()
+    alert_text = message.bot.send_message.await_args.args[1]
+    assert "status guard" in alert_text
+    message.answer.assert_awaited()
+    assert await _count_configs_for_user(fresh_db, user_id) == configs_before

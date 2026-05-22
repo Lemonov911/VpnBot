@@ -415,3 +415,174 @@ async def test_C9_payload_user_id_overridden_by_attacker_still_needs_correct_amo
     assert resp.status == 400
     assert await _count_subs(fresh_db) == 0
     assert await _count_configs(fresh_db) == 0
+
+
+# ── plan_upgrade webhook guards ────────────────────────────────────────────
+# Все три branch'а в handle_cryptobot_webhook были covered только ручными
+# code-audit'ами (22.05/23.05). Без интеграционных тестов следующий рефакторинг
+# может тихо снять guard, а заметим — когда у юзера апгрейд за чужой счёт
+# проскочит. Каждый branch проверяем end-to-end через HTTP-handler.
+
+
+def _build_upgrade_paid_body(*, sub_id: int, plan_key: str, expected_from: str,
+                              invoice_id: int, paid_amount: str = "100",
+                              paid_asset: str = "RUB") -> bytes:
+    """Builds a CryptoBot invoice_paid webhook for the plan_upgrade payload
+    format (PS2 new): plan_upgrade:{sub_id}:{plan_key}:{expected_from}."""
+    body = {
+        "update_id": 22222,
+        "update_type": "invoice_paid",
+        "payload": {
+            "invoice_id": invoice_id,
+            "status": "paid",
+            "currency_type": "fiat",
+            "fiat": "RUB",
+            "amount": paid_amount,
+            "payload": f"plan_upgrade:{sub_id}:{plan_key}:{expected_from}",
+            "paid_amount": paid_amount,
+            "paid_asset": paid_asset,
+        },
+    }
+    return json.dumps(body).encode()
+
+
+async def _make_sub_for_upgrade(user_id: int, plan: str = "vpn_base",
+                                 status: str = "active") -> int:
+    """Creates a user + subscription in given status. Returns sub_id."""
+    from datetime import datetime, timedelta
+    from services.database import create_subscription, mark_subscription_refunded
+    await _ensure_user(user_id)
+    sub_id = await create_subscription(
+        user_id=user_id, plan=plan,
+        payment_id=f"seed_{user_id}_{plan}_{datetime.utcnow().timestamp()}",
+        stars_paid=100,
+        expires_at=datetime.utcnow() + timedelta(days=30),
+    )
+    if status == "refunded":
+        await mark_subscription_refunded(sub_id)
+    return sub_id
+
+
+@pytest.mark.asyncio
+async def test_T1_cryptobot_upgrade_race_guard_alerts_and_records_sentinel(
+    app_client, fresh_db, test_cryptobot_token, monkeypatch,
+):
+    """T1. CryptoBot plan_upgrade webhook: payload says expected_from=vpn_base
+    but sub already moved to vpn_max (parallel upgrade landed first). Webhook
+    must: send admin alert + record_payment (sentinel) so retry doesn't spam,
+    and MUST NOT insert any new config slots.
+    """
+    monkeypatch.setattr(webapp_api, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 7001
+    # Создаём sub в "новом" plan'е vpn_max — webhook ожидает expected_from=vpn_base,
+    # т.е. кто-то параллельно уже двинул план.
+    sub_id = await _make_sub_for_upgrade(user_id, plan="vpn_max")
+    configs_before = await _count_configs(fresh_db, user_id=user_id)
+
+    body = _build_upgrade_paid_body(
+        sub_id=sub_id, plan_key="vpn_max",  # target
+        expected_from="vpn_base",            # stale assumption
+        invoice_id=70001,
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 200, "race-guard returns 200 (CryptoBot deduped already)"
+
+    # Admin alert fired exactly once, with race-guard wording.
+    assert app_client._fake_bot.send_message.await_count == 1
+    alert_args = app_client._fake_bot.send_message.await_args
+    assert "CryptoBot upgrade race" in alert_args[0][1]
+
+    # Sentinel payment-row inserted (idempotency: retry won't re-alert).
+    from services.database import is_payment_recorded
+    assert await is_payment_recorded(f"crypto_{70001}"), \
+        "sentinel payment-row must be recorded by race-guard branch"
+
+    # No new slots created.
+    assert await _count_configs(fresh_db, user_id=user_id) == configs_before, \
+        "race-guard must NOT insert slots"
+
+
+@pytest.mark.asyncio
+async def test_T2_cryptobot_upgrade_multi_period_guard_alerts_and_records_sentinel(
+    app_client, fresh_db, test_cryptobot_token, monkeypatch,
+):
+    """T2. CryptoBot plan_upgrade webhook: target plan is multi-period
+    (vpn_max_3m = 90 days). Webhook must reject (multi-period guard), send
+    admin alert, record sentinel, and NOT insert slots.
+    """
+    monkeypatch.setattr(webapp_api, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 7002
+    sub_id = await _make_sub_for_upgrade(user_id, plan="vpn_base")
+    configs_before = await _count_configs(fresh_db, user_id=user_id)
+
+    body = _build_upgrade_paid_body(
+        sub_id=sub_id, plan_key="vpn_max_3m",  # multi-period target (90 days)
+        expected_from="vpn_base",
+        invoice_id=70002,
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 200
+
+    assert app_client._fake_bot.send_message.await_count == 1
+    alert_args = app_client._fake_bot.send_message.await_args
+    assert "multi-period guard" in alert_args[0][1]
+
+    from services.database import is_payment_recorded
+    assert await is_payment_recorded(f"crypto_{70002}")
+
+    assert await _count_configs(fresh_db, user_id=user_id) == configs_before
+
+
+@pytest.mark.asyncio
+async def test_T3_cryptobot_upgrade_status_guard_alerts_and_records_sentinel(
+    app_client, fresh_db, test_cryptobot_token, monkeypatch,
+):
+    """T3. CryptoBot plan_upgrade webhook: sub is in 'refunded' status by the
+    time the webhook lands → change_subscription_plan's WHERE status IN
+    ('active','grace') rejects (rowcount=0) → returns False. Handler must
+    record sentinel, send admin alert, NOT insert slots.
+
+    NB: expected_from must match sub.plan (otherwise race-guard fires first
+    and we'd test the wrong branch). Multi-period guard would also fire first
+    if duration_days != 30, so we keep base→base same-plan refunded scenario.
+    """
+    monkeypatch.setattr(webapp_api, "ADMIN_ID", 99999, raising=False)
+
+    user_id = 7003
+    # Sub created and immediately refunded — status='refunded'.
+    sub_id = await _make_sub_for_upgrade(user_id, plan="vpn_base", status="refunded")
+    configs_before = await _count_configs(fresh_db, user_id=user_id)
+
+    body = _build_upgrade_paid_body(
+        sub_id=sub_id, plan_key="vpn_max",   # 30-day target → multi-period guard skipped
+        expected_from="vpn_base",            # matches sub.plan → race-guard skipped
+        invoice_id=70003,
+    )
+    sig = _sign(body, test_cryptobot_token)
+
+    resp = await app_client.post(
+        "/api/cryptobot/webhook", data=body,
+        headers={"crypto-pay-api-signature": sig},
+    )
+    assert resp.status == 200
+
+    assert app_client._fake_bot.send_message.await_count == 1
+    alert_args = app_client._fake_bot.send_message.await_args
+    assert "status guard" in alert_args[0][1]
+
+    from services.database import is_payment_recorded
+    assert await is_payment_recorded(f"crypto_{70003}")
+
+    assert await _count_configs(fresh_db, user_id=user_id) == configs_before
