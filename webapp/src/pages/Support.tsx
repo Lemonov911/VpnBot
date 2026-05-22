@@ -502,73 +502,118 @@ export default function Support() {
         </div>
       </div>
 
-      {/* Screenshot attachments */}
-      <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
-        <div className="py-[10px] px-4 flex items-center justify-between gap-3">
-          <span className="text-[13px] font-semibold text-[var(--tg-theme-text-color)]">
+      {/* Screenshot / video attachments */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPT_TYPES}
+        multiple
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+      />
+      {files.length === 0 ? (
+        // Empty state: одна большая dashed-кнопка-dropzone. Юзер сразу видит
+        // что аппа поддерживает аттачи, не приходится высматривать text-link.
+        <button
+          type="button"
+          disabled={state === 'sending'}
+          onClick={() => { WebApp.HapticFeedback.selectionChanged(); fileInputRef.current?.click() }}
+          className="w-full rounded-2xl border-2 border-dashed border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)]/40 py-5 px-4 flex flex-col items-center gap-1.5 cursor-pointer disabled:opacity-40 transition-colors active:bg-[var(--tg-theme-section-bg-color)]"
+        >
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ background: `${accent}1A`, color: accent }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.49"/>
+            </svg>
+          </div>
+          <span className="text-[14px] font-semibold text-[var(--tg-theme-text-color)]">
             {t('support_attach_label' as never)}
           </span>
-          <button
-            type="button"
-            disabled={files.length >= MAX_FILES || state === 'sending'}
-            onClick={() => { WebApp.HapticFeedback.selectionChanged(); fileInputRef.current?.click() }}
-            className="text-[13px] font-medium border-none bg-transparent cursor-pointer px-2 py-1 disabled:opacity-40"
-            style={{ color: accent }}
-          >
-            + {t('support_attach_btn' as never)} ({files.length}/{MAX_FILES})
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPT_TYPES}
-            multiple
-            onChange={handleFileChange}
-            style={{ display: 'none' }}
-          />
-        </div>
-        {files.length > 0 && (
-          <div className="px-4 pb-3 flex flex-wrap gap-2">
+          <span className="text-[11px] text-[var(--tg-theme-hint-color)]">
+            {t('support_attach_hint' as never)}
+          </span>
+        </button>
+      ) : (
+        // Filled state: card с header'ом «Прикреплено N/5» + grid тумбов
+        // и «+»-tile в конце пока не дошли до лимита.
+        <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
+          <div className="py-[10px] px-4 flex items-center justify-between gap-3 border-b border-[var(--card-border)]">
+            <span className="text-[13px] font-semibold text-[var(--tg-theme-text-color)]">
+              {(t('support_attach_count' as never)).replace('{n}', String(files.length)).replace('{max}', String(MAX_FILES))}
+            </span>
+            <button
+              type="button"
+              onClick={() => { WebApp.HapticFeedback.selectionChanged(); setFiles([]) }}
+              className="text-[12px] border-none bg-transparent cursor-pointer text-[var(--tg-theme-hint-color)] px-1 py-0.5"
+            >
+              {t('support_attach_clear' as never)}
+            </button>
+          </div>
+          <div className="p-3 flex flex-wrap gap-2">
             {files.map(att => (
-              <div key={att.id} className="relative w-[64px] h-[64px] rounded-lg overflow-hidden border border-[var(--card-border)] bg-[var(--tg-theme-bg-color)] flex items-center justify-center">
+              <div key={att.id} className="relative w-[72px] h-[72px] rounded-xl overflow-hidden border border-[var(--card-border)] bg-[var(--tg-theme-bg-color)] flex items-center justify-center">
                 {att.isVideo ? (
-                  // Видео-placeholder: фильмо-strip + play-icon overlay.
-                  // Превью первого кадра не генерируем — на Android тяжело
-                  // (требует <video> + canvas snapshot), а юзер и так знает что приложил.
-                  <div className="relative w-full h-full flex items-center justify-center bg-black/60 text-white">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M8 5v14l11-7z"/>
-                    </svg>
-                    <span className="absolute bottom-0.5 right-1 text-[9px] font-medium">
-                      {(att.file.size / 1024 / 1024).toFixed(1)}MB
+                  // Видео-плашка: тёмный фон, центр-плей, badge с размером
+                  // в углу + угловая metka «VIDEO» чтобы юзер сразу отличал
+                  // от тёмных скринов (например ночной режим Mini App'a).
+                  <div className="relative w-full h-full flex items-center justify-center bg-gradient-to-br from-[#1c1c1e] to-[#3a3a3c] text-white">
+                    <div className="w-9 h-9 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z"/>
+                      </svg>
+                    </div>
+                    <span className="absolute top-1 left-1 text-[9px] font-bold tracking-wider bg-black/40 px-1.5 py-0.5 rounded">VIDEO</span>
+                    <span className="absolute bottom-1 right-1 text-[10px] font-medium bg-black/40 px-1.5 py-0.5 rounded">
+                      {(att.file.size / 1024 / 1024).toFixed(1)}МБ
                     </span>
                   </div>
                 ) : att.thumb ? (
                   <img src={att.thumb} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  // Placeholder for >2MB photo files: icon + size badge keeps UX
-                  // honest without burning a base64 encode on the main thread.
-                  <div className="flex flex-col items-center text-[var(--tg-theme-hint-color)]">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  // Photo >2MB: photo-icon + размер.  Превью не генерируем
+                  // (heavy base64 encode на mobile блокирует main thread).
+                  <div className="flex flex-col items-center text-[var(--tg-theme-hint-color)] gap-0.5">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                       <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.8"/>
                       <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
                       <path d="M21 15l-5-5L5 21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
-                    <span className="text-[9px] mt-0.5">{(att.file.size / 1024 / 1024).toFixed(1)}MB</span>
+                    <span className="text-[10px] font-medium">{(att.file.size / 1024 / 1024).toFixed(1)}МБ</span>
                   </div>
                 )}
                 <button
                   type="button"
                   onClick={() => handleRemoveFile(att.id)}
                   aria-label={t('support_remove_file' as never)}
-                  className="absolute top-0.5 right-0.5 w-[18px] h-[18px] rounded-full bg-black/60 text-white border-none flex items-center justify-center cursor-pointer text-[12px] leading-none p-0"
+                  className="absolute top-1 right-1 w-[22px] h-[22px] rounded-full bg-black/65 text-white border-2 border-white/90 shadow flex items-center justify-center cursor-pointer p-0"
                 >
-                  ×
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                    <path d="M2 2l8 8M10 2l-8 8"/>
+                  </svg>
                 </button>
               </div>
             ))}
+            {files.length < MAX_FILES && (
+              // «+»-tile в общем grid'е — даёт быстрое affordance докинуть ещё
+              // файл не уезжая глазом с превью.
+              <button
+                type="button"
+                disabled={state === 'sending'}
+                onClick={() => { WebApp.HapticFeedback.selectionChanged(); fileInputRef.current?.click() }}
+                className="w-[72px] h-[72px] rounded-xl border-2 border-dashed border-[var(--card-border)] bg-transparent flex items-center justify-center cursor-pointer disabled:opacity-40"
+                style={{ color: accent }}
+                aria-label={t('support_attach_btn' as never)}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </button>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Upload progress */}
       {uploadProgress !== null && (

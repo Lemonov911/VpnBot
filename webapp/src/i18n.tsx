@@ -167,7 +167,10 @@ const T = {
     support_direct_title:'Написать напрямую в Telegram',
     support_direct_sub: 'Отправь команду /help в чат с ботом',
     // Screenshot/video attachments
-    support_attach_label:    '📎 Скрин или видео (необязательно)',
+    support_attach_label:    'Прикрепить скрин или видео',
+    support_attach_hint:     'до 5 файлов · фото 5 МБ · видео 10 МБ',
+    support_attach_count:    'Прикреплено {n}/{max}',
+    support_attach_clear:    'Очистить',
     support_attach_btn:      'Добавить файл',
     support_remove_file:     'Удалить',
     support_too_many_files:  'Не больше 5 файлов',
@@ -728,7 +731,10 @@ const T = {
     support_direct_title:'Write directly in Telegram',
     support_direct_sub: 'Send /help in the bot chat',
     // Screenshot/video attachments
-    support_attach_label:    '📎 Screenshot or video (optional)',
+    support_attach_label:    'Attach screenshot or video',
+    support_attach_hint:     'up to 5 files · photo 5 MB · video 10 MB',
+    support_attach_count:    'Attached {n}/{max}',
+    support_attach_clear:    'Clear',
     support_attach_btn:      'Add file',
     support_remove_file:     'Remove',
     support_too_many_files:  'Up to 5 files',
