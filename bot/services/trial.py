@@ -195,13 +195,20 @@ async def _provision_trial_locked(user_id: int) -> dict:
         # ── 1) VLESS peers (обязательны — главный канал) ──────────────────────
         # Multi-location: один UUID на все активные VLESS-сервера.  Юзер
         # импортирует subscription-URL в Happ и видит дропдаун локаций.
-        import uuid as _uuid
         from urllib.parse import quote as _q
         vless_servers = await get_all_active_servers("vless")
         if not vless_servers:
             raise TrialNoServer()
 
-        slot_uuid = str(_uuid.uuid4())
+        # CRITICAL: используем users.vless_uuid (persistent per-user), НЕ
+        # генерим свежий uuid4. _resolve_vless_urls динамически строит
+        # sub_url из users.vless_uuid; если провижим под другим UUID,
+        # клиент шлёт users.vless_uuid → сервер не находит → Reality fail.
+        # Это историческая засада: первая версия trial генерила фреш UUID,
+        # а handle_vpn_config_activate (line 951-964) уже использует
+        # ensure_user_vless_uuid — паритет нарушался, sub_url ломался.
+        from services.database import ensure_user_vless_uuid
+        slot_uuid = await ensure_user_vless_uuid(user_id)
         vless_provisioned = 0
         for server in vless_servers:
             cfg_id = await create_config_record(sub_id, user_id, protocol="vless",
@@ -379,7 +386,6 @@ async def bootstrap_vless_for_sub(
 
     Returns: число успешно прованизированных пиров.
     """
-    import uuid as _uuid
     from urllib.parse import quote as _q
 
     # F1: per-sub lock — concurrent bootstrap'ы для одной sub серилизуются.
@@ -387,13 +393,13 @@ async def bootstrap_vless_for_sub(
     # (idempotent).
     lock = _BOOTSTRAP_LOCKS.setdefault(sub_id, asyncio.Lock())
     async with lock:
-        return await _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _uuid, _q)
+        return await _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _q)
 
 
-async def _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _uuid, _q) -> int:
+async def _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _q) -> int:
     # get_configs_for_subscription() фильтрует status='active' — нам нужны empty.
     # Используем by_protocol-вариант: возвращает все статусы, empty в начале.
-    from services.database import get_configs_for_subscription_by_protocol
+    from services.database import get_configs_for_subscription_by_protocol, ensure_user_vless_uuid
     from services.plans import vless_service_for_plan
 
     vless_servers = await get_all_active_servers("vless")
@@ -418,8 +424,11 @@ async def _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _uuid, _q) -> 
     # за max — UX-несоответствие.
     tier_svc = vless_service_for_plan(plan_key)
 
-    # Один UUID на все серверы — Happ subscription с multi-location.
-    slot_uuid = str(_uuid.uuid4())
+    # CRITICAL (был баг 22.05): используем users.vless_uuid, не uuid4().
+    # _resolve_vless_urls строит sub_url из users.vless_uuid; провижим
+    # peer'ов под другим UUID = клиент шлёт users.vless_uuid, сервер не
+    # знает этот UUID → Reality handshake fail → EOF в Happ.
+    slot_uuid = await ensure_user_vless_uuid(user_id)
     provisioned = 0
     target_count = min(len(vless_servers), len(empty_vless))
     for i, server in enumerate(vless_servers):
