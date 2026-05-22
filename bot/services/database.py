@@ -36,10 +36,12 @@ _SENTINEL = _Sentinel()
 
 @asynccontextmanager
 async def _connect():
-    """aiosqlite.connect + busy_timeout 5s + foreign_keys=ON.
+    """aiosqlite.connect + busy_timeout 5s + foreign_keys=ON + synchronous=NORMAL.
 
     `journal_mode=WAL` ставится один раз в `init_db()`. busy_timeout +
-    foreign_keys = per-connection, ставятся здесь на каждом подключении.
+    foreign_keys + synchronous = per-connection, ставятся здесь на каждом
+    подключении (synchronous PRAGMA в SQLite — connection-scoped, не
+    database-scoped, поэтому одного раза в init_db недостаточно).
 
     foreign_keys=ON enforce'ит ТОЛЬКО те FK, что объявлены в CREATE TABLE.
     Колонки добавленные через ALTER TABLE (users.referred_by, configs.server_id,
@@ -55,6 +57,7 @@ async def _connect():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("PRAGMA busy_timeout=5000")
         await db.execute("PRAGMA foreign_keys=ON")
+        await db.execute("PRAGMA synchronous=NORMAL")
         yield db
 
 

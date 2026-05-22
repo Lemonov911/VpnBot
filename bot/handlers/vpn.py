@@ -278,7 +278,7 @@ async def on_successful_payment(message: Message, bot: Bot):
     from services.database import is_user_banned as _is_banned_stars
     if await _is_banned_stars(user_id):
         logger.warning(
-            "Stars successful_payment from banned user=%d charge=%s payload=%s",
+            "Stars successful_payment from banned user=%d charge=%s payload=%r",
             user_id, payment.telegram_payment_charge_id, payload,
         )
         try:
@@ -341,7 +341,8 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
     """
     user_id = message.from_user.id
     payment_id = payment.telegram_payment_charge_id
-    logger.info("Stars renewal: user=%d plan=%s charge_id=%s", user_id, plan_key, payment_id)
+    logger.debug("Stars renewal: user=%d plan=%s charge_id=%s", user_id, plan_key, payment_id)
+    logger.info("Stars renewal: user=%d plan=%s", user_id, plan_key)
 
     # Дубль-guard: если этот renewal charge_id мы уже видели — игнорируем.
     # Audit 17.05 #1: проверяем `payments.tx_id` (recurring create's own row),
@@ -351,7 +352,7 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         extend_subscription_expires_at, record_payment,
     )
     if await is_payment_recorded(payment_id):
-        logger.warning("Stars renewal: duplicate charge_id %s, ignored", payment_id)
+        logger.info("Stars renewal: duplicate charge_id %s, ignored", payment_id)
         return
 
     sub = await get_recurring_sub_for_renewal(user_id, plan_key)
@@ -375,7 +376,7 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
         tx_id=payment_id,
     )
     if not inserted:
-        logger.warning("Stars renewal: tx_id %s already recorded (race), ignored", payment_id)
+        logger.info("Stars renewal: tx_id %s already recorded (race), ignored", payment_id)
         return
 
     # Extend expires_at от max(now, current) + plan duration. Если sub был в grace
@@ -470,7 +471,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     #     если два successful_payment события прилетят почти одновременно.
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
-        logger.warning("Дубль платежа %s для user %d — игнорируем", payment_id, user_id)
+        logger.info("Дубль платежа %s для user %d — игнорируем", payment_id, user_id)
         return
 
     # Renew-from-grace: shared helper.  Если grace найден и renew выполнен —
@@ -547,7 +548,7 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     )
     # None = UNIQUE-constraint сработал → дубль проскочил TOCTOU. Идемпотентный exit.
     if sub_id is None:
-        logger.warning("Дубль платежа %s проскочил TOCTOU (UNIQUE сработал), user %d", payment_id, user_id)
+        logger.info("Дубль платежа %s проскочил TOCTOU (UNIQUE сработал), user %d", payment_id, user_id)
         return
 
     # FFF7: Close any active trial IMMEDIATELY — before scheduler can revoke
@@ -770,6 +771,10 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
 
     # Catastrophic 0/N still triggers refund/expire flow above (lines ~640-665).
     # Reaching this point means delivered > 0.
+    logger.info(
+        "purchase complete: user=%d plan=%s sub=%d method=stars delivered=%d/%d",
+        user_id, plan_key, sub_id, delivered, total,
+    )
 
     await send_purchase_success_message(
         message.bot, user_id, sub_id, plan, plan_key,

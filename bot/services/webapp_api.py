@@ -1208,12 +1208,12 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # или unknown status проходит дальше. CryptoBot теоретически может
     # пошлать 'expired'/'cancelled'/'failed' для будущих событий.
     if invoice.get("status") != "paid":
-        logger.warning("CryptoBot webhook: invoice status not 'paid': %r", invoice.get("status"))
+        logger.info("CryptoBot webhook: invoice status not 'paid': %r", invoice.get("status"))
         return web.Response(status=200)
     raw_payload = invoice.get("payload", "")
     payment_id  = f"crypto_{invoice.get('invoice_id')}"
-    logger.info("CryptoBot payment: invoice_id=%s payload=%s",
-                invoice.get("invoice_id"), raw_payload)
+    logger.debug("CryptoBot payment: invoice_id=%s payload=%r",
+                 invoice.get("invoice_id"), raw_payload)
 
     # payload format (PS2):
     #   "vpn:USER_ID:PLAN_KEY"
@@ -1256,7 +1256,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             get_configs_for_subscription, get_server_by_id, update_config_data,
         )
         if await is_payment_recorded(payment_id):
-            logger.warning("CryptoBot plan_upgrade: already processed invoice %s", invoice.get("invoice_id"))
+            logger.info("CryptoBot plan_upgrade: already processed invoice %s", invoice.get("invoice_id"))
             return web.Response(status=200)
 
         # PS2: всю обработку оборачиваем в per-sub lock. Конкурентные upgrade-
@@ -1510,7 +1510,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
 
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
-        logger.warning("CryptoBot: duplicate payment %s", payment_id)
+        logger.info("CryptoBot: duplicate payment %s", payment_id)
         return web.Response(status=200)
 
     # Идемпотентность: если payment уже записан в payments.tx_id через
@@ -1518,7 +1518,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # поэтому get_subscription_by_payment_id вернул None), но повторный
     # webhook не должен создавать вторую sub.
     if await is_payment_recorded(payment_id):
-        logger.warning("CryptoBot: payment %s already processed (grace-renew path), skip", payment_id)
+        logger.info("CryptoBot: payment %s already processed (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     # Renew-from-grace: если у юзера grace-sub того же плана — продлеваем
@@ -1571,7 +1571,7 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     # None = UNIQUE-constraint сработал → дубль webhook'а от CryptoBot
     # (они любят retry на 5xx). Идемпотентный 200.
     if sub_id is None:
-        logger.warning("CryptoBot: payment %s TOCTOU-duplicate, ignored", payment_id)
+        logger.info("CryptoBot: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
 
     order_id = await create_order(
@@ -1593,6 +1593,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         delivered, total = await provision_vpn_slots_async(
             bot, user_id, sub_id, plan, plan_key,
         )
+        if delivered > 0:
+            logger.info(
+                "purchase complete: user=%d plan=%s sub=%d method=crypto delivered=%d/%d",
+                user_id, plan_key, sub_id, delivered, total,
+            )
         # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
         # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
         await maybe_award_referral_bonus(bot, user_id, sub_id)
@@ -1770,8 +1775,8 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     status = (payload.get("status") or "").lower()
     # OxaPay: "Paid" — подтверждено. "Paying" — ещё ждём подтверждений.
     if status != "paid":
-        logger.info("OxaPay webhook: ignoring status=%s order_id=%s",
-                    status, payload.get("order_id"))
+        logger.debug("OxaPay webhook: ignoring status=%s order_id=%s",
+                     status, payload.get("order_id"))
         return web.Response(status=200)
 
     track_id = str(payload.get("track_id") or "")
@@ -1844,14 +1849,14 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
 
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
-        logger.warning("OxaPay: duplicate payment %s", payment_id)
+        logger.info("OxaPay: duplicate payment %s", payment_id)
         return web.Response(status=200)
 
     # Идемпотентность при webhook retry: grace-renew path записывает payment
     # в payments.tx_id, но не в subscriptions.payment_id — повторный вебхук
     # иначе создаст вторую sub.
     if await is_payment_recorded(payment_id):
-        logger.warning("OxaPay: payment %s already processed (grace-renew path), skip", payment_id)
+        logger.info("OxaPay: payment %s already processed (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     from services.grace import try_renew_from_grace
@@ -1897,7 +1902,7 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
         expires_at=expires_at,
     )
     if sub_id is None:
-        logger.warning("OxaPay: payment %s TOCTOU-duplicate, ignored", payment_id)
+        logger.info("OxaPay: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
 
     order_db_id = await create_order(
@@ -1913,6 +1918,11 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     try:
         from handlers.vpn import provision_vpn_slots_async, maybe_award_referral_bonus
         delivered, total = await provision_vpn_slots_async(bot, user_id, sub_id, plan, plan_key)
+        if delivered > 0:
+            logger.info(
+                "purchase complete: user=%d plan=%s sub=%d method=oxapay delivered=%d/%d",
+                user_id, plan_key, sub_id, delivered, total,
+            )
         await maybe_award_referral_bonus(bot, user_id, sub_id)
     except Exception as e:
         logger.error("OxaPay: provision crashed user=%d sub=%d: %s",
@@ -2280,7 +2290,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         # без записи в payments дважды экстендили sub на 30 дней.
         recurring_tx_id = f"lavatop_recur_{contract_id}"
         if await is_payment_recorded(recurring_tx_id):
-            logger.warning("Lava recurring duplicate %s ignored", recurring_tx_id)
+            logger.info("Lava recurring duplicate %s ignored", recurring_tx_id)
             return web.Response(status=200)
         # record_payment FIRST — atomic UNIQUE gate.
         inserted = await record_payment(
@@ -2290,7 +2300,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             tx_id=recurring_tx_id,
         )
         if not inserted:
-            logger.warning("Lava recurring race-duplicate %s ignored", recurring_tx_id)
+            logger.info("Lava recurring race-duplicate %s ignored", recurring_tx_id)
             return web.Response(status=200)
 
         # Продлеваем от max(now, current_expires_at) + duration — если был
@@ -2503,7 +2513,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         from services.database import get_user_id_by_email
         user_id = await get_user_id_by_email(email)
     if user_id is None:
-        logger.error("Lava webhook: cannot resolve user from email=%s contract=%s",
+        logger.error("Lava webhook: cannot resolve user from email=%r contract=%r",
                      email, contract_id)
         return web.Response(status=200)
 
@@ -2558,13 +2568,13 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     )
     existing = await get_subscription_by_payment_id(payment_id)
     if existing:
-        logger.warning("Lava: duplicate payment %s", payment_id)
+        logger.info("Lava: duplicate payment %s", payment_id)
         return web.Response(status=200)
     # Idempotency for grace-renewal path: try_renew_from_grace records the payment
     # but does not create a new sub — on retry, get_subscription_by_payment_id returns
     # None, but the payment is already recorded. Without this check a second sub gets created.
     if await _is_recorded_lava(payment_id):
-        logger.warning("Lava payment.success: already processed %s (grace-renew path), skip", payment_id)
+        logger.info("Lava payment.success: already processed %s (grace-renew path), skip", payment_id)
         return web.Response(status=200)
 
     # Renew-from-grace: первый платёж по новому Lava-контракту, но у юзера
@@ -2625,7 +2635,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         payment_provider="lavatop",
     )
     if sub_id is None:
-        logger.warning("Lava: payment %s TOCTOU-duplicate, ignored", payment_id)
+        logger.info("Lava: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
 
     order_db_id = await create_order(
@@ -2643,6 +2653,11 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         delivered, total = await provision_vpn_slots_async(
             bot, user_id, sub_id, plan, plan_key,
         )
+        if delivered > 0:
+            logger.info(
+                "purchase complete: user=%d plan=%s sub=%d method=lava delivered=%d/%d",
+                user_id, plan_key, sub_id, delivered, total,
+            )
         # Referral bonus (если есть). Атомарный CLAIM защищает от double-award
         # при дубль-webhook'ах (Lava/CryptoBot/Cryptomus любят ретраить).
         await maybe_award_referral_bonus(bot, user_id, sub_id)

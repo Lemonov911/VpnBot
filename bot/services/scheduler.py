@@ -991,14 +991,22 @@ async def _sync_vless_active_uuids():
                     break
                 except VpnctlError:
                     pass  # service not present on this server — skip
-            logger.info(
-                "vless sync: server=%s, valid=%d, kept=%d, removed=%d%s",
-                server.get("name"),
-                len(valid),
-                total_kept,
-                len(total_removed),
-                " (partial — timeout)" if timed_out else "",
-            )
+            # L9: noisy log — only log INFO when something actually changed
+            # (peers removed) or a timeout happened mid-sync. Otherwise DEBUG.
+            if len(total_removed) > 0 or timed_out:
+                logger.info(
+                    "vless sync: server=%s, valid=%d, kept=%d, removed=%d%s",
+                    server.get("name"),
+                    len(valid),
+                    total_kept,
+                    len(total_removed),
+                    " (partial — timeout)" if timed_out else "",
+                )
+            else:
+                logger.debug(
+                    "vless sync: server=%s, valid=%d, kept=%d, removed=0",
+                    server.get("name"), len(valid), total_kept,
+                )
         except Exception as e:
             logger.warning("vless uuid sync error server=%s: %s", server.get("name"), e, exc_info=True)
 

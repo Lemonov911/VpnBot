@@ -65,6 +65,15 @@ async def _get_session() -> aiohttp.ClientSession:
     return _session
 
 
+async def close_session() -> None:
+    """Закрывает shared HTTP-сессию. Вызывается из bot.py при graceful shutdown,
+    иначе aiohttp ругается на "Unclosed connector / client session" в логах."""
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+        _session = None
+
+
 async def _post(endpoint: str, body: dict, timeout: int = 60) -> dict:
     headers = {"RT-AccessCode": ESIM_API_KEY, "Content-Type": "application/json"}
     session = await _get_session()
