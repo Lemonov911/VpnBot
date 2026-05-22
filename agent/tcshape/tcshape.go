@@ -71,7 +71,16 @@ func Apply(iface string, tiers []Tier) {
 		})
 		// Filter: match source-port на offset 20.  Port в u32 — старшие 16 бит,
 		// маска 0xffff0000 чтобы матчить только source-port (destination игнорируем).
+		// ПЕРЕД add делаем del того же pref'а: `tc filter add` НЕ дедуплицируется,
+		// каждый рестарт агента иначе добавлял бы дубль (filter с тем же match но
+		// другим order'ом).  Через год набегало бы 50+ копий — мусор в kernel.
+		// `del pref X` снимает все u32-filter'ы на этом pref'е; на чистом сервере
+		// упадёт с "Empty filter list", это ловим как идемпотентный no-op.
 		portHex := portToU32Hex(t.Port)
+		cmds = append(cmds, []string{
+			"tc", "filter", "del", "dev", iface,
+			"parent", "1:", "protocol", "ip", "pref", itoa(t.FilterPref),
+		})
 		cmds = append(cmds, []string{
 			"tc", "filter", "add", "dev", iface,
 			"parent", "1:", "protocol", "ip", "pref", itoa(t.FilterPref), "u32",
@@ -85,11 +94,15 @@ func Apply(iface string, tiers []Tier) {
 		out, err := exec.Command(c[0], c[1:]...).CombinedOutput()
 		if err != nil {
 			s := string(out)
-			// Идемпотентность: проглатываем варианты "уже существует".
+			// Идемпотентность: проглатываем варианты "уже существует" / "ещё нет".
 			//   "File exists"                — class/filter add при дубле
 			//   "Exclusivity flag on, cannot modify"  — qdisc add при существующем root
+			//   "Empty filter list"          — `tc filter del` на чистом сервере (нечего удалять)
+			//   "Specified filter handle not found" — то же, разные kernel'ы по-разному пишут
 			if strings.Contains(s, "File exists") ||
-				strings.Contains(s, "Exclusivity flag on") {
+				strings.Contains(s, "Exclusivity flag on") ||
+				strings.Contains(s, "Empty filter list") ||
+				strings.Contains(s, "Specified filter handle not found") {
 				continue
 			}
 			log.Printf("tcshape WARN: %s: %v: %s",
