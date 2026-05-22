@@ -19,16 +19,22 @@ function formatDate(iso: string, lang: string): string {
 }
 
 const PLAN_KEY: Record<string, string> = {
-  vpn_base:    'vpn_plan_base',
-  vpn_max:     'vpn_plan_max',
-  vpn_trial:   'vpn_plan_trial',
-  vpn_start:   'vpn_plan_start',
-  vpn_popular: 'vpn_plan_popular',
-  vpn_pro:     'vpn_plan_pro',
-  vpn_family:  'vpn_plan_family',
-  vpn_1m:      'configs_plan_1m',
-  vpn_3m:      'configs_plan_3m',
-  vpn_1y:      'configs_plan_1y',
+  vpn_base:       'vpn_plan_base',
+  vpn_base_3m:    'vpn_plan_base_3m',
+  vpn_base_6m:    'vpn_plan_base_6m',
+  vpn_base_12m:   'vpn_plan_base_12m',
+  vpn_max:        'vpn_plan_max',
+  vpn_max_3m:     'vpn_plan_max_3m',
+  vpn_max_6m:     'vpn_plan_max_6m',
+  vpn_max_12m:    'vpn_plan_max_12m',
+  vpn_trial:      'vpn_plan_trial',
+  vpn_start:      'vpn_plan_start',
+  vpn_popular:    'vpn_plan_popular',
+  vpn_pro:        'vpn_plan_pro',
+  vpn_family:     'vpn_plan_family',
+  vpn_1m:         'configs_plan_1m',
+  vpn_3m:         'configs_plan_3m',
+  vpn_1y:         'configs_plan_1y',
 }
 
 // Цветовая палитра по протоколам:

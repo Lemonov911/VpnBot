@@ -115,13 +115,19 @@ export default function Home() {
 
   const planLabel = (key: string) => {
     const map: Record<string, string> = {
-      vpn_base:    t('vpn_plan_base'),
-      vpn_max:     t('vpn_plan_max'),
-      vpn_trial:   t('vpn_plan_trial'),
-      vpn_start:   t('vpn_plan_start'),
-      vpn_popular: t('vpn_plan_popular'),
-      vpn_pro:     t('vpn_plan_pro'),
-      vpn_family:  t('vpn_plan_family'),
+      vpn_base:       t('vpn_plan_base'),
+      vpn_base_3m:    t('vpn_plan_base_3m' as never),
+      vpn_base_6m:    t('vpn_plan_base_6m' as never),
+      vpn_base_12m:   t('vpn_plan_base_12m' as never),
+      vpn_max:        t('vpn_plan_max'),
+      vpn_max_3m:     t('vpn_plan_max_3m' as never),
+      vpn_max_6m:     t('vpn_plan_max_6m' as never),
+      vpn_max_12m:    t('vpn_plan_max_12m' as never),
+      vpn_trial:      t('vpn_plan_trial'),
+      vpn_start:      t('vpn_plan_start'),
+      vpn_popular:    t('vpn_plan_popular'),
+      vpn_pro:        t('vpn_plan_pro'),
+      vpn_family:     t('vpn_plan_family'),
     }
     return map[key] ?? key
   }
