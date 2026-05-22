@@ -3929,6 +3929,33 @@ CATEGORY_LABELS: dict[str, str] = {
     "other":   "Другое",
 }
 
+def _normalize_support_text(raw: str) -> str:
+    """Подготавливает support-ticket text к проверке длины и сохранению.
+
+    Делает три обхода bypass'а min-10 char limit:
+      1. `html.unescape` — иначе юзер шлёт «&#8203;» × 10 (HTML entity,
+         visible на бэке как 7 байт), после client-decode = zero-width.
+      2. `unicodedata.NFKC normalize` — full-width / compatibility варианты
+         (например 'ＡＢＣ') схлопываются в обычные latin.
+      3. regex strip zero-width + control chars (U+200B-200F, U+202A-202E,
+         U+2060-2064, U+FEFF, U+00AD, \\x00-\\x1F, \\x7F) — визуально
+         пустые символы которые проходят raw len()-check.
+
+    Вынесено в отдельную функцию чтобы можно было unit-тестировать без
+    подъёма aiohttp + initData auth-флоу.
+    """
+    import unicodedata as _ud
+    import re as _re
+    import html as _html
+    normalized = _ud.normalize("NFKC", _html.unescape(raw))
+    visible = _re.sub(
+        r"[​-‏‪-‮⁠-⁤﻿­]"
+        r"|[\x00-\x1F\x7F]",
+        "", normalized,
+    ).strip()
+    return visible
+
+
 async def handle_support_ticket(request: web.Request) -> web.Response:
     """Create a support ticket. Accepts both JSON (text-only legacy path) and
     multipart/form-data (text + up to 5 screenshot/video attachments).
@@ -4168,21 +4195,7 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
         category = str(body.get("category", "other"))
 
     # Common validation — even with photos we require a meaningful text body.
-    # Strip non-printable: zero-width chars (U+200B-200F, U+202A-202E,
-    # U+2060-2064, U+FEFF, U+00AD) визуально пустые, но проходят len()-check.
-    # Без фильтра юзер мог писать «​ × 10» и обойти min-10.
-    # NFKC normalize чтобы full-width / compatibility варианты сжимались.
-    # html.unescape — иначе bypass через &#8203; (HTML entity → zero-width
-    # после клиентского decode, но raw-байты на бэке проходят len-check).
-    import unicodedata as _ud
-    import re as _re
-    import html as _html
-    _normalized = _ud.normalize("NFKC", _html.unescape(text))
-    _visible = _re.sub(
-        r"[​-‏‪-‮⁠-⁤﻿­]"
-        r"|[\x00-\x1F\x7F]",
-        "", _normalized,
-    ).strip()
+    _visible = _normalize_support_text(text)
     if len(_visible) < 10:
         return await _user_err(
             user["id"], "text_too_short", "bot_api_err_text_too_short", 400,
