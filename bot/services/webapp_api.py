@@ -205,10 +205,18 @@ async def _resolve_vless_urls(user_id: int) -> list[str]:
     if user_uuid:
         sub = await get_relevant_vless_subscription(user_id)
         if sub:
-            # Tier по плану + grace-override (как у scheduler._current_vless_service,
-            # но проще: grace всегда vless-grace, иначе — план).
+            # Tier по плану + grace-override + soft-quota throttle override.
+            # EU-F2: если юзер исчерпал soft_cap_gb за биллинг-период (флаг
+            # subscriptions.reminded_quota_throttled), пир уже сидит в slow-
+            # инбаунде. Без проверки /sub/ отдаёт URL'ы обычного base/max
+            # порта, на котором у агента нет этого UUID → клиент handshake-
+            # fail'ит silently. Скрипт throttle переключает peer на slow-порт,
+            # _resolve_vless_urls должен зеркалить.
             if sub["status"] == "grace":
                 tier = "vless-grace"
+            elif sub.get("reminded_quota_throttled"):
+                from services.plans import vless_slow_service_for_plan
+                tier = vless_slow_service_for_plan(sub["plan"]) or vless_service_for_plan(sub["plan"])
             else:
                 tier = vless_service_for_plan(sub["plan"])
 
@@ -356,6 +364,20 @@ async def _user_err(
     )
 
 
+async def _check_banned(user_id: int) -> bool:
+    """Returns True if user is banned. Centralized check used by all
+    money/provision endpoints. CLAUDE.md says ban = silent block —
+    return 403 in API endpoints (Mini App handles with showAlert).
+    """
+    from services.database import is_user_banned
+    return await is_user_banned(user_id)
+
+
+async def _banned_response(user_id: int | None) -> web.Response:
+    """403 + bilingual ban message."""
+    return await _user_err(user_id, "banned", "bot_api_err_banned", 403)
+
+
 def _int_param(request: web.Request, name: str) -> int | None:
     try:
         return int(request.match_info[name])
@@ -391,6 +413,9 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     user = _resolve_user(request, body)
     if user is None:
         return _unauthorized()
+    # EU-F1: ban gate — money endpoint, refuse banned users.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
@@ -633,6 +658,10 @@ _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
 _trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
 _admin_rate:    dict[str, float] = {}  # /api/admin/* — брутфорс-защита
+# MD-F8: per-user rate limit for /api/vpn/subscription. UI polls every 8s
+# from one tab; multi-tab amplification could send 4+ rps. 1s window is
+# generous and well under legitimate usage.
+_vpn_sub_rate:  dict[int, float] = {}
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -836,6 +865,9 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    # EU-F1: provision endpoint — banned users cannot create new peers.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     config_id = _int_param(request, "id")
     if config_id is None:
@@ -935,10 +967,33 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     peer_ip = (result.extra or {}).get("assigned_ip")
     wg_pubkey = peer_id if config["protocol"] == "awg" else None
     vless_uuid = peer_id if config["protocol"] == "vless" else None
-    await activate_config_slot(
+    activated = await activate_config_slot(
         config_id, peer_name, config_data, server_id,
         wg_pubkey=wg_pubkey, assigned_ip=peer_ip, vless_uuid=vless_uuid,
     )
+    # MD-F6: CAS guard — slot was reset/revoked between claim and activate
+    # (admin force-revoke, scheduler grace-cleanup, multi-device race).
+    # The peer was provisioned on the agent but we can't write it to the
+    # slot. Roll back the agent peer best-effort + return 409 so the UI
+    # refreshes to the actual state.
+    if not activated:
+        logger.warning(
+            "Slot #%d: activate_config_slot CAS failed — slot reset mid-provision. "
+            "Rolling back orphan peer %s on server %s",
+            config_id, peer_name, server.get("name", server["id"]),
+        )
+        try:
+            from services.vpnctl_client import revoke_peer
+            await revoke_peer(server, str(peer_id), service_name)
+        except Exception as e:
+            logger.warning(
+                "MD-F6 rollback revoke_peer failed cfg=%d peer=%s: %s",
+                config_id, peer_id, e,
+            )
+        return await _user_err(
+            user["id"], "slot_reset_during_activation",
+            "bot_api_err_slot_reset_during_activation", 409,
+        )
     # Same pattern as handlers/vpn.py:_deliver_vpn — bump active_peers so
     # get_best_server load-balances correctly. Without this, a slot activated
     # via Mini App never counts toward the chosen server's load, and that
@@ -975,6 +1030,9 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    # EU-F1: deny revoke for banned users (consistency w/ activate gate).
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     config_id = _int_param(request, "id")
     if config_id is None:
@@ -1047,6 +1105,9 @@ async def handle_cryptobot_invoice(request: web.Request) -> web.Response:
     user = _resolve_user(request, body)
     if user is None:
         return _unauthorized()
+    # EU-F1: ban gate before invoice creation (no extra fees, no fraud surface).
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     plan = VPN_PLANS.get(body.get("plan_key", ""))
     if not plan:
@@ -1361,6 +1422,33 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.warning("CryptoBot webhook: unknown plan %s", plan_key)
         return web.Response(status=200)
 
+    # EU-F8: webhook may arrive for a user banned AFTER invoice creation
+    # (Telegram doesn't pre_checkout for CryptoBot — no client-side gate at
+    # capture time). Refund is impossible via API → admin alert for manual
+    # refund through CryptoBot dashboard.
+    from services.database import is_user_banned as _is_banned_cb
+    if await _is_banned_cb(user_id):
+        logger.warning(
+            "CryptoBot webhook for banned user=%d payment=%s plan=%s: skipping provision",
+            user_id, payment_id, plan_key,
+        )
+        try:
+            if ADMIN_ID:
+                bot_ban: Bot = request.app["bot"]
+                await bot_ban.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>Payment from banned user</b>\n\n"
+                    f"Method: CryptoBot\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Plan: {plan_key}\n"
+                    f"Payment: <code>{payment_id}</code>\n\n"
+                    "Refund manually via CryptoBot dashboard.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+        return web.Response(status=200)
+
     # Сверяем, что инвойс был выписан именно за этот план в правильной валюте.
     # Без этого payload-у можно доверять только в том, что подпись валидна —
     # но саму подпись CryptoBot ставит на любую сумму, которую мы запросили.
@@ -1572,6 +1660,9 @@ async def handle_oxapay_invoice(request: web.Request) -> web.Response:
     user = _resolve_user(request, body)
     if user is None:
         return _unauthorized()
+    # EU-F1: ban gate.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     plan_key = body.get("plan_key", "")
     plan = VPN_PLANS.get(plan_key)
@@ -1676,6 +1767,31 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     plan = VPN_PLANS.get(plan_key)
     if not plan:
         logger.warning("OxaPay webhook: unknown plan %s (order=%s)", plan_key, order_id)
+        return web.Response(status=200)
+
+    # EU-F8: ban gate. OxaPay has no refund API — admin alert for manual refund.
+    from services.database import is_user_banned as _is_banned_ox
+    if await _is_banned_ox(user_id):
+        logger.warning(
+            "OxaPay webhook for banned user=%d order=%s plan=%s: skipping provision",
+            user_id, order_id, plan_key,
+        )
+        try:
+            if ADMIN_ID:
+                bot_ban_ox: Bot = request.app["bot"]
+                await bot_ban_ox.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>Payment from banned user</b>\n\n"
+                    f"Method: OxaPay\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Plan: {plan_key}\n"
+                    f"Order: <code>{order_id}</code>\n"
+                    f"Track: <code>{payload.get('track_id')}</code>\n\n"
+                    "Refund manually via OxaPay dashboard.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
         return web.Response(status=200)
 
     # Сверка суммы — защита от подделки webhook'а.
@@ -1866,6 +1982,9 @@ async def handle_lavatop_invoice(request: web.Request) -> web.Response:
     user = _resolve_user(request, body)
     if user is None:
         return _unauthorized()
+    # EU-F1: ban gate — must precede set_user_email below.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     plan_key = body.get("plan_key", "")
     plan = VPN_PLANS.get(plan_key)
@@ -2036,7 +2155,20 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
             logger.warning("Lava cancel: sub not found for contract=%s parent=%s",
                            contract_id, parent_id)
             return web.Response(status=200)
-        await disable_auto_renew(sub["id"])
+        # MD-F4: capture CAS return. The in-app «Cancel auto-renew» button
+        # already calls disable_auto_renew + Lava cancel API, then we get
+        # this webhook as the async confirmation — at which point auto_renew
+        # is already 0 and CAS returns False. Notifying again would double-
+        # message the user. Only notify when THIS webhook is the source of
+        # truth (auto_renew flipped 1→0 just now).
+        was_enabled = await disable_auto_renew(sub["id"])
+        if not was_enabled:
+            logger.info(
+                "Lava cancel webhook for sub=%d: auto_renew already disabled "
+                "(in-app action got there first) — skipping notification",
+                sub["id"],
+            )
+            return web.Response(status=200)
         will_expire = payload.get("willExpireAt") or sub.get("expires_at") or ""
         try:
             from services.database import get_user_lang as _gul_cancel
@@ -2067,6 +2199,43 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         plan = VPN_PLANS.get(sub["plan"])
         if not plan:
             logger.error("Lava recurring: unknown plan %s sub=%d", sub["plan"], sub["id"])
+            return web.Response(status=200)
+
+        # EU-F8: ban gate on recurring charge. User was banned mid-cycle:
+        # disable auto_renew + best-effort cancel in Lava + admin alert for refund.
+        from services.database import is_user_banned as _is_banned_lv_rec, disable_auto_renew as _dar_rec
+        if await _is_banned_lv_rec(sub["user_id"]):
+            logger.warning(
+                "Lava recurring webhook for banned user=%d sub=%d contract=%s: refusing provision",
+                sub["user_id"], sub["id"], contract_id,
+            )
+            try:
+                await _dar_rec(sub["id"])
+            except Exception as e:
+                logger.warning("ban-on-recur disable_auto_renew failed sub=%d: %s", sub["id"], e)
+            _parent_cancel = sub.get("parent_contract_id") or contract_id
+            if LAVATOP_API_KEY and _parent_cancel:
+                try:
+                    from services.lavatop import cancel_subscription as _lava_cancel_ban
+                    await _lava_cancel_ban(api_key=LAVATOP_API_KEY, contract_id=_parent_cancel)
+                except Exception as e:
+                    logger.warning("ban-on-recur Lava cancel failed: %s", e)
+            try:
+                if ADMIN_ID:
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"🚨 <b>Lava recurring charge from banned user</b>\n\n"
+                        f"User: <code>{sub['user_id']}</code>\n"
+                        f"Sub: #{sub['id']}\n"
+                        f"Plan: {sub.get('plan')}\n"
+                        f"Contract: <code>{contract_id}</code>\n"
+                        f"Amount: {amount:.2f} {currency}\n\n"
+                        "Auto-renew disabled + Lava cancel attempted. "
+                        "Refund manually via Lava-кабинет.",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
             return web.Response(status=200)
 
         # Sanity: amount должна совпадать с plan.rub ± 10% (audit 17.05 #7).
@@ -2309,6 +2478,36 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     if user_id is None:
         logger.error("Lava webhook: cannot resolve user from email=%s contract=%s",
                      email, contract_id)
+        return web.Response(status=200)
+
+    # EU-F8: ban gate on first-payment webhook. Recurring contract was created
+    # before ban — try best-effort Lava cancel + admin alert.
+    from services.database import is_user_banned as _is_banned_lv1
+    if await _is_banned_lv1(user_id):
+        logger.warning(
+            "Lava payment.success for banned user=%d contract=%s: skipping provision",
+            user_id, contract_id,
+        )
+        if status == "subscription-active" and contract_id and LAVATOP_API_KEY:
+            try:
+                from services.lavatop import cancel_subscription as _lava_cancel_ban1
+                await _lava_cancel_ban1(api_key=LAVATOP_API_KEY, contract_id=contract_id)
+            except Exception as e:
+                logger.warning("ban-on-firstpay Lava cancel failed: %s", e)
+        try:
+            if ADMIN_ID:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"🚨 <b>Payment from banned user</b>\n\n"
+                    f"Method: Lava.top\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Contract: <code>{contract_id}</code>\n"
+                    f"Amount: {amount:.2f} {currency}\n\n"
+                    "Refund manually via Lava-кабинет.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
         return web.Response(status=200)
 
     # Определяем plan по сумме (Lava не передаёт offer_id в webhook;
@@ -2683,6 +2882,21 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
+    # MD-F8: per-user rate-limit. UI polls at 8s; this catches multi-tab
+    # amplification (each tab polls independently) and accidental tight
+    # loops from buggy frontends. 1s window is generous.
+    now_rl = _time.monotonic()
+    last_rl = _vpn_sub_rate.get(user["id"], 0.0)
+    if now_rl - last_rl < 1.0:
+        return web.json_response({"error": "rate_limited"}, status=429)
+    _vpn_sub_rate[user["id"]] = now_rl
+    # Lazy eviction — keep the dict from growing unbounded under churn.
+    if len(_vpn_sub_rate) > 1000:
+        cutoff = now_rl - 60.0
+        for k in list(_vpn_sub_rate.keys()):
+            if _vpn_sub_rate[k] < cutoff:
+                del _vpn_sub_rate[k]
+
     from datetime import datetime
     from services.database import get_or_create_sub_token, get_active_vless_configs_for_user
 
@@ -2715,7 +2929,41 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
             "sub_url":        await _sub_url_for(user["id"]),
         })
 
-    expires = datetime.fromisoformat(sub["expires_at"])
+    # EU-F4: defensive NULL/bad-format guard. legacy rows or partial migrations
+    # can leave expires_at = NULL or non-ISO; an unguarded fromisoformat() raises
+    # 500 and Mini App goes blank instead of showing «sub expired, re-buy».
+    if not sub.get("expires_at"):
+        logger.warning(
+            "handle_vpn_subscription: sub #%d has NULL expires_at — treating as expired",
+            sub["id"],
+        )
+        return web.json_response({
+            "id":             sub["id"],
+            "plan":           sub.get("plan", ""),
+            "stars_paid":     sub.get("stars_paid", 0),
+            "expires_at":     None,
+            "pending_plan":   sub.get("pending_plan"),
+            "days_remaining": 0,
+            "status":         "expired",
+            "sub_url":        await _sub_url_for(user["id"]),
+        })
+    try:
+        expires = datetime.fromisoformat(sub["expires_at"])
+    except (TypeError, ValueError) as e:
+        logger.warning(
+            "handle_vpn_subscription: bad expires_at %r sub=%d: %s",
+            sub.get("expires_at"), sub["id"], e,
+        )
+        return web.json_response({
+            "id":             sub["id"],
+            "plan":           sub.get("plan", ""),
+            "stars_paid":     sub.get("stars_paid", 0),
+            "expires_at":     None,
+            "pending_plan":   sub.get("pending_plan"),
+            "days_remaining": 0,
+            "status":         "expired",
+            "sub_url":        await _sub_url_for(user["id"]),
+        })
     now = datetime.utcnow()
     remaining_days = max(0, (expires - now).days)
 
@@ -2870,6 +3118,9 @@ async def handle_vpn_trial_claim(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    # EU-F1: trial is a provisioning op — banned users skip.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     # Rate-limit: каждый claim = provision на агенте, спам = DoS на VPN-сервер.
     # 60 сек / юзер: легитимный clamер кликает раз, реальный спам отрезается.
@@ -2956,6 +3207,9 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
     user = _resolve_user(request)
     if user is None:
         return _unauthorized()
+    # EU-F1: ban gate — change_plan triggers upgrade-invoice / downgrade.
+    if await _check_banned(user["id"]):
+        return await _banned_response(user["id"])
 
     body     = await request.json()
     plan_key = body.get("plan_key", "")
@@ -3301,6 +3555,16 @@ async def handle_user_stats(request: web.Request) -> web.Response:
             row = await cur.fetchone()
             assert row is not None
             stars_spent = row[0]
+        # EU-F6: aggregate RUB spend separately. RUB-paying users (CryptoBot/
+        # OxaPay/Lava) have stars_paid=0 and previously saw «0⭐» on Home — they
+        # could no longer see lifetime value of their purchases.
+        async with db.execute(
+            "SELECT COALESCE(SUM(amount_rub),0) FROM subscriptions "
+            "WHERE user_id=? AND refunded_at IS NULL AND plan != 'vpn_trial'",
+            (uid,),
+        ) as cur:
+            row = await cur.fetchone()
+            rub_spent = row[0] if row else 0
         async with db.execute(
             "SELECT COALESCE(ref_bonus_days,0) FROM users WHERE id=?", (uid,)
         ) as cur:
@@ -3331,6 +3595,7 @@ async def handle_user_stats(request: web.Request) -> web.Response:
 
     return web.json_response({
         "stars_spent": stars_spent,
+        "rub_spent":   rub_spent,
         "bonus_days":  bonus_days,
         "invited":     invited,
         "converted":   converted,
@@ -3595,28 +3860,63 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
 
 
 async def handle_admin_ticket_close(request: web.Request) -> web.Response:
-    """POST /api/admin/tickets/{id}/close — закрыть тикет без отправки сообщения."""
+    """POST /api/admin/tickets/{id}/close — закрыть тикет без отправки сообщения.
+    Юзеру отправляется короткое уведомление о закрытии (без текста ответа).
+    """
     if not _check_admin_rate_limit(request):
         return web.json_response({"error": "rate_limited"}, status=429)
     if not _check_admin_secret(request):
         return web.json_response({"error": "forbidden"}, status=403)
 
-    from services.database import close_ticket, audit_log_record
+    from services.database import (
+        close_ticket, audit_log_record,
+        get_ticket_by_id, get_user_lang,
+    )
+    from services.i18n_bot import t as _i18n_t
+
     ticket_id_str = request.match_info.get("id", "")
     try:
         ticket_id = int(ticket_id_str)
     except ValueError:
         return web.json_response({"error": "bad id"}, status=400)
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    admin_id = body.get("admin_id") if isinstance(body, dict) else None
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
+
+    # Достаём ticket ДО close — close выставит status='closed' но не возвратит
+    # user_id, нам он нужен для notify.
+    ticket = await get_ticket_by_id(ticket_id)
+    if not ticket:
+        return web.json_response({"error": "ticket not found"}, status=404)
+
     closed = await close_ticket(ticket_id)
     if not closed:
         return web.json_response({"error": "ticket not found"}, status=404)
 
     await audit_log_record(
-        admin_id=0, action="ticket_close",
+        admin_id=admin_id, action="ticket_close",
         target=f"ticket:{ticket_id}",
         details="-",
     )
+
+    # Notify юзера о закрытии тикета. Best-effort — закрытие уже произошло
+    # в БД, упавший send_message не должен валить ответ админу.
+    try:
+        bot: Bot = request.app["bot"]
+        lang = await get_user_lang(ticket["user_id"]) or "ru"
+        await bot.send_message(
+            ticket["user_id"],
+            _i18n_t(lang, "bot_ticket_closed_no_reply", ticket_id=ticket_id),
+            parse_mode="HTML",
+        )
+    except Exception as _e:
+        logger.warning("ticket close notify user=%d: %s", ticket["user_id"], _e)
+
     return web.json_response({"ok": True})
 
 
@@ -3627,6 +3927,14 @@ def _parse_path_int(request: web.Request, key: str) -> int | None:
         return int(request.match_info.get(key, ""))
     except (TypeError, ValueError):
         return None
+
+
+# Per-sub idempotency для extend. Защищает от двойного клика админа и от
+# race между двумя админами, нажавшими «+7 дн» одновременно — без него
+# подписка получает +14 за 2 секунды. 30-секундное окно покрывает время
+# отклика UI + retry от network glitch, не мешает легитимной серии extend
+# (admin делает +7, потом ещё +7 через минуту — оба пройдут).
+_extend_rate: dict[int, float] = {}
 
 
 async def handle_admin_sub_extend(request: web.Request) -> web.Response:
@@ -3652,9 +3960,29 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     if not isinstance(days, int) or not (1 <= days <= 365):
         return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
     reason = (body.get("reason") or "").strip()[:200] or None
+    admin_id = body.get("admin_id")
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
 
-    from services.database import extend_subscription, audit_log_record
+    # Idempotency: 30-сек cooldown per-sub. Возвращаем 429 чтобы UI показал
+    # явную ошибку — лучше чем тихо сделать +N второй раз.
+    _now = _time.monotonic()
+    _last = _extend_rate.get(sub_id, 0.0)
+    if _now - _last < 30:
+        return web.json_response(
+            {"error": "extend_recent",
+             "message": "Recent extend on this sub; wait 30s for idempotency"},
+            status=429,
+        )
+    _extend_rate[sub_id] = _now
+    if len(_extend_rate) > 1000:
+        _cutoff = _now - 60
+        for _k in [k for k, v in _extend_rate.items() if v < _cutoff]:
+            del _extend_rate[_k]
+
+    from services.database import extend_subscription, audit_log_record, get_user_lang
     from services.grace import unthrottle_sub_configs
+    from services.i18n_bot import t as _i18n_t
     updated = await extend_subscription(sub_id, days)
     if updated is None:
         return web.json_response({"error": "sub not found"}, status=404)
@@ -3662,7 +3990,7 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     was_grace = updated.pop("_was_grace", False)
 
     await audit_log_record(
-        admin_id=0, action="sub_extend",
+        admin_id=admin_id, action="sub_extend",
         target=f"sub:{sub_id}",
         details=f"+{days}d reason={reason or '-'} new_expiry={updated['expires_at']}",
     )
@@ -3674,6 +4002,22 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
             unthrottle_sub_configs(updated["id"], updated["user_id"], updated["plan"]),
             name=f"unthrottle_admin_sub{updated['id']}",
         )
+
+    # Notify user: без этого юзер видит «доступ работает дольше» и не понимает
+    # почему. Best-effort — если send_message упало, extend всё равно прошёл.
+    try:
+        bot: Bot = request.app["bot"]
+        target_user_id = updated["user_id"]
+        lang = await get_user_lang(target_user_id) or "ru"
+        new_until_iso = updated.get("expires_at") or ""
+        new_until = new_until_iso[:10] if new_until_iso else "—"
+        await bot.send_message(
+            target_user_id,
+            _i18n_t(lang, "bot_admin_extended", days=days, until=new_until),
+            parse_mode="HTML",
+        )
+    except Exception as _e:
+        logger.warning("extend notify failed sub=%d: %s", sub_id, _e)
 
     return web.json_response({"ok": True, "subscription": updated})
 
@@ -3699,6 +4043,9 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         body = {}
     reason = (body.get("reason") or "").strip()[:200] or None
     do_stars_refund = bool(body.get("stars_refund", False))
+    admin_id = body.get("admin_id")
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
 
     from services.database import (
         get_subscription_by_id, mark_subscription_refunded,
@@ -3857,7 +4204,7 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
                     })
 
     await audit_log_record(
-        admin_id=0, action="sub_refund",
+        admin_id=admin_id, action="sub_refund",
         target=f"sub:{sub_id}",
         details=(
             f"user={sub['user_id']} method={payment_source} "
@@ -3866,6 +4213,10 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         ),
     )
     return web.json_response({
+        # AD-F5: backend возвращает user_id чтобы admin-proxy мог revalidate
+        # /clients/[id] — иначе страница клиента показывает старый статус
+        # до hard-reload.
+        "user_id": sub["user_id"],
         "ok": True,
         "stars_refund_done": stars_refund_done,
         "payment_source": payment_source,
@@ -3919,6 +4270,9 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
     except Exception:
         body = {}
     reason = (body.get("reason") or "").strip()[:200] or None
+    admin_id = body.get("admin_id")
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
 
     from services.database import set_user_banned, audit_log_record
     ok = await set_user_banned(user_id, banned=True, reason=reason)
@@ -3968,7 +4322,7 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
             stars_manual_required = True
 
     await audit_log_record(
-        admin_id=0, action="user_ban",
+        admin_id=admin_id, action="user_ban",
         target=f"user:{user_id}",
         details=(
             f"reason={reason or '-'} "
@@ -4148,6 +4502,14 @@ async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
     if server_id is None:
         return web.json_response({"error": "bad id"}, status=400)
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    admin_id = body.get("admin_id") if isinstance(body, dict) else None
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
+
     from services.database import (
         get_server_by_id, get_vless_slots_missing_from_server,
         create_config_record, save_peer_to_config, update_server_peer_count,
@@ -4225,7 +4587,7 @@ async def handle_admin_vless_backfill(request: web.Request) -> web.Response:
                 failures.append({"sub_id": sub_id, "error": str(e)[:200]})
 
     await audit_log_record(
-        admin_id=0, action="vless_backfill",
+        admin_id=admin_id, action="vless_backfill",
         target=f"server:{server_id}",
         details=f"scanned={scanned} created={created} failed={failed}",
     )
@@ -4263,9 +4625,17 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
     if server_id is None:
         return web.json_response({"error": "bad id"}, status=400)
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    admin_id = body.get("admin_id") if isinstance(body, dict) else None
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
+
     from services.database import (
         get_server_by_id, get_active_configs_for_migration,
-        get_best_server, activate_config_slot, reset_config_slot,
+        get_best_server, migrate_config_slot, reset_config_slot,
         update_server_peer_count, audit_log_record, DB_PATH,
     )
     from services.vpnctl_client import provision_peer, revoke_peer, VpnctlError
@@ -4369,7 +4739,10 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
                 if old_peer_id:
                     await revoke_peer(dead_server, old_peer_id, protocol)
 
-                await activate_config_slot(
+                # MD-F6: use migrate_config_slot (no CAS) — the config is
+                # currently 'active' and we're swapping its underlying peer,
+                # not promoting empty→active.
+                await migrate_config_slot(
                     config_id, label, peer.config,
                     server_id=target["id"],
                     wg_pubkey=peer.id,
@@ -4413,7 +4786,7 @@ async def handle_admin_migrate_configs(request: web.Request) -> web.Response:
                     failures.append({"config_id": config_id, "error": str(e)[:200]})
 
         await audit_log_record(
-            admin_id=0, action="server_migrate",
+            admin_id=admin_id, action="server_migrate",
             target=f"server:{server_id}",
             details=f"migrated={migrated} reset_vless={reset_vless} skipped={skipped} failed={failed}",
         )
@@ -4444,13 +4817,21 @@ async def handle_admin_user_unban(request: web.Request) -> web.Response:
             status=400,
         )
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    admin_id = body.get("admin_id") if isinstance(body, dict) else None
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
+
     from services.database import set_user_banned, audit_log_record
     ok = await set_user_banned(user_id, banned=False)
     if not ok:
         return web.json_response({"error": "user not found"}, status=404)
 
     await audit_log_record(
-        admin_id=0, action="user_unban",
+        admin_id=admin_id, action="user_unban",
         target=f"user:{user_id}",
     )
     return web.json_response({"ok": True})

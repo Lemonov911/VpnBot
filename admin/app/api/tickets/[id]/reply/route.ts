@@ -43,7 +43,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       'Content-Type':    'application/json',
       'X-Admin-Secret':  ADMIN_API_SECRET,
     },
-    body: JSON.stringify({ text, close: body.close ?? true }),
+    // admin_id из session — для audit_log forensics.
+    body: JSON.stringify({ text, close: body.close ?? true, admin_id: session.userId }),
     signal: AbortSignal.timeout(15_000),
   })
   const data = await upstream.json().catch(() => ({}))

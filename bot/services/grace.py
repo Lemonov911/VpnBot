@@ -64,11 +64,20 @@ async def try_renew_from_grace(
     if existing.get("status") != "grace":
         return False
     if existing.get("plan") != plan_key:
-        # Юзер в grace на ДРУГОМ плане. Раньше: создавалась 2-я sub, старая
-        # grace sub висела до natural expire (14 дней throttle, дальше
-        # auto-revoke).  Audit 17.05 #8: закрываем старую grace, чтобы
-        # её AWG/VLESS пиры освободили слоты и не сбивали с толку в Mini App.
-        await _close_dangling_grace(bot, existing["id"], existing.get("plan", ""))
+        # EU-F7: НЕ закрываем dangling grace eagerly. Раньше делали:
+        #   await _close_dangling_grace(...)
+        # — закрытие шло ПЕРЕД создание новой sub + provision. Если
+        # provision'ил с ошибкой, у юзера terminated старый VPN + не работал
+        # новый = service interruption.
+        # Теперь: оставляем grace-sub до natural expire (grace_until) —
+        # scheduler-тик подберёт её через _reconcile_orphans / grace-reap.
+        # Юзер получит overlap: новый full-speed VPN + старый throttled, пока
+        # 14-day grace_until не истечёт. Это безопаснее даунтайма.
+        logger.info(
+            "try_renew_from_grace: user %d has grace on different plan (%s vs %s), "
+            "leaving for scheduler to reap on natural grace_until expiry",
+            user_id, existing.get("plan"), plan_key,
+        )
         return False  # caller продолжает обычный create-flow
 
     sub_id = existing["id"]

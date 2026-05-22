@@ -442,6 +442,8 @@ export function redeemReferralBonus(): Promise<RedeemResult> {
 
 export interface UserStats {
   stars_spent: number
+  /** EU-F6: lifetime RUB spend (CryptoBot / OxaPay / Lava). 0 for Stars-only users. */
+  rub_spent?:  number
   bonus_days:  number
   invited:     number
   converted:   number

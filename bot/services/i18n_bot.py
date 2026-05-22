@@ -190,6 +190,8 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_slot_activating":      "Слот уже активируется в другой вкладке",
         "bot_api_err_slot_bad_status":      "Неверный статус слота",
         "bot_api_err_slot_not_active":      "Слот не активен",
+        # MD-F6: CAS race — слот сбросили между claim и activate.
+        "bot_api_err_slot_reset_during_activation": "Слот был сброшен в другом окне. Обнови страницу и попробуй ещё раз.",
         "bot_api_err_active_sub_exists":    "У тебя уже есть активная подписка. Используй смену тарифа.",
         "bot_api_err_no_active_sub":        "Нет активной подписки",
         "bot_api_err_payment_service":      "Ошибка платёжного сервиса",
@@ -204,6 +206,7 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_sub_not_recurring":    "Подписка не recurring",
         "bot_api_err_ticket_empty":         "Пустое сообщение",
         "bot_api_err_ticket_too_long":      "Сообщение слишком длинное",
+        "bot_api_err_banned":               "Доступ ограничен. Напиши на support@maxvpnesim.com",
         # Device label fallback
         "bot_device_fallback":              "Устройство #{n}",
         # Telegram invoice descriptions (shown in TG payment dialog)
@@ -268,6 +271,13 @@ T: dict[str, dict[str, str]] = {
         "bot_btn_open_esim_catalog":        "📱 Открыть каталог eSIM",
         "bot_plan_chip_base":               "⭐ База — 145 ⭐ (≈200 ₽) · 60 Mbps · 5 устройств",
         "bot_plan_chip_max":                "🚀 Макс — 360 ⭐ (≈500 ₽) · 120 Mbps · 10 устройств",
+        "bot_admin_extended":
+            "🎁 <b>Доступ продлён</b>\n\n"
+            "Админ добавил +{days} дн.\n"
+            "Подписка действует до <b>{until}</b>.",
+        "bot_ticket_closed_no_reply":
+            "✅ <b>Тикет #{ticket_id} закрыт</b>\n\n"
+            "Если вопрос остался — открой новый тикет в Mini App.",
     },
     "en": {
         "bot_trial_success_header":     "🎁 <b>Trial activated for {days} {day_word}</b>",
@@ -445,6 +455,7 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_slot_activating":      "Slot is being activated in another tab",
         "bot_api_err_slot_bad_status":      "Invalid slot status",
         "bot_api_err_slot_not_active":      "Slot not active",
+        "bot_api_err_slot_reset_during_activation": "Slot was reset in another window. Reload the page and try again.",
         "bot_api_err_active_sub_exists":    "You already have an active subscription. Use plan change instead.",
         "bot_api_err_no_active_sub":        "No active subscription",
         "bot_api_err_payment_service":      "Payment service error",
@@ -459,6 +470,7 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_sub_not_recurring":    "Subscription is not recurring",
         "bot_api_err_ticket_empty":         "Empty message",
         "bot_api_err_ticket_too_long":      "Message too long",
+        "bot_api_err_banned":               "Access restricted. Contact support@maxvpnesim.com",
         # Device label fallback
         "bot_device_fallback":              "Device #{n}",
         # Telegram invoice descriptions
@@ -523,6 +535,13 @@ T: dict[str, dict[str, str]] = {
         "bot_btn_open_esim_catalog":        "📱 Open eSIM catalog",
         "bot_plan_chip_base":               "⭐ Base — 145 ⭐ (≈$2.2) · 60 Mbps · 5 devices",
         "bot_plan_chip_max":                "🚀 Max — 360 ⭐ (≈$5.5) · 120 Mbps · 10 devices",
+        "bot_admin_extended":
+            "🎁 <b>Subscription extended</b>\n\n"
+            "Admin added +{days} day(s).\n"
+            "Active until <b>{until}</b>.",
+        "bot_ticket_closed_no_reply":
+            "✅ <b>Ticket #{ticket_id} closed</b>\n\n"
+            "If your question is still unresolved — open a new ticket in the Mini App.",
     },
 }
 

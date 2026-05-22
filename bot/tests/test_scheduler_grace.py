@@ -60,11 +60,14 @@ async def _make_active_awg(sub_id: int, server_id: int,
                             assigned_ip: str = "10.0.0.2") -> int:
     cfg_id = await create_config_record(sub_id, user_id, protocol="awg",
                                          server_id=server_id)
-    await activate_config_slot(
+    # MD-F6: activate_config_slot now CAS'es against status='activating'.
+    from services.database import claim_config_slot_for_activation
+    assert await claim_config_slot_for_activation(cfg_id), "claim failed (test setup)"
+    assert await activate_config_slot(
         cfg_id, peer_name=f"peer_{cfg_id}",
         config_data="[Interface]\n...",
         server_id=server_id, assigned_ip=assigned_ip,
-    )
+    ), "activate CAS failed (test setup)"
     return cfg_id
 
 
@@ -83,11 +86,13 @@ async def _make_active_vless(sub_id: int, server_id: int,
     config_data = _port_for_service.get(service, f"vless://{service}.example.com/")
     cfg_id = await create_config_record(sub_id, user_id, protocol="vless",
                                          server_id=server_id)
-    await activate_config_slot(
+    from services.database import claim_config_slot_for_activation
+    assert await claim_config_slot_for_activation(cfg_id), "claim failed (test setup)"
+    assert await activate_config_slot(
         cfg_id, peer_name=f"vless_{cfg_id}",
         config_data=config_data,
         server_id=server_id, vless_uuid=vless_uuid,
-    )
+    ), "activate CAS failed (test setup)"
     return cfg_id
 
 
@@ -145,8 +150,10 @@ async def test_awg_expiry_no_server_still_marks_grace(fresh_db, db_with_server):
     # config with server_id=None (empty slot that was never fully provisioned)
     cfg_id = await create_config_record(sub_id, user_id=2, protocol="awg",
                                          server_id=None)
-    await activate_config_slot(cfg_id, peer_name="orphan",
-                                config_data="...", server_id=None)
+    from services.database import claim_config_slot_for_activation
+    assert await claim_config_slot_for_activation(cfg_id), "claim failed (test setup)"
+    assert await activate_config_slot(cfg_id, peer_name="orphan",
+                                config_data="...", server_id=None), "activate CAS failed"
 
     with patch("services.scheduler._send_throttled", new=AsyncMock()):
         from services.scheduler import _process_expired_subscriptions

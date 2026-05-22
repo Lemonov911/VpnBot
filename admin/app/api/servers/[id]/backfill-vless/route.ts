@@ -20,10 +20,11 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
 
   // Может занять минуты при большом числе подписок: provision_peer на агент
   // ~200-500ms × N слотов. Даём 5 минут — если backfill дольше, что-то не так.
+  // admin_id из session — для audit_log forensics.
   const upstream = await fetch(`${BOT_API_BASE}/api/admin/servers/${numId}/backfill-vless`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify({ admin_id: session.userId }),
     signal: AbortSignal.timeout(300_000),
   })
   const data = await upstream.json().catch(() => ({}))

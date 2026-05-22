@@ -17,12 +17,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const numId = parseInt(id, 10)
   if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
 
-  let body: unknown = {}
-  try { body = await req.json() } catch {}
+  let body: Record<string, unknown> = {}
+  try { body = (await req.json()) as Record<string, unknown> } catch {}
+  // Прокидываем admin_id из session — без него audit_log пишет admin_id=0
+  // и forensics не показывает «кто продлил».
   const upstream = await fetch(`${BOT_API_BASE}/api/admin/sub/${numId}/extend`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, admin_id: session.userId }),
     signal: AbortSignal.timeout(15_000),
   })
   const data = await upstream.json().catch(() => ({}))

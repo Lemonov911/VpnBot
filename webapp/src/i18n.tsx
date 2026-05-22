@@ -431,6 +431,9 @@ const T = {
     vpn_charge_failed_sub:   'Lava попробует ещё раз через сутки. Проверь баланс или оплати вручную.',
     vpn_payment_verifying:     'Проверяем оплату…',
     vpn_payment_verifying_sub: 'Это занимает до 1-2 минут после подтверждения банка.',
+    // MD-F5: cross-method Stars dedup. User already had an active sub from
+    // another payment method; backend auto-refunded the Stars charge.
+    vpn_already_active_refund: 'У тебя уже была активная подписка — Stars возвращены. Открой Mini App.',
     vpn_cancel_renewal:  'Отменить автопродление',
     vpn_cancel_renewal_confirm: 'Отменить автопродление? VPN продолжит работать до конца оплаченного периода.',
     vpn_cancel_renewal_done: 'Автопродление отключено. VPN активен до {date}.',
@@ -962,6 +965,7 @@ const T = {
     vpn_charge_failed_sub:   'Lava will retry in 24 hours. Top up your balance or pay manually.',
     vpn_payment_verifying:     'Verifying payment…',
     vpn_payment_verifying_sub: 'This takes 1-2 minutes after your bank confirms.',
+    vpn_already_active_refund: 'You already had an active subscription — your Stars were refunded. Reopen the Mini App.',
     vpn_cancel_renewal:  'Cancel auto-renewal',
     vpn_cancel_renewal_confirm: 'Cancel auto-renewal? VPN will keep working until end of paid period.',
     vpn_cancel_renewal_done: 'Auto-renewal cancelled. VPN active until {date}.',

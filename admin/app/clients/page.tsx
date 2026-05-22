@@ -132,7 +132,12 @@ export default async function Clients() {
                     </td>
                     <td className="px-4 py-2">
                       {c.current_plan ? (
-                        <span className="text-emerald-400">{PLAN_NAMES[c.current_plan] || c.current_plan}</span>
+                        <span className={c.current_plan_status === 'grace' ? 'text-amber-400' : 'text-emerald-400'}>
+                          {PLAN_NAMES[c.current_plan] || c.current_plan}
+                          {c.current_plan_status === 'grace' && (
+                            <span className="ml-1 text-[10px] uppercase tracking-wider">grace</span>
+                          )}
+                        </span>
                       ) : (
                         <span className="text-neutral-600">—</span>
                       )}

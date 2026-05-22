@@ -42,11 +42,15 @@ async def _make_active_config(sub_id: int, user_id: int = 1,
                                protocol: str = "awg",
                                assigned_ip: str = "10.0.0.2") -> int:
     cfg_id = await create_config_record(sub_id, user_id, protocol=protocol, server_id=1)
-    await activate_config_slot(
+    # MD-F6: activate_config_slot now requires status='activating' (CAS).
+    # Use the public claim helper to mirror the production code path.
+    from services.database import claim_config_slot_for_activation
+    assert await claim_config_slot_for_activation(cfg_id), "claim slot failed in test setup"
+    assert await activate_config_slot(
         cfg_id, peer_name=f"peer_{cfg_id}",
         config_data="[Interface]\n...",
         server_id=1, assigned_ip=assigned_ip,
-    )
+    ), "activate_config_slot CAS failed in test setup"
     return cfg_id
 
 

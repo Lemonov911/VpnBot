@@ -15,6 +15,7 @@ type Server = {
   active_peers: number
   is_active: number
   wg_pubkey: string
+  backfilled: number   // 0/1; SQLite has no bool
   created_at: string
 }
 
@@ -250,6 +251,14 @@ export default function ServersPage() {
                         дренирован
                       </span>
                     )}
+                    {s.is_active && s.protocol === 'vless' && !s.backfilled && (
+                      <span
+                        className="text-xs px-2 py-0.5 bg-amber-900/30 text-amber-300 border border-amber-700/40 rounded-full"
+                        title="Сервер активен, но не выдаётся юзерам в подписке. Нажми Backfill чтобы провижить существующие UUID."
+                      >
+                        ⚠️ нужен backfill
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-neutral-600 mt-0.5">{s.host} · {s.agent_url}</div>
                   {s.wg_pubkey && (
@@ -288,8 +297,16 @@ export default function ServersPage() {
                     <button
                       onClick={() => backfillVless(s.id, s.name)}
                       disabled={backfilling !== null}
-                      className="text-xs px-2 py-1 rounded-md bg-neutral-800 text-neutral-400 hover:bg-[#2481cc]/20 hover:text-[#5aa6e0] disabled:opacity-50 transition-colors"
-                      title="Прокинуть multi-location пиры существующих подписок на этот сервер"
+                      className={
+                        s.backfilled
+                          ? 'text-xs px-2 py-1 rounded-md bg-neutral-800 text-neutral-400 hover:bg-[#2481cc]/20 hover:text-[#5aa6e0] disabled:opacity-50 transition-colors'
+                          // Не-backfilled VLESS-сервер не отдаётся юзерам — выделяем чтоб админ
+                          // не забыл нажать после добавления нового сервера.
+                          : 'text-xs px-2 py-1 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/50 hover:bg-amber-500/25 disabled:opacity-50 transition-colors'
+                      }
+                      title={s.backfilled
+                        ? 'Прокинуть multi-location пиры существующих подписок на этот сервер'
+                        : 'Сервер ещё не отдан юзерам — провижин существующих UUID нужен ОБЯЗАТЕЛЬНО'}
                     >
                       {backfilling === s.id ? '...' : 'Backfill'}
                     </button>

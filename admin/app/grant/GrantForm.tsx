@@ -5,17 +5,29 @@ import { useEffect, useState } from 'react'
 const API = '/admin/api'
 
 // Должно соответствовать VPN_PLANS в bot/services/plans.py.
-// Список планов сюда мы прокидываем хардкодом — клиенту достаточно
-// видеть человекочитаемые имена. Бэкенд всё равно валидирует plan_key.
+// Хардкод — клиенту достаточно видеть человекочитаемые имена; бэкенд
+// валидирует plan_key. Legacy-планы (vpn_start/popular/pro/family/1m/3m/1y)
+// тоже здесь — иначе админ не может выдать «старого друга семьи» подписку
+// на legacy-тариф который у него уже был.
 const PLANS: { key: string; label: string }[] = [
+  // v2 — основные
   { key: 'vpn_base',     label: 'База (30 дн)' },
   { key: 'vpn_max',      label: 'Макс (30 дн)' },
+  // v2 — мульти-период (multi_period=true в VPN_PLANS)
   { key: 'vpn_base_3m',  label: 'База 3 мес' },
   { key: 'vpn_base_6m',  label: 'База 6 мес' },
   { key: 'vpn_base_12m', label: 'База 1 год' },
   { key: 'vpn_max_3m',   label: 'Макс 3 мес' },
   { key: 'vpn_max_6m',   label: 'Макс 6 мес' },
   { key: 'vpn_max_12m',  label: 'Макс 1 год' },
+  // Legacy — скрыты из публичного UI, но grant'нуть можно
+  { key: 'vpn_start',    label: 'Старт (legacy, 30 дн)' },
+  { key: 'vpn_popular',  label: 'Популярный (legacy, 30 дн)' },
+  { key: 'vpn_pro',      label: 'Про (legacy, 30 дн)' },
+  { key: 'vpn_family',   label: 'Семейный (legacy, 30 дн)' },
+  { key: 'vpn_1m',       label: '1 месяц (legacy)' },
+  { key: 'vpn_3m',       label: '3 месяца (legacy)' },
+  { key: 'vpn_1y',       label: '1 год (legacy)' },
 ]
 
 type Grant = {

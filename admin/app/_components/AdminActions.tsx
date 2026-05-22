@@ -96,9 +96,58 @@ export function RefundSubButton({ subId, isStars }: { subId: number; isStars: bo
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason: 'admin manual refund', stars_refund: isStars }),
     })
+    const data = await r.json().catch(() => ({}))
     if (!r.ok) {
-      const data = await r.json().catch(() => ({}))
-      throw new Error(data.error || `HTTP ${r.status}`)
+      throw new Error((data as { error?: string; message?: string }).error
+        ?? (data as { message?: string }).message
+        ?? `HTTP ${r.status}`)
+    }
+
+    // Backend возвращает rich payload (lava manual refund, multi-charge stars,
+    // configs revoke failures). Без UI-эха админ не узнает что половина работы
+    // не сделана автоматически. alert() — простой fallback (Telegram WebView
+    // его поддерживает на десктопе и мобиле).
+    const d = data as {
+      lava_manual_refund_required?: boolean
+      lava_recurring_charges?: Array<{ tx_id: string; amount?: number }>
+      lava_cancel_attempted?: boolean
+      stars_multiple_charges?: boolean
+      stars_refunded_tx?: string | null
+      stars_original_tx?: string | null
+      configs_revoked?: number
+      configs_revoke_failed?: number
+    }
+    const warnings: string[] = []
+    if (d.lava_manual_refund_required) {
+      warnings.push(
+        '⚠️ Lava-возврат денег НЕ автоматизирован. ' +
+        'Auto-renew отключён (cancel API ' +
+        (d.lava_cancel_attempted ? 'вызван' : 'не вызван') +
+        '), но деньги нужно вернуть вручную через Lava-кабинет.',
+      )
+      if (d.lava_recurring_charges && d.lava_recurring_charges.length > 0) {
+        const txs = d.lava_recurring_charges.map(c => c.tx_id).join(', ')
+        warnings.push(`Транзакции для ручного возврата: ${txs}`)
+      }
+    }
+    if (d.stars_multiple_charges) {
+      warnings.push(
+        '⚠️ У подписки несколько Stars-платежей (upgrade-сценарий). ' +
+        `Автоматом возвращён последний: ${d.stars_refunded_tx ?? '—'}. ` +
+        `Оригинальный charge: ${d.stars_original_tx ?? '—'} — ` +
+        'проверь historic charges на странице платежей.',
+      )
+    }
+    const failed = d.configs_revoke_failed ?? 0
+    const revoked = d.configs_revoked ?? 0
+    if (failed > 0) {
+      warnings.push(
+        `⚠️ ${failed} из ${revoked + failed} конфигов не отозвались на агенте — ` +
+        'остальное подчистит фон-sync в течение часа.',
+      )
+    }
+    if (warnings.length > 0) {
+      alert(warnings.join('\n\n'))
     }
   }
   return (

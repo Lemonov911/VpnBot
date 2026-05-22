@@ -208,6 +208,26 @@ export default function VPN() {
     return () => clearInterval(interval)
   }, [pendingPayment])
 
+  // MD-F3: refresh sub when user returns to tab. The auto-renew banner /
+  // grace state can change from another device (cancel on phone → desktop
+  // tab still shows «🔁 next charge») without this hook.
+  useEffect(() => {
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible') return
+      try {
+        const fresh = await getActiveSubscription()
+        if (!mountedRef.current) return
+        setSub(fresh)
+      } catch { /* network blip — ignore */ }
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
+
   const handleBuy = async (plan: Plan, method: PayMethod, starsPeriod?: StarsPeriod, recurring?: boolean) => {
     setSheetPlan(null)
     if (buyBusyRef.current || buyLoading) return
@@ -232,7 +252,40 @@ export default function VPN() {
           buyBusyRef.current = false
           if (!mountedRef.current) return
           setBuyLoading(null)
-          if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPaid(true) }
+          if (s === 'paid') {
+            WebApp.HapticFeedback.notificationOccurred('success')
+            // MD-F7: clear pending-payment localStorage immediately on Stars
+            // success — the OxaPay/Lava-style "verifying" placeholder would
+            // otherwise linger because Stars uses a different path and our
+            // status===active cleanup useEffect runs later.
+            try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+            setPendingPayment(null)
+            // MD-F5: cross-method dedup defence. Telegram fires `paid`
+            // BEFORE our backend processes; if the user already had an
+            // active sub from another method, backend refunds the Stars.
+            // Re-fetch sub and only declare success if it matches the plan
+            // we just bought. Otherwise warn the user.
+            ;(async () => {
+              try {
+                const fresh = await getActiveSubscription()
+                if (!mountedRef.current) return
+                if (fresh && fresh.status === 'active' && fresh.plan === plan.key) {
+                  setSub(fresh)
+                  setPaid(true)
+                } else if (fresh && fresh.status === 'active') {
+                  // Already active on a different plan — likely cross-method
+                  // dedup refund. Don't claim success.
+                  setSub(fresh)
+                  WebApp.showAlert(t('vpn_already_active_refund' as never))
+                } else {
+                  setSub(fresh)
+                  setPaid(true)  // best-effort generic success
+                }
+              } catch {
+                setPaid(true)  // network blip — fall back to optimistic
+              }
+            })()
+          }
           else if (s !== 'cancelled') {
             WebApp.HapticFeedback.notificationOccurred('error')
             WebApp.showAlert(t('vpn_payment_error'))

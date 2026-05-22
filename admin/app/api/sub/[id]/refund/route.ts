@@ -17,19 +17,25 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const numId = parseInt(id, 10)
   if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
 
-  let body: unknown = {}
-  try { body = await req.json() } catch {}
+  let body: Record<string, unknown> = {}
+  try { body = (await req.json()) as Record<string, unknown> } catch {}
+  // admin_id из session — иначе audit_log получает admin_id=0 и forensics
+  // не показывает кто инициировал refund.
   const upstream = await fetch(`${BOT_API_BASE}/api/admin/sub/${numId}/refund`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, admin_id: session.userId }),
     signal: AbortSignal.timeout(15_000),
   })
-  const data = await upstream.json().catch(() => ({}))
+  const data: Record<string, unknown> = await upstream.json().catch(() => ({}))
   if (upstream.ok) {
-    // Не знаем user_id из body — пере-валидируем общие списки.
     revalidatePath('/payments')
     revalidatePath('/clients')
+    // AD-F5: backend теперь возвращает user_id — революнем и страницу клиента.
+    const uid = data?.user_id
+    if (typeof uid === 'number' && Number.isFinite(uid)) {
+      revalidatePath(`/clients/${uid}`)
+    }
   }
   return NextResponse.json(data, { status: upstream.status })
 }

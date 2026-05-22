@@ -18,10 +18,11 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const numId = parseInt(id, 10)
   if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
 
+  // admin_id из session — для audit_log forensics.
   const upstream = await fetch(`${BOT_API_BASE}/api/admin/servers/${numId}/migrate-configs`, {
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify({ admin_id: session.userId }),
     signal: AbortSignal.timeout(60_000), // миграция может занять минуты
   })
   const data = await upstream.json().catch(() => ({}))

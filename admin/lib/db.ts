@@ -43,10 +43,17 @@ export function stats() {
   // activeSubs / totalStars — деньги, фильтруем.
   const exclSubs = excludeAdminsClause('user_id')
   const users        = (d.prepare('SELECT COUNT(*) as n FROM users').get() as { n: number }).n
-  const activeSubs   = (d.prepare(`SELECT COUNT(*) as n FROM subscriptions WHERE status='active' ${exclSubs}`).get() as { n: number }).n
-  const totalStars   = (d.prepare(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE status IN ('active','expired') ${exclSubs}`).get() as { n: number }).n
+  // active + grace — оба «платящие» состояния. Раньше grace падал из счётчика
+  // и Dashboard показывал «нет подписок» когда у них всех уже throttle. Чтобы
+  // визуально различать — отдельный grace счётчик.
+  const activeSubs   = (d.prepare(`SELECT COUNT(*) as n FROM subscriptions WHERE status IN ('active','grace') ${exclSubs}`).get() as { n: number }).n
+  const graceSubs    = (d.prepare(`SELECT COUNT(*) as n FROM subscriptions WHERE status='grace' ${exclSubs}`).get() as { n: number }).n
+  // refunded_at IS NULL — иначе возвращённые суммы продолжают красоваться
+  // в «всего заработано». Фильтр статусов оставлен (active/expired) чтобы
+  // не считать недозавершённые pending sub'ы.
+  const totalStars   = (d.prepare(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE status IN ('active','expired','grace') AND refunded_at IS NULL ${exclSubs}`).get() as { n: number }).n
   const openTickets  = (d.prepare("SELECT COUNT(*) as n FROM support_tickets WHERE status='open'").get() as { n: number }).n
-  return { users, activeSubs, totalStars, openTickets }
+  return { users, activeSubs, graceSubs, totalStars, openTickets }
 }
 
 export function recentPayments(limit = 20) {
@@ -55,6 +62,7 @@ export function recentPayments(limit = 20) {
   // если фильтра нет (excl="") или если есть.
   return db().prepare(`
     SELECT s.id, s.plan, s.stars_paid, s.amount_rub, s.payment_id, s.status,
+           s.payment_provider,
            s.created_at, s.expires_at,
            u.username, u.first_name
     FROM subscriptions s
@@ -82,7 +90,7 @@ export type PaymentRow = {
 }
 
 export function allPayments(filters: {
-  method?: 'stars' | 'crypto' | 'free' | 'admin_grant'
+  method?: 'stars' | 'crypto' | 'oxapay' | 'lavatop' | 'free' | 'admin_grant' | 'trial'
   plan?: string
   days?: number          // last N days
   includeRefunds?: boolean
@@ -100,9 +108,23 @@ export function allPayments(filters: {
   const params: unknown[] = []
 
   if (method === 'crypto')           where.push("s.payment_id LIKE 'crypto_%'")
+  else if (method === 'oxapay')      where.push("s.payment_id LIKE 'oxapay_%'")
+  else if (method === 'lavatop')     where.push("s.payment_id LIKE 'lavatop_%'")
   else if (method === 'free')        where.push("s.payment_id LIKE 'free_%'")
   else if (method === 'admin_grant') where.push("s.payment_id LIKE 'admin_grant_%'")
-  else if (method === 'stars')       where.push("s.payment_id NOT LIKE 'crypto_%' AND s.payment_id NOT LIKE 'free_%' AND s.payment_id NOT LIKE 'admin_grant_%' AND s.payment_id IS NOT NULL")
+  else if (method === 'trial')       where.push("s.payment_id LIKE 'trial_%'")
+  // Stars — единственный provider без префикса. Исключаем все известные
+  // non-Stars префиксы (раньше учитывались только 3 → oxapay/lavatop/trial
+  // попадали в Stars-фильтр).
+  else if (method === 'stars')       where.push(
+    "s.payment_id NOT LIKE 'crypto_%' "
+    + "AND s.payment_id NOT LIKE 'oxapay_%' "
+    + "AND s.payment_id NOT LIKE 'lavatop_%' "
+    + "AND s.payment_id NOT LIKE 'free_%' "
+    + "AND s.payment_id NOT LIKE 'admin_grant_%' "
+    + "AND s.payment_id NOT LIKE 'trial_%' "
+    + "AND s.payment_id IS NOT NULL",
+  )
 
   if (plan) { where.push('s.plan = ?'); params.push(plan) }
   const daysNum = Math.floor(Number(days))
@@ -236,7 +258,9 @@ export function analyticsSummary() {
     users_total:          r('SELECT COUNT(*) as n FROM users'),
     users_30d:            r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-30 days')"),
     users_7d:             r("SELECT COUNT(*) as n FROM users WHERE created_at > datetime('now','-7 days')"),
-    subs_active:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status='active' ${excl}`),
+    // active + grace — оба «платящие» состояния (grace = throttle 256kbps в течение 14д
+    // после expires_at, юзер ещё считается клиентом). Совпадает с activePayingCount().
+    subs_active:          r(`SELECT COUNT(*) as n FROM subscriptions WHERE status IN ('active','grace') ${excl}`),
     subs_paid_30d:        r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan!='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
     subs_trial_30d:       r(`SELECT COUNT(*) as n FROM subscriptions WHERE plan='vpn_trial' AND created_at > datetime('now','-30 days') ${excl}`),
     revenue_stars_30d:    r(`SELECT COALESCE(SUM(stars_paid),0) as n FROM subscriptions WHERE plan!='vpn_trial' AND refunded_at IS NULL AND created_at > datetime('now','-30 days') ${excl}`),
@@ -331,9 +355,12 @@ export function topClients(limit = 50) {
            COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial' AND s.refunded_at IS NULL)                       as paid_subs,
            COUNT(s.id) FILTER (WHERE s.plan = 'vpn_trial')                        as trial_subs,
            COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' AND s.refunded_at IS NULL THEN s.stars_paid END), 0) as total_stars,
-           MAX(CASE WHEN s.status = 'active' THEN s.plan END)                     as current_plan,
+           -- active + grace: оба считаем «текущим планом». current_plan_status
+           -- даёт UI'у возможность пометить grace отдельно («подписка истекает»).
+           MAX(CASE WHEN s.status IN ('active','grace') THEN s.plan END)          as current_plan,
+           MAX(CASE WHEN s.status IN ('active','grace') THEN s.status END)        as current_plan_status,
            MAX(s.created_at)                                                       as last_purchase,
-           MAX(CASE WHEN s.status = 'active' THEN s.expires_at END)               as active_until
+           MAX(CASE WHEN s.status IN ('active','grace') THEN s.expires_at END)    as active_until
     FROM users u
     LEFT JOIN subscriptions s ON s.user_id = u.id
     WHERE 1=1 ${excl}
@@ -350,6 +377,7 @@ export function topClients(limit = 50) {
     trial_subs: number
     total_stars: number
     current_plan: string | null
+    current_plan_status: string | null
     last_purchase: string | null
     active_until: string | null
   }>

@@ -50,6 +50,23 @@ export default function Home() {
     return () => { cancelled = true }
   }, [])
 
+  // MD-F3: refresh sub/stats when user returns to tab. Other devices may
+  // have purchased / cancelled / used a slot — without this the Home
+  // header (plan badge, days_left, traffic stats) shows yesterday's state.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      getActiveSubscription().catch(() => null).then(s => { if (mountedRef.current) setSub(s) })
+      getUserStats().catch(() => null).then(s => { if (mountedRef.current) setStats(s) })
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
+
   const handleClaimTrial = async () => {
     if (busyRef.current) return
     busyRef.current = true
@@ -91,7 +108,8 @@ export default function Home() {
     return map[key] ?? key
   }
 
-  const hasStats = stats && (stats.stars_spent > 0 || stats.bonus_days > 0 || stats.invited > 0)
+  // EU-F6: RUB-paying users (CryptoBot/OxaPay/Lava) have stars_spent=0; include rub_spent in card visibility.
+  const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0 || stats.invited > 0)
 
   const quickActions = [
     {
@@ -481,7 +499,12 @@ export default function Home() {
         {hasStats && (
           <div className="fade-in grid grid-cols-3 gap-2">
             {[
-              { value: `${stats!.stars_spent} ⭐`, label: t('home_stars_spent_label'), show: stats!.stars_spent > 0 },
+              // EU-F6: prefer stars display if user has paid stars; otherwise show RUB.
+              { value: stats!.stars_spent > 0
+                  ? `${stats!.stars_spent} ⭐`
+                  : `${stats!.rub_spent ?? 0} ₽`,
+                label: t('home_stars_spent_label'),
+                show: stats!.stars_spent > 0 || (stats!.rub_spent ?? 0) > 0 },
               // Используем plural — даёт правильное «+12 дней» / «+1 день» / «+2 дня».
               // Без пробела между числом и единицей выглядело как «+12дн.»
               { value: `+${p(stats!.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}`,

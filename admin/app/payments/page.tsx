@@ -22,18 +22,23 @@ function fmtDate(iso: string) {
 
 function MethodPill({ method, refunded, adminId }: { method: string; refunded: boolean; adminId: number | null }) {
   if (refunded) return <span className="text-rose-400">↶ refund</span>
-  if (method === 'crypto')      return <span className="text-emerald-400">💎 CryptoBot</span>
-  if (method === 'admin_grant') return (
+  // Сопоставляем как канонические provider-имена (allPayments возвращает их
+  // в `method` через COALESCE), так и legacy-значения из старого кода.
+  if (method === 'cryptobot' || method === 'crypto') return <span className="text-emerald-400">💎 CryptoBot</span>
+  if (method === 'oxapay')      return <span className="text-amber-400">💰 OxaPay</span>
+  if (method === 'lavatop')     return <span className="text-sky-400">💳 Lava</span>
+  if (method === 'admin_grant' || method === 'gift') return (
     <span className="text-fuchsia-400" title={adminId ? `выдал admin #${adminId}` : 'admin grant'}>
       🎁 admin{adminId ? ` #${adminId}` : ''}
     </span>
   )
+  if (method === 'trial')       return <span className="text-neutral-400">🎁 Trial</span>
   if (method === 'free')        return <span className="text-neutral-500">🎁 gift</span>
   return <span className="text-yellow-400">⭐ Stars</span>
 }
 
 type Filters = {
-  method?: 'stars' | 'crypto' | 'free' | 'admin_grant'
+  method?: 'stars' | 'crypto' | 'oxapay' | 'lavatop' | 'free' | 'admin_grant' | 'trial'
   plan?: string
   days?: number
   hideRefunds?: boolean
@@ -42,7 +47,8 @@ type Filters = {
 function parseFilters(sp: Record<string, string | string[] | undefined>): Filters {
   const f: Filters = {}
   const m = sp.method
-  if (m === 'stars' || m === 'crypto' || m === 'free' || m === 'admin_grant') f.method = m
+  if (m === 'stars' || m === 'crypto' || m === 'oxapay' || m === 'lavatop'
+    || m === 'free' || m === 'admin_grant' || m === 'trial') f.method = m
   if (typeof sp.plan === 'string' && PLAN_NAMES[sp.plan]) f.plan = sp.plan
   if (typeof sp.days === 'string') {
     const d = parseInt(sp.days, 10)
@@ -143,7 +149,10 @@ export default async function Payments({
           <FilterChip label="Все"        href={buildHref(filters, { method: undefined })} active={!filters.method} />
           <FilterChip label="⭐ Stars"    href={buildHref(filters, { method: 'stars' })}   active={filters.method === 'stars'} />
           <FilterChip label="💎 Crypto"   href={buildHref(filters, { method: 'crypto' })}  active={filters.method === 'crypto'} />
+          <FilterChip label="💰 OxaPay"   href={buildHref(filters, { method: 'oxapay' })}  active={filters.method === 'oxapay'} />
+          <FilterChip label="💳 Lava"     href={buildHref(filters, { method: 'lavatop' })} active={filters.method === 'lavatop'} />
           <FilterChip label="🎁 Admin"    href={buildHref(filters, { method: 'admin_grant' })} active={filters.method === 'admin_grant'} />
+          <FilterChip label="🎁 Trial"    href={buildHref(filters, { method: 'trial' })}   active={filters.method === 'trial'} />
           <FilterChip label="🎁 Free"     href={buildHref(filters, { method: 'free' })}    active={filters.method === 'free'} />
         </div>
         <div className="flex flex-wrap items-center gap-2">

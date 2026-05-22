@@ -271,6 +271,38 @@ async def on_successful_payment(message: Message, bot: Bot):
     payment = message.successful_payment
     payload = payment.invoice_payload
 
+    # EU-F1/F8: ban gate. Telegram recurring charges skip pre_checkout_query
+    # — a user banned mid-subscription would still get successful_payment
+    # callbacks. Refund the Stars charge + alert admin.
+    user_id = message.from_user.id
+    from services.database import is_user_banned as _is_banned_stars
+    if await _is_banned_stars(user_id):
+        logger.warning(
+            "Stars successful_payment from banned user=%d charge=%s payload=%s",
+            user_id, payment.telegram_payment_charge_id, payload,
+        )
+        try:
+            await message.bot.refund_star_payment(
+                user_id, payment.telegram_payment_charge_id,
+            )
+        except Exception as e:
+            logger.error("Stars refund for banned user failed: %s", e, exc_info=True)
+        try:
+            from config import ADMIN_ID as _ADMIN_ID_BAN
+            if _ADMIN_ID_BAN:
+                await message.bot.send_message(
+                    _ADMIN_ID_BAN,
+                    f"🚨 <b>Stars charge from banned user</b>\n\n"
+                    f"User: <code>{user_id}</code>\n"
+                    f"Payload: <code>{payload}</code>\n"
+                    f"Charge: <code>{payment.telegram_payment_charge_id}</code>\n\n"
+                    "Refund attempted via refund_star_payment.",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+        return
+
     # eSIM — отдельный обработчик
     if payload.startswith("esim:"):
         await _deliver_esim(message, bot, payment)

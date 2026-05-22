@@ -1376,8 +1376,43 @@ async def activate_config_slot(config_id: int, peer_name: str,
                                 config_data: str, server_id: int | None = None,
                                 wg_pubkey: str | None = None,
                                 assigned_ip: str | None = None,
-                                vless_uuid: str | None = None):
-    """Переводит слот empty → active, записывает конфиг и сервер."""
+                                vless_uuid: str | None = None) -> bool:
+    """Переводит слот activating → active, записывает конфиг и сервер.
+
+    MD-F6: atomic CAS — WHERE id=? AND status='activating'. If another
+    worker (admin force-revoke, scheduler grace-cleanup, etc.) reset the
+    slot between claim_config_slot_for_activation() and this call, the
+    UPDATE matches 0 rows and we return False. Caller is responsible for
+    cleaning up the orphan peer on the agent in that case.
+
+    Returns True if the slot was successfully promoted to active, False if
+    the slot was no longer in 'activating' state (mid-provision reset).
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            """UPDATE configs
+               SET peer_name=?, config_data=?, server_id=?, wg_pubkey=?,
+                   assigned_ip=?, vless_uuid=?, status='active'
+               WHERE id=? AND status='activating'""",
+            (peer_name, config_data, server_id, wg_pubkey, assigned_ip, vless_uuid, config_id),
+        )
+        await db.commit()
+        return (cur.rowcount or 0) > 0
+
+
+async def migrate_config_slot(config_id: int, peer_name: str,
+                                config_data: str, server_id: int | None = None,
+                                wg_pubkey: str | None = None,
+                                assigned_ip: str | None = None,
+                                vless_uuid: str | None = None) -> None:
+    """Re-points an already-active slot to a new server / peer (server migration).
+
+    Same column updates as activate_config_slot but WITHOUT the
+    `status='activating'` CAS — the slot is already 'active' and we're
+    just swapping the underlying peer/server. Used only by
+    handle_admin_migrate_configs when an admin force-migrates configs off
+    a dying server.
+    """
     async with _connect() as db:
         await db.execute(
             """UPDATE configs
@@ -2757,7 +2792,7 @@ async def get_relevant_vless_subscription(user_id: int) -> dict | None:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT id, plan, status, expires_at
+            SELECT id, plan, status, expires_at, reminded_quota_throttled
             FROM subscriptions
             WHERE user_id=? AND status IN ('active', 'grace')
             ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
@@ -3297,17 +3332,33 @@ async def rollback_referral_bonus(refunded_sub_id: int) -> tuple[int, int] | Non
                 )
             else:
                 # Decrement только если target sub ещё active/grace.
-                # Если target expired/refunded — дни уже «сгорели», ничего не делаем.
+                # EU-F5 fix: раньше «дни сгорали» если target expired/refunded
+                # — реферрер терял redeem-кредит безвозвратно. Теперь если
+                # UPDATE задел 0 строк, возвращаем дни в банк (ref_bonus_days):
+                # реферрер хотя бы сможет redeem'нуть их на следующую покупку.
                 # NULL guard: datetime(NULL, '-N days') = NULL → write обнулит
                 # expires_at, превратив sub в бессрочную. Добавляем
                 # `expires_at IS NOT NULL` в WHERE — если legacy-row без даты,
                 # вычитать просто нечего.
-                await db.execute(
+                dec_cur = await db.execute(
                     "UPDATE subscriptions SET expires_at=datetime(expires_at, ?) "
                     "WHERE id=? AND status IN ('active', 'grace') "
                     "AND expires_at IS NOT NULL",
                     (f"-{days} days", target_sub_id),
                 )
+                if dec_cur.rowcount == 0:
+                    # Target sub no longer active (expired/refunded mid-flight)
+                    # или legacy-row без expires_at. Возвращаем дни в банк,
+                    # чтобы они не исчезли в пустоте.
+                    await db.execute(
+                        "UPDATE users SET ref_bonus_days = ref_bonus_days + ? WHERE id=?",
+                        (days, referrer_id),
+                    )
+                    logger.warning(
+                        "rollback_referral_bonus: target sub #%d not active/missing expires_at, "
+                        "returned days=%d to bank for referrer=%d",
+                        target_sub_id, days, referrer_id,
+                    )
         else:
             # Бонус в банке pending → вычитаем оттуда
             await db.execute(

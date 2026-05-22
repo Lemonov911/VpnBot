@@ -19,9 +19,11 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const numId = parseInt(id, 10)
   if (!Number.isFinite(numId)) return NextResponse.json({ error: 'invalid id' }, { status: 400 })
 
+  // admin_id из session — для audit_log forensics.
   const upstream = await fetch(`${BOT_API_BASE}/api/admin/tickets/${numId}/close`, {
     method: 'POST',
-    headers: { 'X-Admin-Secret': ADMIN_API_SECRET },
+    headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ admin_id: session.userId }),
     signal: AbortSignal.timeout(15_000),
   })
   const data = await upstream.json().catch(() => ({}))

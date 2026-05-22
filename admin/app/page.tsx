@@ -47,10 +47,23 @@ function planName(key: string) {
   return map[key] ?? key
 }
 
-function payMethod(paymentId: string) {
+function payMethod(paymentId: string | null, provider: string | null) {
+  // DB-stored payment_provider — canonical when populated (новые платежи).
+  // Префикс payment_id — фолбэк для legacy-строк без provider.
+  if (provider === 'lavatop')   return '💳 Lava'
+  if (provider === 'oxapay')    return '💰 OxaPay'
+  if (provider === 'cryptobot') return '💎 CryptoBot'
+  if (provider === 'gift')      return '🎁 Подарок админа'
+  if (provider === 'trial')     return '🎁 Trial'
+  if (provider === 'free')      return '🎁 Бесплатно'
+  if (provider === 'stars')     return '⭐ Stars'
   if (!paymentId) return '—'
-  if (paymentId.startsWith('crypto_')) return '💎 Крипто'
-  if (paymentId.startsWith('free_')) return '🎁 Бесплатно'
+  if (paymentId.startsWith('crypto_'))      return '💎 CryptoBot'
+  if (paymentId.startsWith('oxapay_'))      return '💰 OxaPay'
+  if (paymentId.startsWith('lavatop_'))     return '💳 Lava'
+  if (paymentId.startsWith('admin_grant_')) return '🎁 Подарок админа'
+  if (paymentId.startsWith('trial_'))       return '🎁 Trial'
+  if (paymentId.startsWith('free_'))        return '🎁 Бесплатно'
   return '⭐ Stars'
 }
 
@@ -72,7 +85,10 @@ export default async function Dashboard() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Пользователей"      value={s.users} />
-        <StatCard label="Активных подписок"  value={s.activeSubs} />
+        <StatCard
+          label="Активных подписок"
+          value={s.graceSubs > 0 ? `${s.activeSubs} (${s.graceSubs} grace)` : s.activeSubs}
+        />
         <StatCard label="Stars заработано"   value={`⭐ ${s.totalStars}`} />
         <StatCard label="Тикетов открыто"    value={s.openTickets} warn={s.openTickets > 0} />
       </div>
@@ -121,7 +137,7 @@ export default async function Dashboard() {
                   <div className="text-sm font-medium truncate">
                     {p.first_name}{p.username ? ` @${p.username}` : ''}
                   </div>
-                  <div className="text-xs text-neutral-500">{planName(p.plan)} · {payMethod(p.payment_id)}</div>
+                  <div className="text-xs text-neutral-500">{planName(p.plan)} · {payMethod(p.payment_id, p.payment_provider)}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-sm font-semibold">

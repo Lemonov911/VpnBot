@@ -33,9 +33,14 @@ export async function GET() {
 
   const db = writeDb()
   // `status` колонки в servers нет (не в migration). is_active — главный флаг.
+  // backfilled — выставляется handle_admin_vless_backfill после успешной
+  // мультилокационной репликации. VLESS-сервер с backfilled=0 не отдаётся
+  // юзерам в /sub/ URL (active_vless_servers фильтрует) — админ должен
+  // нажать Backfill, чтобы провижить существующие UUID. UI рисует warning-
+  // бэйдж пока этого не сделано.
   const servers = db.prepare(`
     SELECT id, name, flag, city, host, agent_url, protocol,
-           capacity, active_peers, is_active, wg_pubkey, created_at
+           capacity, active_peers, is_active, wg_pubkey, backfilled, created_at
     FROM servers ORDER BY created_at DESC
   `).all()
   db.close()

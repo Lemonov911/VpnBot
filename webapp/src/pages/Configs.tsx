@@ -475,6 +475,23 @@ export default function Configs() {
 
   useEffect(() => { load() }, [load])
 
+  // MD-F1: refresh on tab return. Other devices may have claimed/revoked
+  // slots while we were away — without this, the UI shows stale rows and
+  // any optimistic action races the actual backend state.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !document.hidden) {
+        load()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [load])
+
   const handleClaimTrial = async () => {
     if (claimBusyRef.current) return
     claimBusyRef.current = true
@@ -497,13 +514,24 @@ export default function Configs() {
   // so we match both the literal `HTTP 409` suffix и текстовые маркеры от бэка.
   const isConflictError = (msg: string): boolean => {
     if (!msg) return false
+    const lc = msg.toLowerCase()
     return (
-      msg.includes('409') ||
-      msg.includes('already') ||
-      msg.includes('claimed') ||
-      msg.includes('slot_already') ||
-      msg.includes('config_already') ||
-      msg.includes('conflict')
+      lc.includes('409') ||
+      lc.includes('already') ||
+      lc.includes('claimed') ||
+      lc.includes('slot_already') ||
+      lc.includes('config_already') ||
+      lc.includes('conflict') ||
+      // MD-F2: more cross-device divergence signals from the backend.
+      // `slot_not_active` / `slot_bad_status` come from revoke/activate
+      // when another tab already mutated the slot. Generic `not_active`
+      // catches sub-level mismatches. `400` is the most common status code
+      // for cross-device state divergence (slot empty when expected active,
+      // etc.) — refreshing is the right reaction.
+      lc.includes('slot_not_active') ||
+      lc.includes('slot_bad_status') ||
+      lc.includes('not_active') ||
+      lc.includes('400')
     )
   }
 
