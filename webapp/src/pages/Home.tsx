@@ -319,6 +319,11 @@ export default function Home() {
                           {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}</>
                       )}
                     </div>
+                    {sub.pending_plan && sub.pending_plan !== sub.plan && (
+                      <div className="text-[10px] text-warning mt-0.5 font-medium">
+                        ⏳ {t('home_pending_next' as never)} {planLabel(sub.pending_plan)}
+                      </div>
+                    )}
                     <div className="flex-1 min-h-[20px]" />
                     <button
                       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/vpn') }}
@@ -393,6 +398,11 @@ export default function Home() {
                               {sub.expires_at && <> · {t('home_until')} {formatNiceDate(sub.expires_at, lang)}</>}</>
                           )}
                         </div>
+                        {sub.pending_plan && sub.pending_plan !== sub.plan && (
+                          <div className="text-[11px] text-warning mt-1 font-medium">
+                            ⏳ {t('home_pending_next' as never)} {planLabel(sub.pending_plan)}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>

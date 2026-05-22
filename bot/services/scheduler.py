@@ -448,11 +448,31 @@ async def _process_expired_subscriptions(bot: Bot):
                     "(status=%s), rolling back",
                     sub_id, cur_status,
                 )
+            # Await вместо _spawn_bg: если unthrottle падает (агент 500/timeout),
+            # мы должны увидеть это в логах и alert'нуть админа. Fire-and-forget
+            # терял ошибки → paying user мог зависнуть на slow speed навсегда
+            # (scheduler уже не возьмёт sub: expires_at в будущем, status=active).
             from services.grace import unthrottle_sub_configs
-            _spawn_bg(
-                unthrottle_sub_configs(sub_id, user_id, plan_key),
-                name=f"rollback_throttle_sub{sub_id}",
-            )
+            try:
+                await unthrottle_sub_configs(sub_id, user_id, plan_key)
+            except Exception as e:
+                logger.error(
+                    "rollback unthrottle sub #%d FAILED: %s — user may be stuck on slow tier",
+                    sub_id, e, exc_info=True,
+                )
+                try:
+                    from config import ADMIN_ID
+                    if ADMIN_ID and bot is not None:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            f"⚠️ <b>Throttle rollback failed</b>\n\n"
+                            f"sub #{sub_id} user {user_id}: paying user остался "
+                            f"на slow tier. Ручная проверка throttle на агенте.\n\n"
+                            f"<code>{html_escape(str(e))}</code>",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
             continue
         logger.info("Подписка #%d → grace (до %s)", sub_id, grace_until[:10])
 

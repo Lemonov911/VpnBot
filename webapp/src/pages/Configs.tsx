@@ -7,7 +7,7 @@ import {
   getActiveSubscription,
   type VpnConfig, type VpnServer, type TrialStatus, type Subscription,
 } from '../api'
-import { useT, useLang, type TKey } from '../i18n'
+import { useT, useLang, usePlural, type TKey } from '../i18n'
 import { copyText } from '../utils/clipboard'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
 import { InitDataGate } from '../components/InitDataGate'
@@ -434,6 +434,7 @@ type RawSlot = VpnConfig & { slot_num: number; subscription_id: number }
 export default function Configs() {
   const t = useT()
   const { lang } = useLang()
+  const p = usePlural()
   const nav = useNavigate()
 
   const [slots,    setSlots]    = useState<RawSlot[]>([])
@@ -635,6 +636,14 @@ export default function Configs() {
         >
           <div className="font-medium text-[var(--tg-theme-text-color)]">{t('configs_grace_title' as never)}</div>
           <div className="text-sm opacity-80 mt-1 text-[var(--tg-theme-hint-color)]">{t('configs_grace_sub' as never)}</div>
+          {sub.grace_until && (
+            <div className="text-xs opacity-70 mt-1.5 text-[var(--tg-theme-hint-color)]">
+              {t('configs_grace_until' as never)}: {formatDate(sub.grace_until, lang)}
+              {typeof sub.grace_days_left === 'number' && sub.grace_days_left > 0 && (
+                <> · {p(sub.grace_days_left, { ru: [t('configs_grace_days_left_1' as never), t('configs_grace_days_left_2' as never), t('configs_grace_days_left_5' as never)], en: [t('configs_grace_days_left_1' as never), t('configs_grace_days_left_2' as never)] })}</>
+              )}
+            </div>
+          )}
         </button>
       )}
 
