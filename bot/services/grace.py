@@ -99,6 +99,10 @@ async def try_renew_from_grace(
         "renew_from_grace: user=%d sub=%d plan=%s method=%s",
         user_id, sub_id, plan_key, method,
     )
+    # Audit F5: cache invalidate — grace→active. Без этого Mini App до 2с
+    # после оплаты всё ещё рисует «🐢 эконом-режим» баннер.
+    from services.sub_cache import invalidate as _inv_sub_cache
+    _inv_sub_cache(user_id)
 
     # Unthrottle на агенте — AWG-tc снять, VLESS-grace вернуть в normal inbound.
     await unthrottle_sub_configs(sub_id, user_id, plan_key)

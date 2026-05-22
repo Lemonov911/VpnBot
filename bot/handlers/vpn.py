@@ -425,6 +425,10 @@ async def _handle_stars_renewal(message: Message, bot: Bot, payment, plan: dict,
     # renewal webhook'а оба прочитали бы stale expires_at и второй overwrite'ил
     # бы первого (lost update).
     extended = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
+    # Audit F10: cache invalidate — Stars renewal изменил expires_at (и возможно
+    # status grace→active). Без этого Mini App до 2с показывает grace-banner.
+    from services.sub_cache import invalidate as _inv_sub_cache_renew
+    _inv_sub_cache_renew(user_id)
     if extended is None:
         # Sub перешла в expired до нашего extend (TOCTOU со scheduler'ом).
         # Fallback: обрабатываем как первый платёж — создаём новую sub.
@@ -590,6 +594,11 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
     if sub_id is None:
         logger.info("Дубль платежа %s проскочил TOCTOU (UNIQUE сработал), user %d", payment_id, user_id)
         return
+
+    # Audit F10: cache invalidate after Stars purchase — без этого юзер до 2с
+    # после оплаты видит «нет подписки», может попробовать оплатить второй раз.
+    from services.sub_cache import invalidate as _inv_sub_cache
+    _inv_sub_cache(user_id)
 
     # FFF7: Close any active trial IMMEDIATELY — before scheduler can revoke
     # trial peers (or transition them into grace) while we're still mid-provision.
@@ -773,6 +782,9 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
                 await mark_subscription_refunded(sub_id)
             else:
                 await mark_subscription_expired(sub_id)
+            # Audit F5/F10: cache invalidate — provision-fail откатил sub.
+            from services.sub_cache import invalidate as _inv_sub_cache_fail
+            _inv_sub_cache_fail(user_id)
         except Exception as e:
             logger.error("Mark sub failed sub=%d: %s", sub_id, e, exc_info=True)
         msg = (

@@ -230,6 +230,9 @@ async def _process_expired_subscriptions(bot: Bot):
                     sub_id, plan_key, log_prefix=f"late-expire sub#{sub_id}",
                 )
                 await mark_subscription_expired(sub_id)
+                # Audit F5: cache invalidate чтобы Mini App сразу увидел expired.
+                from services.sub_cache import invalidate as _inv_sub_cache
+                _inv_sub_cache(user_id)
                 # Уведомление юзеру
                 _lang = await get_user_lang(user_id)
                 await _send_throttled(
@@ -414,6 +417,10 @@ async def _process_expired_subscriptions(bot: Bot):
         # revoke лишних слотов прошёл первым (crash-safe ordering).
 
         transitioned = await mark_subscription_grace(sub_id, grace_until)
+        if transitioned:
+            # Audit F5: invalidate cache чтобы Mini App быстрее показал grace-banner.
+            from services.sub_cache import invalidate as _inv_sub_cache
+            _inv_sub_cache(user_id)
         if not transitioned:
             # Race: status уже не active ИЛИ expires_at был отодвинут в
             # будущее пока мы throttle'или peers. Возможные сценарии:
@@ -496,6 +503,9 @@ async def _process_grace_expired_subscriptions(bot: Bot):
                 sub_id,
             )
             continue
+        # Audit F5: cache invalidate — grace→expired.
+        from services.sub_cache import invalidate as _inv_sub_cache
+        _inv_sub_cache(user_id)
 
         configs = await get_configs_for_subscription(sub_id)
 
@@ -594,6 +604,9 @@ async def _reconcile_partial_refunds(bot: Bot) -> None:
                     await mark_subscription_trial_rolled_back(sub_id)
                 else:
                     await mark_subscription_refunded(sub_id)
+                # Audit F5: cache invalidate after refund reconcile.
+                from services.sub_cache import invalidate as _inv_sub_cache
+                _inv_sub_cache(sub["user_id"])
                 await rollback_referral_bonus(sub_id)
 
                 # Lava cancel: если recurring, отвязываем контракт чтобы
@@ -755,6 +768,9 @@ async def _process_expired_trials(bot: Bot):
                 await reset_config_slot(cfg_id)
 
             await mark_subscription_expired(sub_id)
+            # Audit F5: cache invalidate — trial expired.
+            from services.sub_cache import invalidate as _inv_sub_cache
+            _inv_sub_cache(user_id)
             logger.info("Триал #%d → expired (user=%d)", sub_id, user_id)
 
             _lang = await get_user_lang(user_id)

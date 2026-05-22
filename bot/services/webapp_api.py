@@ -659,21 +659,10 @@ _change_rate:   dict[str, float] = {}  # /api/vpn/subscription/change
 _ticket_rate:   dict[str, float] = {}  # /api/support/ticket
 _trial_rate:    dict[str, float] = {}  # /api/vpn/trial/claim
 _admin_rate:    dict[str, float] = {}  # /api/admin/* — брутфорс-защита
-# Per-user in-memory cache for /api/vpn/subscription. Кешируем готовый payload
-# на 2 секунды — UI polls 8s + multi-tab + BottomNav refocus легко выдают
-# 5-10 rps на пиковый момент; кеш режет DB-нагрузку до 1 запроса/2с/юзер и
-# полностью убирает мигание «тарифа нет» при быстром переключении вкладок
-# (раньше 429 → frontend ловил error → renders empty state).
-# Bot — single-replica, поэтому простой dict, без Redis.
-_vpn_sub_cache: dict[int, tuple[float, dict | None]] = {}
-_VPN_SUB_TTL = 2.0  # seconds
-
-
-def _invalidate_vpn_sub_cache(user_id: int) -> None:
-    """Сбросить кеш подписки для юзера — вызывать из любой мутации
-    (activate/revoke/change-plan/trial-claim/cancel-renewal/payment-webhook),
-    чтобы следующий GET вернул свежий payload а не stale-данные до 2 секунд."""
-    _vpn_sub_cache.pop(user_id, None)
+# Кеш /api/vpn/subscription вынесен в services/sub_cache.py — чтобы
+# scheduler/grace/handlers могли инвалидировать ту же instance без circular imports.
+from services import sub_cache as _sub_cache_mod
+_invalidate_vpn_sub_cache = _sub_cache_mod.invalidate
 
 async def handle_public_status(request: web.Request) -> web.Response:
     """Публичный статус всех сервисов. Без auth — для status-страницы.
@@ -1590,6 +1579,10 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         logger.info("CryptoBot: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
 
+    # Audit F4: инвалидируем sub-cache сразу после create_subscription,
+    # иначе юзер до 2с видит «нет подписки» и может оплатить второй раз.
+    _invalidate_vpn_sub_cache(user_id)
+
     order_id = await create_order(
         user_id=user_id,
         product_type="vpn",
@@ -1920,6 +1913,9 @@ async def handle_oxapay_webhook(request: web.Request) -> web.Response:
     if sub_id is None:
         logger.info("OxaPay: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
+
+    # Audit F4: cache invalidate after sub creation.
+    _invalidate_vpn_sub_cache(user_id)
 
     order_db_id = await create_order(
         user_id=user_id, product_type="vpn", plan=plan_key,
@@ -2367,6 +2363,8 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         # чтобы избежать race со scheduler'ом между чтением и записью.
         # None = sub уже expired (webhook пришёл слишком поздно) — не воскрешаем.
         was_grace = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
+        # Audit F4/F5: cache invalidate после изменения expires_at и/или status.
+        _invalidate_vpn_sub_cache(up_user_id)
 
         if was_grace is None:
             # FFF3: либо sub уже expired (webhook поздний), либо юзер отменил
@@ -2690,6 +2688,9 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
     if sub_id is None:
         logger.info("Lava: payment %s TOCTOU-duplicate, ignored", payment_id)
         return web.Response(status=200)
+
+    # Audit F4: cache invalidate after fresh Lava sub creation.
+    _invalidate_vpn_sub_cache(user_id)
 
     order_db_id = await create_order(
         user_id=user_id, product_type="vpn", plan=plan_key,
@@ -3091,18 +3092,13 @@ async def handle_vpn_subscription(request: web.Request) -> web.Response:
 
     uid = user["id"]
     now_mono = _time.monotonic()
-    cached = _vpn_sub_cache.get(uid)
-    if cached is not None and now_mono - cached[0] < _VPN_SUB_TTL:
-        return web.json_response(cached[1])
+    hit, cached_payload = _sub_cache_mod.get(uid, now_mono)
+    if hit:
+        return web.json_response(cached_payload)
 
     payload = await _build_vpn_subscription_payload(uid)
-    _vpn_sub_cache[uid] = (now_mono, payload)
-    # Lazy eviction — keep dict bounded under churn (10K active users edge case).
-    if len(_vpn_sub_cache) > 5000:
-        cutoff = now_mono - 60.0
-        for k in list(_vpn_sub_cache.keys()):
-            if _vpn_sub_cache[k][0] < cutoff:
-                del _vpn_sub_cache[k]
+    _sub_cache_mod.put(uid, now_mono, payload)
+    _sub_cache_mod.evict_stale(now_mono)
     return web.json_response(payload)
 
 
@@ -4444,6 +4440,8 @@ async def handle_admin_sub_extend(request: web.Request) -> web.Response:
     updated = await extend_subscription(sub_id, days)
     if updated is None:
         return web.json_response({"error": "sub not found"}, status=404)
+    # Audit F6: cache invalidate after admin extend (expires_at + maybe grace→active).
+    _invalidate_vpn_sub_cache(updated["user_id"])
 
     was_grace = updated.pop("_was_grace", False)
 
@@ -4587,6 +4585,9 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
         await mark_subscription_trial_rolled_back(sub_id)
     else:
         await mark_subscription_refunded(sub_id)
+    # Audit F6: cache invalidate — без этого юзер до 2с видит sub как active
+    # после refund'а, может попытаться activate/change-plan, поймает 400.
+    _invalidate_vpn_sub_cache(sub["user_id"])
     # Откат реф-бонуса если он был начислен на эту подписку.
     # Для trial это no-op (trial не даёт реф-бонус), но вызов безвреден.
     await rollback_referral_bonus(sub_id)
@@ -4918,6 +4919,11 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("admin_grant failed: %s", e, exc_info=True)
         return web.json_response({"error": f"internal: {e}"}, status=500)
+
+    # Audit F7: cache invalidate — без этого юзер открывший Mini App до 2с
+    # после grant'а видит «нет подписки» и может оплатить второй раз
+    # (cross-method duplicate, manual refund для разрулить).
+    _invalidate_vpn_sub_cache(target_id)
 
     # Если extend поднял sub из grace — снять throttle на агентах (AWG tc +
     # VLESS inbound). Без этого DB показывает active, а пиры остаются на
