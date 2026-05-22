@@ -43,7 +43,6 @@ from services.database import (
     get_servers_by_protocol,
     update_server_peer_count,
     update_config_traffic,
-    get_config_id_by_vless_uuid,  # legacy, single-server lookup
     get_config_id_by_vless_uuid_and_server,
     get_active_vless_uuids_by_server,
     get_active_vless_configs_with_plan,
