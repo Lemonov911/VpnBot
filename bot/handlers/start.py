@@ -67,6 +67,7 @@ def _main_menu(
     start_param: str = "",
     trial_eligible: bool = False,
     lang: str | None = None,
+    trial_days: int = TRIAL_DAYS,
 ) -> InlineKeyboardMarkup:
     from services.i18n_bot import t as _t, day_word as _day_word
     buttons: list[list[InlineKeyboardButton]] = []
@@ -74,12 +75,14 @@ def _main_menu(
     # Триал — самый верх меню для тех кому он доступен. Это first-screen
     # call-to-action, выводит юзера в активацию за один клик без захода в
     # Mini App.
+    # trial_days передаётся снаружи (3 для обычного юзера, 7 для referred) —
+    # должно совпасть с тем что юзер увидит в greeting'е и реально получит.
     if trial_eligible:
         buttons.append([
             InlineKeyboardButton(
                 text=_t(
                     lang, "bot_btn_try_free",
-                    days=TRIAL_DAYS, day_word=_day_word(lang, TRIAL_DAYS),
+                    days=trial_days, day_word=_day_word(lang, trial_days),
                 ),
                 callback_data="trial:claim",
             )
@@ -168,10 +171,16 @@ async def cmd_start(message: Message):
     trial_eligible = await can_claim_trial(user_id)
 
     from services.i18n_bot import day_word as _day_word
+    from services.trial import trial_days_for
+    # trial_days_for(user_id): для referred-юзеров возвращает 7, для остальных — 3.
+    # Hard-coded TRIAL_DAYS=3 ниже игнорировал реферал-бонус, и юзер пришедший
+    # по ссылке видел «3 дня бесплатно» вместо обещанных 7. Используется и в
+    # greeting'е, и в кнопке «Попробуй бесплатно» через _main_menu(trial_days=...).
+    td = await trial_days_for(user_id) if trial_eligible else TRIAL_DAYS
     if trial_eligible:
         text = _t(
             user_lang, "bot_start_greeting_with_trial",
-            trial_days=TRIAL_DAYS, day_word=_day_word(user_lang, TRIAL_DAYS),
+            trial_days=td, day_word=_day_word(user_lang, td),
         )
     elif WEBAPP_URL:
         # Текст подстраивается под feature flag — если eSIM скрыт, не упоминаем
@@ -196,6 +205,7 @@ async def cmd_start(message: Message):
         text,
         reply_markup=_main_menu(
             start_param, trial_eligible=trial_eligible, lang=user_lang,
+            trial_days=td,
         ),
         parse_mode="HTML",
     )
