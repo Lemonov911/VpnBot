@@ -343,7 +343,9 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
     import uuid as _uuid
     from urllib.parse import quote as _q
 
-    from services.database import get_configs_for_subscription
+    # get_configs_for_subscription() фильтрует status='active' — нам нужны empty.
+    # Используем by_protocol-вариант: возвращает все статусы, empty в начале.
+    from services.database import get_configs_for_subscription_by_protocol
     from services.plans import vless_service_for_plan
 
     vless_servers = await get_all_active_servers("vless")
@@ -351,8 +353,8 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
         logger.warning("bootstrap_vless: no active VLESS servers, sub=%d skipped", sub_id)
         return 0
 
-    cfgs = await get_configs_for_subscription(sub_id)
-    empty_vless = [c for c in cfgs if c["protocol"] == "vless" and c["status"] == "empty"]
+    cfgs = await get_configs_for_subscription_by_protocol(sub_id, "vless")
+    empty_vless = [c for c in cfgs if c["status"] == "empty"]
     if not empty_vless:
         # Уже бутстраплено ранее (idempotency: повторный вызов = no-op)
         # ИЛИ план без VLESS-слотов вообще (vpn_start) — не наша проблема.
