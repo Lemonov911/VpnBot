@@ -1376,8 +1376,19 @@ async def _admin_grant_subscription_locked(
         # активирует через Mini App.
         for _ in range(plan.get("awg_slots", 0)):
             await create_config_record(sub_id, target_user_id, protocol="awg")
-        for _ in range(plan.get("vless_slots", 0)):
-            await create_config_record(sub_id, target_user_id, protocol="vless")
+        # VLESS — multi-location pattern: один users.vless_uuid × N active серверов.
+        # `plan.vless_slots` — marketing-метрика ("до N устройств"), реальный sub_url
+        # строится по active VLESS-серверам. Если plan_slots > N_servers, лишние
+        # пустые rows никогда не заполняются (bootstrap создаёт 1 peer / server,
+        # _resolve_vless_urls тоже работает по серверам, не slot'ам). Поэтому
+        # pre-create только min(plan_slots, N_servers) rows — bootstrap_vless_for_sub
+        # потом заполнит peer'ы. Если N_servers == 0 — создаём 0, bootstrap no-op'нет.
+        plan_vless = plan.get("vless_slots", 0)
+        if plan_vless > 0:
+            active_vless = await get_all_active_servers("vless")
+            n_vless_rows = min(plan_vless, len(active_vless))
+            for _ in range(n_vless_rows):
+                await create_config_record(sub_id, target_user_id, protocol="vless")
         for _ in range(plan.get("wg_slots", 0)):
             await create_config_record(sub_id, target_user_id, protocol="wg")
 

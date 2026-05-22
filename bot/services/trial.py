@@ -493,6 +493,26 @@ async def _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _q) -> int:
     logger.info("bootstrap_vless: sub=%d user=%d provisioned %d/%d VLESS peers (tier=%s)",
                 sub_id, user_id, provisioned, target_count, tier_svc)
 
+    # Collapse excess empty VLESS-rows. Историческое legacy: admin_grant и
+    # _deliver_vpn создавали `plan.vless_slots` пустых rows (например 5 для
+    # vpn_max), но _resolve_vless_urls строит sub_url из ОДНОГО `users.vless_uuid`
+    # × N active VLESS-серверов. Если slots > servers, лишние пустые rows
+    # никогда не активируются (юзеру в Mini App «VLESS slot 3/5» без сервера),
+    # а sub-URL и так раздаёт все локации. Удаляем шум.
+    if len(empty_vless) > len(vless_servers):
+        from services.database import delete_config_record
+        # Перечитываем актуальный список — provisioned-rows теперь status='active',
+        # фильтр empty оставит только то что мы НЕ заполнили.
+        remaining = await get_configs_for_subscription_by_protocol(sub_id, "vless")
+        for cfg in (c for c in remaining if c["status"] == "empty"):
+            try:
+                await delete_config_record(cfg["id"])
+                logger.info("bootstrap_vless: deleted excess empty VLESS row cfg=#%d "
+                             "(plan slots > N active servers)", cfg["id"])
+            except Exception as e:
+                logger.warning("bootstrap_vless: delete excess cfg=#%d failed: %s",
+                                cfg["id"], e)
+
     # F11: админ-алёрт если provisioned < target. Любой partial fail для
     # paid grant'а — потеря локации в Happ subscription, юзер этого не увидит,
     # надо чтобы админ сам нашёл и руками починил.
