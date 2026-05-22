@@ -350,11 +350,15 @@ export function topClients(limit = 50) {
   // Топ юзеров по сумме потраченных stars (LTV-прокси).
   // Триалы исключены — это не выручка. Админы тоже исключены — тест-данные.
   const excl = excludeAdminsClause('u.id')
+  // AD-F16: surface total_rub alongside total_stars so the Clients page can
+  // distinguish Stars-only payers from RUB-channel payers. HAVING gate now
+  // accepts either non-zero (so CryptoBot/OxaPay/Lava-only customers show up).
   return db().prepare(`
     SELECT u.id, u.username, u.first_name, u.created_at as joined_at,
            COUNT(s.id) FILTER (WHERE s.plan != 'vpn_trial' AND s.refunded_at IS NULL)                       as paid_subs,
            COUNT(s.id) FILTER (WHERE s.plan = 'vpn_trial')                        as trial_subs,
            COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' AND s.refunded_at IS NULL THEN s.stars_paid END), 0) as total_stars,
+           COALESCE(SUM(CASE WHEN s.plan != 'vpn_trial' AND s.refunded_at IS NULL THEN s.amount_rub END), 0) as total_rub,
            -- active + grace: оба считаем «текущим планом». current_plan_status
            -- даёт UI'у возможность пометить grace отдельно («подписка истекает»).
            MAX(CASE WHEN s.status IN ('active','grace') THEN s.plan END)          as current_plan,
@@ -365,8 +369,8 @@ export function topClients(limit = 50) {
     LEFT JOIN subscriptions s ON s.user_id = u.id
     WHERE 1=1 ${excl}
     GROUP BY u.id
-    HAVING total_stars > 0
-    ORDER BY total_stars DESC, last_purchase DESC
+    HAVING total_stars > 0 OR total_rub > 0
+    ORDER BY total_stars DESC, total_rub DESC, last_purchase DESC
     LIMIT ?
   `).all(limit) as Array<{
     id: number
@@ -376,6 +380,7 @@ export function topClients(limit = 50) {
     paid_subs: number
     trial_subs: number
     total_stars: number
+    total_rub: number
     current_plan: string | null
     current_plan_status: string | null
     last_purchase: string | null

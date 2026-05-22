@@ -97,6 +97,13 @@ export async function POST(req: NextRequest) {
       VALUES (?, ?, ?, ?, 'root', ?, ?, ?, ?, ?, 1)
     `).run(name, flag || '🌍', city || '', host, agent_url, agent_token,
            wg_pubkey, protocol, capacity || 100)
+    // AD-F14: audit-log direct-SQLite server ops — Next routes write straight
+    // to bot.db, so the bot's audit_log_record helper never sees them.
+    db.prepare(`INSERT INTO audit_log (admin_id, action, target, details, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))`).run(
+      session.userId, 'server_add', `server:${result.lastInsertRowid}`,
+      `name=${name} host=${host} proto=${protocol}`,
+    )
   } finally {
     db.close()
   }
@@ -119,6 +126,11 @@ export async function DELETE(req: NextRequest) {
   const db = writeDb()
   try {
     db.prepare('UPDATE servers SET is_active=0 WHERE id=?').run(numId)
+    // AD-F14: audit-log soft-drain (DELETE ?id=N path).
+    db.prepare(`INSERT INTO audit_log (admin_id, action, target, details, created_at)
+                VALUES (?, ?, ?, ?, datetime('now'))`).run(
+      session.userId, 'server_drain', `server:${numId}`, 'soft-disable',
+    )
   } finally {
     db.close()
   }
@@ -161,6 +173,16 @@ export async function PATCH(req: NextRequest) {
   let result: ReturnType<ReturnType<typeof db.prepare>['run']>
   try {
     result = db.prepare(`UPDATE servers SET ${sets.join(', ')} WHERE id=?`).run(...args)
+    if (result.changes > 0) {
+      // AD-F14: audit-log PATCH (drain re-enable / capacity change).
+      const parts: string[] = []
+      if (body.is_active !== undefined) parts.push(`is_active=${body.is_active}`)
+      if (body.capacity !== undefined)  parts.push(`capacity=${body.capacity}`)
+      db.prepare(`INSERT INTO audit_log (admin_id, action, target, details, created_at)
+                  VALUES (?, ?, ?, ?, datetime('now'))`).run(
+        session.userId, 'server_patch', `server:${numId}`, parts.join(' '),
+      )
+    }
   } finally {
     db.close()
   }

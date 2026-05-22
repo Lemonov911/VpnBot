@@ -922,11 +922,13 @@ async def get_expired_trials() -> list[dict]:
 
 
 async def mark_subscription_expired(subscription_id: int):
-    """Помечает подписку expired. Заодно сбрасывает pending_plan —
-    он стал мёртвым атрибутом (downgrade некуда применять, sub закрыта)."""
+    """Помечает подписку expired. Заодно сбрасывает pending_plan и auto_renew.
+    EU-F-r4: stale auto_renew=1 on an expired sub used to keep it in
+    renewal-reminder queries, sending users notifications about a sub that no
+    longer exists."""
     async with _connect() as db:
         await db.execute(
-            "UPDATE subscriptions SET status='expired', pending_plan=NULL WHERE id=?",
+            "UPDATE subscriptions SET status='expired', auto_renew=0, pending_plan=NULL WHERE id=?",
             (subscription_id,),
         )
         await db.commit()
@@ -1453,6 +1455,28 @@ async def claim_config_slot_for_activation(config_id: int) -> bool:
     async with _connect() as db:
         cur = await db.execute(
             "UPDATE configs SET status='activating', activated_at=datetime('now') WHERE id=? AND status='empty'",
+            (config_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def claim_config_slot_for_revoke(config_id: int) -> bool:
+    """Atomically claim an 'active' slot for revocation (CAS).
+
+    MD-F-r1: without this, two devices hitting Revoke on the same slot both
+    pass the `config["status"] == "active"` check, both call revoke_peer on
+    the agent (second one logs a benign 404), and both decrement
+    servers.active_peers — leaving the load-balancer's idea of server load
+    out of sync with reality.
+
+    Returns True if the UPDATE landed (caller owns the revoke). False if
+    another worker already grabbed it — caller should answer 409 and let the
+    UI refresh.
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE configs SET status='revoking' WHERE id=? AND status='active'",
             (config_id,),
         )
         await db.commit()
@@ -2755,6 +2779,17 @@ async def ensure_user_vless_uuid(user_id: int) -> str:
         ) as cur:
             legacy_row = await cur.fetchone()
 
+        # EU-F-r5: legacy backfill story. There's no explicit script that
+        # copies configs.vless_uuid → users.vless_uuid for pre-2026-05-21
+        # accounts. Outcomes:
+        #   (a) users.vless_uuid populated lazily on first call here —
+        #       we reuse the configs UUID so existing agent peers keep working.
+        #   (b) users.vless_uuid stale (legacy UUID from a refunded sub) —
+        #       fast-path returns it, but a later activate creates a new
+        #       configs row with a different agent-side UUID → divergence
+        #       between sub_url and the slot's actual peer.
+        # Mitigated by EU-F-r3, which seeds peer_id from this same UUID at
+        # activation time so the agent registers the canonical user UUID.
         candidate_uuid = (legacy_row[0] if legacy_row and legacy_row[0]
                           else str(_uuid.uuid4()))
 
@@ -2885,6 +2920,11 @@ async def get_active_vless_configs_for_user(user_id: int) -> list[dict]:
 
     Включает grace: `/sub/{token}` должен работать 14 дней после истечения —
     конфиг в config_data во время grace указывает на vless-grace inbound (порт 9453).
+
+    MD-F-r4: also include 'activating' slots so a slot that is mid-provision
+    on one device stays visible on `/sub/{token}` (the dynamic URL is built
+    from users.vless_uuid, independent of per-slot config_data — the NULL
+    guard below skips rows that don't have a row-level config payload yet).
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -2892,7 +2932,8 @@ async def get_active_vless_configs_for_user(user_id: int) -> list[dict]:
             """SELECT c.id, c.config_data, c.peer_name, c.label, c.protocol
                FROM configs c
                JOIN subscriptions s ON c.subscription_id = s.id
-               WHERE c.user_id=? AND c.protocol='vless' AND c.status='active'
+               WHERE c.user_id=? AND c.protocol='vless'
+                 AND c.status IN ('active','activating')
                  AND s.status IN ('active', 'grace')
                  AND c.config_data IS NOT NULL AND c.config_data != ''
                ORDER BY c.id""",

@@ -57,7 +57,7 @@ export default function AdminNav({ username }: { username?: string }) {
             </Link>
           )
         })}
-        <a href="/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">
+        <a href="/admin/api/auth/logout" className="text-xs text-neutral-600 hover:text-rose-400 ml-2 pl-3 border-l border-neutral-800">
           Выход
         </a>
       </div>

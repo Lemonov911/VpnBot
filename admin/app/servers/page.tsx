@@ -121,9 +121,16 @@ export default function ServersPage() {
       const r = await fetch(`/admin/api/servers/${id}/migrate`, { method: 'POST' })
       const data = await r.json().catch(() => ({}))
       if (!r.ok) { alert(`Ошибка: ${data.error || r.statusText}`); return }
-      const failTail = data.failed > 0 ? `\nОшибок: ${data.failed}` : ''
-      const vlessTail = data.reset_vless > 0 ? `\nVLESS сброшено: ${data.reset_vless}` : ''
-      alert(`Готово.\nAWG мигрировано: ${data.migrated}${vlessTail}${failTail}`)
+      // AD-F15: include `skipped` (configs already moved to another server, no
+      // re-provision needed) — without this admin can't tell "0 migrated"
+      // means "nothing to do" vs "everything failed".
+      alert(
+        `Migration done:\n` +
+        `AWG migrated: ${data.migrated ?? 0}\n` +
+        `VLESS reset: ${data.reset_vless ?? 0}\n` +
+        `Skipped (already moved): ${data.skipped ?? 0}\n` +
+        `Failed: ${data.failed ?? 0}`,
+      )
       load()
     } finally {
       setMigrating(null)

@@ -23,7 +23,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     method: 'POST',
     headers: { 'X-Admin-Secret': ADMIN_API_SECRET, 'Content-Type': 'application/json' },
     body: JSON.stringify({ admin_id: session.userId }),
-    signal: AbortSignal.timeout(60_000), // миграция может занять минуты
+    signal: AbortSignal.timeout(300_000), // миграция может занять минуты (mirror backfill-vless)
   })
   const data = await upstream.json().catch(() => ({}))
   return NextResponse.json(data, { status: upstream.status })

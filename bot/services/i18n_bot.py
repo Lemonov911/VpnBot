@@ -192,6 +192,8 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_slot_not_active":      "Слот не активен",
         # MD-F6: CAS race — слот сбросили между claim и activate.
         "bot_api_err_slot_reset_during_activation": "Слот был сброшен в другом окне. Обнови страницу и попробуй ещё раз.",
+        # MD-F-r1: concurrent revoke race — второе устройство уже стартовало revoke.
+        "bot_api_err_slot_already_revoking": "Слот уже отзывается — обновится автоматически",
         "bot_api_err_active_sub_exists":    "У тебя уже есть активная подписка. Используй смену тарифа.",
         "bot_api_err_no_active_sub":        "Нет активной подписки",
         "bot_api_err_payment_service":      "Ошибка платёжного сервиса",
@@ -456,6 +458,8 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_slot_bad_status":      "Invalid slot status",
         "bot_api_err_slot_not_active":      "Slot not active",
         "bot_api_err_slot_reset_during_activation": "Slot was reset in another window. Reload the page and try again.",
+        # MD-F-r1: concurrent revoke race.
+        "bot_api_err_slot_already_revoking": "Slot is being revoked — will update automatically",
         "bot_api_err_active_sub_exists":    "You already have an active subscription. Use plan change instead.",
         "bot_api_err_no_active_sub":        "No active subscription",
         "bot_api_err_payment_service":      "Payment service error",

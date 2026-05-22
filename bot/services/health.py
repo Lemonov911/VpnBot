@@ -144,6 +144,18 @@ async def _maybe_deactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
             "UPDATE servers SET is_active=0 WHERE id=?", (server["id"],),
         )
         await wdb.commit()
+    # AD-F13: audit-log automated server lifecycle so admin forensics covers
+    # both manual UI actions and background health-probe transitions.
+    try:
+        from services.database import audit_log_record
+        await audit_log_record(
+            admin_id=0,  # automated
+            action="server_auto_deactivate",
+            target=f"server:{server['id']}",
+            details=f"consec_down={consec_down}",
+        )
+    except Exception as e:
+        logger.warning("audit_log server_auto_deactivate failed: %s", e)
     logger.warning(
         "health: AUTO-DEACTIVATED server #%d %s (%d consecutive down probes)",
         server["id"], server.get("name", ""), consec_down,
@@ -184,6 +196,17 @@ async def _maybe_reactivate(db: aiosqlite.Connection, server: dict, bot) -> bool
             "UPDATE servers SET is_active=1 WHERE id=?", (server["id"],),
         )
         await wdb.commit()
+    # AD-F13: audit-log automated reactivation (symmetric with deactivate).
+    try:
+        from services.database import audit_log_record
+        await audit_log_record(
+            admin_id=0,
+            action="server_auto_reactivate",
+            target=f"server:{server['id']}",
+            details=f"consec_up={consec_up}",
+        )
+    except Exception as e:
+        logger.warning("audit_log server_auto_reactivate failed: %s", e)
     logger.info(
         "health: AUTO-REACTIVATED server #%d %s (%d consecutive up probes)",
         server["id"], server.get("name", ""), consec_up,

@@ -167,9 +167,30 @@ export function BanUserButton({ userId, banned }: { userId: number; banned: bool
       headers: { 'Content-Type': 'application/json' },
       body: banned ? '{}' : JSON.stringify({ reason: 'admin manual ban' }),
     })
+    const data = await r.json().catch(() => ({})) as {
+      error?: string
+      message?: string
+      stars_manual_required?: boolean
+      lava_cancel_attempted?: boolean
+      payment_provider?: string
+    }
     if (!r.ok) {
-      const data = await r.json().catch(() => ({}))
-      throw new Error(data.error || `HTTP ${r.status}`)
+      throw new Error(data.message ?? data.error ?? `HTTP ${r.status}`)
+    }
+
+    // Surface backend warnings (mirrors RefundSubButton pattern). Backend
+    // returns rich payload for ban/unban: stars-recurring subs cannot be
+    // cancelled via API, Lava cancel may be skipped if parent_contract_id
+    // is missing.
+    const warnings: string[] = []
+    if (data.stars_manual_required) {
+      warnings.push('⚠️ Stars-recurring sub: вручную отмени в Stars dashboard (Telegram API не даёт).')
+    }
+    if (data.lava_cancel_attempted === false && data.payment_provider === 'lavatop') {
+      warnings.push('⚠️ Lava cancel НЕ вызывался (нет parent_contract_id / API key).')
+    }
+    if (warnings.length > 0) {
+      alert(warnings.join('\n\n'))
     }
   }
   return (

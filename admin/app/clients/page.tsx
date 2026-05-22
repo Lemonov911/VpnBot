@@ -50,7 +50,11 @@ export default async function Clients() {
 
   const clients = topClients(50)
   const m = moneyTotals()
-  const avgLtv = m.paying_users > 0 ? Math.round(m.total_revenue_stars / m.paying_users) : 0
+  // AD-F16: the "Средний LTV" card mixed channels — labelled with ⭐ but
+  // dividing only stars_paid by paying_users (which counts RUB-payers too).
+  // Now we show Stars-LTV and RUB-LTV separately, both clearly scoped.
+  const avgLtvStars = m.paying_users > 0 ? Math.round(m.total_revenue_stars / m.paying_users) : 0
+  const avgLtvRub   = m.paying_users > 0 ? Math.round(m.total_revenue_rub   / m.paying_users) : 0
   // Распределение по top-X
   const top10Sum = clients.slice(0, 10).reduce((a, b) => a + b.total_stars, 0)
   const top10Share = m.total_revenue_stars > 0 ? Math.round((top10Sum / m.total_revenue_stars) * 100) : 0
@@ -59,12 +63,17 @@ export default async function Clients() {
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
       <AdminNav />
 
-      {/* KPIs */}
+      {/* KPIs. AD-F16: split LTV across Stars and RUB channels — the prior
+          single "⭐ LTV" card divided Stars-only revenue by all payers, which
+          deflated the number whenever RUB-only customers paid. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Платящих юзеров"   value={m.paying_users} hint={`всего ⭐${m.total_revenue_stars}`} />
-        <StatCard label="Средний LTV"        value={`⭐ ${avgLtv}`} hint="total revenue / payers" />
+        <StatCard label="Платящих юзеров"   value={m.paying_users} hint={`⭐${m.total_revenue_stars} · ₽${m.total_revenue_rub}`} />
+        <StatCard label="Средний LTV ⭐"     value={`⭐ ${avgLtvStars}`} hint="stars_paid / payers (Stars-only metric)" />
+        <StatCard label="Средний LTV ₽"     value={`₽ ${avgLtvRub.toLocaleString('ru')}`} hint="amount_rub / payers (RUB channel)" />
         <StatCard label="Повторных покупок"  value={m.repeat_buyers} hint="≥ 2 платных подписки" />
-        <StatCard label="Топ-10 = доля"      value={`${top10Share}%`} hint="от всей выручки" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="Топ-10 = доля"      value={`${top10Share}%`} hint="от Stars-выручки" />
       </div>
 
       {/* Period buckets */}

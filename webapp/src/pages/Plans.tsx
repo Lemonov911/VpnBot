@@ -281,6 +281,25 @@ export default function Plans() {
     }
   }, [sub, pendingPayment])
 
+  // MD-F-r5: refresh sub when user returns to /vpn/plans. Webhook may have
+  // landed while the user was in Lava/CryptoBot/OxaPay; without this the
+  // plan grid stays on stale data until the next manual nav.
+  useEffect(() => {
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible') return
+      try {
+        const fresh = await getActiveSubscription()
+        if (mountedRef.current) setSub(fresh)
+      } catch { /* including 429 / network — preserve current state */ }
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
+
   // Polling: пока pendingPayment висит — каждые 8с refresh subscription.
   // Стопаем по timeout 15 мин или когда sub активен.
   useEffect(() => {
@@ -325,12 +344,40 @@ export default function Plans() {
           if (!callbackFired && mountedRef.current) setLoading(null)
         }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, (s) => {
-          callbackFired = true
-          clearTimeout(guardId)
-          if (!mountedRef.current) return
-          setLoading(null)
-          if (s === 'paid') { WebApp.HapticFeedback.notificationOccurred('success'); setPageStatus('paid') }
-          else if (s !== 'cancelled') { setPageStatus('error'); setErrMsg(t('plans_error_payment')) }
+          ;(async () => {
+            callbackFired = true
+            clearTimeout(guardId)
+            if (!mountedRef.current) return
+            setLoading(null)
+            if (s !== 'paid') {
+              if (s !== 'cancelled') {
+                setPageStatus('error'); setErrMsg(t('plans_error_payment'))
+              }
+              return
+            }
+            // MD-F-r3: mirror VPN.tsx MD-F5+MD-F7 — clear pending_payment
+            // flag + re-fetch sub to detect cross-method dedup refund. The
+            // backend may have refunded these Stars because the user already
+            // had an active sub via another payment method; without re-check
+            // Plans.tsx would mis-declare success.
+            try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+            WebApp.HapticFeedback.notificationOccurred('success')
+            try {
+              const fresh = await getActiveSubscription()
+              if (!mountedRef.current) return
+              if (fresh && fresh.status === 'active' && fresh.plan === plan.key) {
+                setSub(fresh); setPageStatus('paid')
+              } else if (fresh && fresh.status === 'active') {
+                setSub(fresh)
+                WebApp.showAlert(t('vpn_already_active_refund' as never))
+              } else {
+                setSub(fresh)
+                setPageStatus('paid')  // best-effort optimistic success
+              }
+            } catch {
+              setPageStatus('paid')  // network blip — fall back to optimistic
+            }
+          })()
         })
       } else if (method === 'oxapay') {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')

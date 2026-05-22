@@ -947,8 +947,24 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     else:
         service_name = config["protocol"]
 
+    # EU-F-r3: seed peer_id from users.vless_uuid for VLESS slots so the agent
+    # registers the user's canonical UUID — matches what `_resolve_vless_urls`
+    # emits in the subscription URL. Without this, an activate-then-revoke
+    # cycle on a multi-location VLESS sub leaves the slot's config_data UUID
+    # diverged from the sub_url UUID, so Happ shows the slot but the agent
+    # rejects the connection.
+    peer_id_seed: str | None = None
+    if config["protocol"] == "vless":
+        try:
+            from services.database import ensure_user_vless_uuid
+            peer_id_seed = await ensure_user_vless_uuid(user["id"])
+        except Exception as e:
+            logger.warning(
+                "EU-F-r3: ensure_user_vless_uuid failed for user %d, falling "
+                "back to agent-generated UUID: %s", user["id"], e,
+            )
     try:
-        result = await provision_peer(server, peer_name, service_name)
+        result = await provision_peer(server, peer_name, service_name, peer_id=peer_id_seed)
     except VpnctlError as e:
         logger.error("Activate slot #%d on server %s: %s", config_id, server.get("name", server["id"]), e, exc_info=True)
         await reset_config_slot(config_id)  # rollback activating → empty
@@ -1044,6 +1060,17 @@ async def handle_vpn_config_revoke(request: web.Request) -> web.Response:
 
     if config["status"] != "active":
         return await _user_err(user["id"], "slot_not_active", "bot_api_err_slot_not_active", 400)
+
+    # MD-F-r1: atomic CAS flip 'active' → 'revoking' so a second device hitting
+    # Revoke on the same slot lands the UPDATE 0 rows and gets a 409 — instead
+    # of both decrementing servers.active_peers and both calling revoke_peer
+    # (the second 404s harmlessly but pollutes logs and drifts the counter).
+    from services.database import claim_config_slot_for_revoke
+    if not await claim_config_slot_for_revoke(config_id):
+        return await _user_err(
+            user["id"], "slot_already_revoking",
+            "bot_api_err_slot_already_revoking", 409,
+        )
 
     # Удаляем пир с сервера через vpnctl (best-effort).
     # `revoke_peer(server, peer_id, service_name)` — 3-й параметр это имя
@@ -3229,7 +3256,16 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "same": True})
 
     from datetime import datetime
-    expires          = datetime.fromisoformat(sub["expires_at"])
+    # EU-F-r1: parallel to handle_vpn_subscription (EU-F4). NULL or unparseable
+    # expires_at would make fromisoformat raise TypeError/ValueError → 500. Such
+    # rows shouldn't exist past the EU-F4 guard, but legacy migrations can
+    # still produce them; treat as no-active-sub instead of crashing.
+    if not sub.get("expires_at"):
+        return await _user_err(user["id"], "no_active_sub", "bot_api_err_no_active_sub", 400)
+    try:
+        expires = datetime.fromisoformat(sub["expires_at"])
+    except (TypeError, ValueError):
+        return await _user_err(user["id"], "no_active_sub", "bot_api_err_no_active_sub", 400)
     remaining_days_f = max(0.0, (expires - datetime.utcnow()).total_seconds() / 86400)
     remaining_days   = int(remaining_days_f)  # display only
 
@@ -3855,6 +3891,16 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
 
     if close:
         await close_ticket(ticket_id)
+
+    # AD-F12: audit-log for compliance/forensics. close-or-reply path was
+    # the only admin ticket op that didn't audit — close (without reply) does.
+    from services.database import audit_log_record as _alr_reply
+    await _alr_reply(
+        admin_id=int(body.get("admin_id") or 0),
+        action="ticket_reply",
+        target=f"ticket:{ticket_id}",
+        details=f"reply_chars={len(text)} close_after={close}",
+    )
 
     return web.json_response({"ok": True, "closed": close})
 

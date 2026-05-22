@@ -65,6 +65,12 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
     handle401()
     throw new Error('session_expired')
   }
+  // MD-F-r2: 429 = transient backend rate-limit (visibility refresh storm,
+  // admin panel parallel load). Throw a stable sentinel so callers can
+  // preserve cached UI state instead of flipping to a "no sub" view.
+  if (res.status === 429) {
+    throw new Error('rate_limit')
+  }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
   // Prefer bilingual `message` over machine-code `error`.

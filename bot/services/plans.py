@@ -140,32 +140,38 @@ def plan_display_name(plan: dict | str, lang: str = "ru") -> str:
 
 
 # VLESS Reality flow parameter per tier. Must match agent's xray_flow config
-# (agent/main.go:77-89). Plain Reality tiers omit flow; legacy Vision tier
-# uses xtls-rprx-vision. Wrong flow = TLS handshake fails on client.
+# (agent/main.go:77-89). Plain Reality tiers omit flow; the bare "vless" key
+# is unused now (legacy plans map to vless-base, see EU-F-r2).
 VLESS_FLOW_BY_SERVICE: dict[str, str] = {
     "vless-base":       "",
     "vless-max":        "",
     "vless-base-slow":  "",
     "vless-max-slow":   "",
     "vless-grace":      "",
-    "vless":            "xtls-rprx-vision",  # legacy Vision tier
 }
 
 
 def vless_service_for_plan(plan_key: str) -> str:
     """Возвращает имя `vpnctl`-сервиса для VLESS-провижининга.
-    Новые v2-планы маппятся на speed-tier сервисы; legacy / unknown → 'vless'."""
+
+    EU-F-r2: legacy plans (vpn_pro/family/popular/start/1m/3m/1y) used to fall
+    back to bare "vless", but the agent doesn't register that service —
+    provision_peer would fail. Route them to vless-base, which the prod agent
+    serves on port 8443 with plain Reality flow.
+    """
     if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
         return "vless-base"
     if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
         return "vless-max"
-    return "vless"
+    return "vless-base"
 
 
 def vless_slow_service_for_plan(plan_key: str) -> str | None:
-    """Throttled-сервис для плана. None для legacy без slow-tier."""
+    """Throttled-сервис для плана. EU-F-r2: legacy fallback → vless-base-slow
+    (same reasoning as vless_service_for_plan — bare "vless-slow" isn't a real
+    service on the agent)."""
     if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
         return "vless-base-slow"
     if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
         return "vless-max-slow"
-    return None
+    return "vless-base-slow"

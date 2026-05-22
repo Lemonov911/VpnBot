@@ -44,7 +44,17 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false
-    getActiveSubscription().catch(() => null).then(s => { if (!cancelled) setSub(s) })
+    // MD-F-r2: distinguish transient errors (429 rate-limit) from genuine
+    // "no subscription". Previously any error → setSub(null) → Home UI
+    // collapses to the buy-flow CTA while the backend was just throttling
+    // the visibility-refresh storm.
+    getActiveSubscription().then(s => {
+      if (!cancelled) setSub(s)
+    }).catch(e => {
+      if (cancelled) return
+      if (e instanceof Error && e.message === 'rate_limit') return  // keep current state
+      setSub(null)
+    })
     getUserStats().catch(() => null).then(s => { if (!cancelled) setStats(s) })
     getTrialStatus().catch(() => null).then(s => { if (!cancelled) setTrial(s) })
     return () => { cancelled = true }
@@ -56,7 +66,15 @@ export default function Home() {
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState !== 'visible') return
-      getActiveSubscription().catch(() => null).then(s => { if (mountedRef.current) setSub(s) })
+      // MD-F-r2: preserve cached sub on 429 — visibility refreshes can
+      // hammer the backend rate-limit window.
+      getActiveSubscription().then(s => {
+        if (mountedRef.current) setSub(s)
+      }).catch(e => {
+        if (!mountedRef.current) return
+        if (e instanceof Error && e.message === 'rate_limit') return
+        setSub(null)
+      })
       getUserStats().catch(() => null).then(s => { if (mountedRef.current) setStats(s) })
     }
     document.addEventListener('visibilitychange', refresh)

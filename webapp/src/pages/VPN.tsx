@@ -172,12 +172,19 @@ export default function VPN() {
         }
       }
     } catch { /* localStorage may be unavailable */ }
+    // MD-F-r2: keep sub=undefined (skeleton) on 429 instead of flipping to
+    // null (which renders the buy-flow CTA). Skeleton self-resolves on the
+    // next visibility refresh / polling tick.
     Promise.all([
-      getActiveSubscription().catch(() => null),
+      getActiveSubscription().catch(e => {
+        if (e instanceof Error && e.message === 'rate_limit') return undefined
+        return null
+      }),
       getUserConfigs().catch(() => [] as VpnConfig[]),
     ]).then(([s, c]) => {
       if (cancelled) return
-      setSub(s); setConfigs(c as VpnConfig[])
+      if (s !== undefined) setSub(s as Subscription | null)
+      setConfigs(c as VpnConfig[])
     })
     return () => { cancelled = true; WebApp.BackButton.hide(); WebApp.BackButton.offClick(goBack) }
   }, [nav])

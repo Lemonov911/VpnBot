@@ -69,6 +69,12 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
       // incidents: то же — история инцидентов привязана к серверу.
       db.prepare('DELETE FROM incidents WHERE server_id=?').run(serverId)
       db.prepare('DELETE FROM servers WHERE id=?').run(serverId)
+      // AD-F14: audit-log hard-remove inside the same transaction so it
+      // either both lands or both rolls back.
+      db.prepare(`INSERT INTO audit_log (admin_id, action, target, details, created_at)
+                  VALUES (?, ?, ?, ?, datetime('now'))`).run(
+        session.userId, 'server_delete', `server:${serverId}`, `name=${srv.name}`,
+      )
     })
     tx(sid)
     return NextResponse.json({ ok: true, deleted: srv.name })
