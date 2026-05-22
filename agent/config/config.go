@@ -56,8 +56,9 @@ type TierConfig struct {
 	InboundPort int
 	// RateKbit — server-side HTB throttle для этого tier'а (kbit/s). 0 = unlimited.
 	// Применяется через source-port filter на egress-интерфейсе (см. tcshape).
-	// Default'ы: slow=5/15Mbit, grace=512kbit (был 256, поднят 22.05 — пользователи
-	// жаловались на чрезмерно жёсткий throttle, при котором даже Telegram-чат тормозил).
+	// Default'ы: slow=5/15Mbit, grace=1Mbit (история: был 256, потом 512, потом 1Mbit —
+	// эволюция через жалобы юзеров. 1Mbit = Telegram грузит фото быстро, web-серфинг
+	// ok; video/youtube всё равно лагает = стимул продлить).
 	RateKbit int
 	// TCClassID + TCFilterPref — фиксированные для совместимости с уже
 	// задеплоенным HTB на серверах где tc ставился руками.
@@ -134,7 +135,7 @@ func Load() *Config {
 		// но если кто-то ОТЛИЧАЕТСЯ — будет два set'а классов с разными rate'ами.
 		"vless-base-slow": {InboundTag: "vless-reality-base-slow", InboundPort: 9443, RateKbit: 5000, TCClassID: "1:20", TCFilterPref: 49152},
 		"vless-max-slow":  {InboundTag: "vless-reality-max-slow", InboundPort: 9448, RateKbit: 15000, TCClassID: "1:30", TCFilterPref: 49151},
-		"vless-grace":     {InboundTag: "vless-reality-grace", InboundPort: 9453, RateKbit: 512, TCClassID: "1:40", TCFilterPref: 49150},
+		"vless-grace":     {InboundTag: "vless-reality-grace", InboundPort: 9453, RateKbit: 1024, TCClassID: "1:40", TCFilterPref: 49150},
 	}
 	hasVLESS := false
 	for _, svc := range services {
