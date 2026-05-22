@@ -1121,7 +1121,16 @@ export function useLang() { return useContext(LangCtx) }
 
 export function useT() {
   const { lang } = useContext(LangCtx)
-  return (key: TKey) => T[lang][key] as string
+  return (key: TKey) => {
+    // Missing-key resilience: if a translation is missing in the active
+    // locale, fall back to RU (the canonical source). Final fallback is the
+    // key itself — better to render the key than crash downstream code
+    // doing `.replace(...)` / `.toLowerCase()` on undefined.
+    const ru = T.ru as Record<string, string>
+    const cur = T[lang] as Record<string, string>
+    const k = key as unknown as string
+    return cur[k] ?? ru[k] ?? k
+  }
 }
 
 export function usePlural() {

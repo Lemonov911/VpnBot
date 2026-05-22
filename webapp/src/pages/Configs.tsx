@@ -501,10 +501,16 @@ export default function Configs() {
       WebApp.HapticFeedback.notificationOccurred('success')
       load()  // конфиги появились → перезагрузить
     } catch (e) {
-      setErrMsg(e instanceof Error ? e.message : t('trial_err_generic'))
+      // FR4: guard setErrMsg in case the component already unmounted between
+      // request start and rejection (user navigated away). React 18 logs a
+      // warning otherwise and stale state writes can interleave with the
+      // next mount's initial render.
+      if (!cancelledRef.current) {
+        setErrMsg(e instanceof Error ? e.message : t('trial_err_generic'))
+      }
     } finally {
       claimBusyRef.current = false
-      setClaiming(false)
+      if (!cancelledRef.current) setClaiming(false)
     }
   }
 

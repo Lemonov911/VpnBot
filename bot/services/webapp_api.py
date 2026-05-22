@@ -3889,6 +3889,17 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
     if not ticket:
         return web.json_response({"error": "ticket not found"}, status=404)
 
+    # CA5: prevent two admins replying to the same ticket concurrently. If
+    # the ticket is already closed by another admin's reply/close, return
+    # 409 so the second admin's UI shows a clear "already handled" message
+    # instead of sending a duplicate reply to the user.
+    if ticket.get("status") == "closed":
+        return web.json_response(
+            {"error": "ticket_already_handled",
+             "message": "Тикет уже закрыт другим админом"},
+            status=409,
+        )
+
     bot: Bot = request.app["bot"]
     quoted = html_escape((ticket.get('message') or '')[:300])
     reply_body = html_escape(text)
@@ -4200,8 +4211,13 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     # снимаются с юзера. Прод-инцидент: P1 round 8 audit.
     if sub.get("auto_renew") and sub.get("payment_provider") == "lavatop":
         from services.database import disable_auto_renew
-        await disable_auto_renew(sub_id)
-        if sub.get("parent_contract_id") and LAVATOP_API_KEY:
+        # CA6: only call Lava cancel API if WE just transitioned auto_renew
+        # 1→0. If disabled=False, another worker (parallel admin refund,
+        # cancel webhook, etc.) already disabled it and almost certainly
+        # already called Lava. Skipping avoids duplicate-cancel 4xx from
+        # Lava and clutter in their support tickets.
+        disabled_now = await disable_auto_renew(sub_id)
+        if disabled_now and sub.get("parent_contract_id") and LAVATOP_API_KEY:
             from services.lavatop import cancel_subscription as _lava_cancel
             try:
                 ok = await _lava_cancel(
@@ -4359,11 +4375,15 @@ async def handle_admin_user_ban(request: web.Request) -> web.Response:
         provider = sub.get("payment_provider")
         if provider == "lavatop":
             from services.database import disable_auto_renew
+            # CA6: gate Lava cancel on the CAS return from disable_auto_renew.
+            # If it returns False, another worker already disabled and most
+            # likely already cancelled — skip to avoid duplicate API calls.
+            disabled_now = False
             try:
-                await disable_auto_renew(sub["id"])
+                disabled_now = await disable_auto_renew(sub["id"])
             except Exception as e:
                 logger.warning("ban: disable_auto_renew failed sub=%d: %s", sub["id"], e)
-            if sub.get("parent_contract_id") and LAVATOP_API_KEY:
+            if disabled_now and sub.get("parent_contract_id") and LAVATOP_API_KEY:
                 from services.lavatop import cancel_subscription as _lava_cancel
                 lava_cancel_attempted = True
                 try:
@@ -4458,6 +4478,27 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
         return web.json_response({"error": "days must be int in [1, 365]"}, status=400)
 
     from services.database import admin_grant_subscription, AdminGrantConflict
+
+    # CA2: if the grant would be an extend (same-plan active sub), respect
+    # the same 30s cooldown as handle_admin_sub_extend. Without this, two
+    # admins double-clicking on the grant button add 2x days within seconds.
+    # Only matters for the extend path — fresh grants are protected by the
+    # per-user lock added in admin_grant_subscription (CA1).
+    try:
+        existing = await get_active_subscription(target_id)
+    except Exception:
+        existing = None
+    if existing and existing.get("plan") == plan_key and existing.get("status") in ("active", "grace"):
+        _now_grant = _time.monotonic()
+        _last_grant = _extend_rate.get(existing["id"], 0.0)
+        if _now_grant - _last_grant < 30:
+            return web.json_response(
+                {"error": "extend_recent",
+                 "message": "Recent extend/grant on this sub; wait 30s for idempotency"},
+                status=429,
+            )
+        _extend_rate[existing["id"]] = _now_grant
+
     try:
         result = await admin_grant_subscription(
             admin_id=admin_id,

@@ -93,6 +93,13 @@ export default function VPN() {
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
   const buyBusyRef = useRef(false)
+  // Monotonic counter for Stars openInvoice callbacks. When the 5-minute
+  // safety timeout fires and clears `buyLoading`, the user can start a new
+  // purchase. Without this token, a late callback from the old invoice
+  // would race with the new one (double-clear, double-success alert).
+  // Each handleBuy bumps the token; callbacks ignore themselves if the
+  // token has moved on.
+  const buyTokenRef = useRef(0)
 
   const PLAN_NAMES: Record<string, string> = {
     vpn_base:    t('vpn_plan_base'),
@@ -164,14 +171,24 @@ export default function VPN() {
       const raw = localStorage.getItem('pending_payment')
       if (raw) {
         const p = JSON.parse(raw)
-        // Авто-протухание через 15 мин — Lava инвойс обычно живёт меньше.
-        if (Date.now() - p.started_at < 15 * 60 * 1000) {
+        // FR9: validate shape before trusting. A malformed entry (manually
+        // edited, version skew across deploys, partial write) would crash
+        // the polling effect that reads p.started_at as a number.
+        if (
+          p && typeof p === 'object' &&
+          typeof p.started_at === 'number' &&
+          typeof p.plan_key === 'string' &&
+          Date.now() - p.started_at < 15 * 60 * 1000
+        ) {
           setPendingPayment(p)
         } else {
           localStorage.removeItem('pending_payment')
         }
       }
-    } catch { /* localStorage may be unavailable */ }
+    } catch {
+      // Bad JSON or localStorage unavailable — wipe to recover.
+      try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+    }
     // MD-F-r2: keep sub=undefined (skeleton) on 429 instead of flipping to
     // null (which renders the buy-flow CTA). Skeleton self-resolves on the
     // next visibility refresh / polling tick.
@@ -246,16 +263,19 @@ export default function VPN() {
         const planKey = starsPlanKey(plan.key, starsPeriod ?? '1m')
         const isRecurring = (starsPeriod ?? '1m') === '1m' && !!recurring
         const { invoice_url } = await createVpnInvoice(planKey, isRecurring)
-        let callbackFired = false
+        const myToken = ++buyTokenRef.current
         // Safety timeout: если Telegram закроется или сеть упадёт до окончания
         // платежа — openInvoice callback может не сработать. Через 5 минут
         // принудительно снимаем loading, иначе кнопка зависнет.
         const guardId = setTimeout(() => {
-          if (!callbackFired && mountedRef.current) setBuyLoading(null)
+          if (buyTokenRef.current === myToken && mountedRef.current) setBuyLoading(null)
         }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, s => {
-          callbackFired = true
           clearTimeout(guardId)
+          // FR10: ignore late callbacks from a previous invoice if the user
+          // already started a new buy. Otherwise the stale callback would
+          // double-toggle setBuyLoading/setPaid against the wrong plan.
+          if (buyTokenRef.current !== myToken) return
           buyBusyRef.current = false
           if (!mountedRef.current) return
           setBuyLoading(null)

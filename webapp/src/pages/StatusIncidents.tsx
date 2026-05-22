@@ -93,10 +93,23 @@ export default function StatusIncidents() {
   )
 }
 
+/**
+ * Defensive parser — see Status.tsx for rationale. Mirrored here so the
+ * incidents-history page also degrades to "—" instead of crashing on
+ * malformed timestamps from the public API.
+ */
+function safeParseISO(s: string | null | undefined): Date | null {
+  if (!s) return null
+  try {
+    const cleaned = s.replace(' ', 'T').replace(/[+-]\d\d:\d\d$/, '').replace(/Z$/, '')
+    const d = new Date(cleaned + 'Z')
+    return isNaN(d.getTime()) ? null : d
+  } catch { return null }
+}
+
 function IncidentDetailRow({ inc, t }: { inc: Incident; t: TFn }) {
-  const started = new Date(inc.started_at.replace(' ', 'T') + 'Z')
-  const resolved = inc.resolved_at ? new Date(inc.resolved_at.replace(' ', 'T') + 'Z') : null
-  const isOpen = !resolved
+  const started = safeParseISO(inc.started_at)
+  const isOpen = inc.resolved_at === null
   const durStr = (() => {
     if (isOpen) return t('status_inc_ongoing')
     const sec = inc.duration_sec ?? 0
@@ -113,7 +126,9 @@ function IncidentDetailRow({ inc, t }: { inc: Incident; t: TFn }) {
         {inc.flag} {inc.server_name}
       </span>
       <span className="flex-1 text-[var(--tg-theme-hint-color)] font-mono">
-        {started.toLocaleString('ru-RU', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        {started
+          ? started.toLocaleString('ru-RU', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : '—'}
       </span>
       <span className={`font-mono shrink-0 ${isOpen ? 'text-rose-500' : 'text-[var(--tg-theme-hint-color)]'}`}>
         {durStr}

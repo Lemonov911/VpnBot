@@ -9,10 +9,24 @@ const API_BASE = import.meta.env.VITE_API_URL ?? ''
  * X-Telegram-Init-Data — новый способ авторизации.
  * init_data в теле — старый способ (backward compat на бэке).
  */
+/**
+ * Safely read WebApp.initData. The @twa-dev/sdk may throw if the JS context
+ * isn't inside Telegram (browser-preview, sandboxed iframe). Return empty
+ * string in that case — backend will respond 401 and the existing handle401
+ * flow will alert the user.
+ */
+function getInitData(): string {
+  try {
+    return WebApp.initData ?? ''
+  } catch {
+    return ''
+  }
+}
+
 function authHeaders(): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    'X-Telegram-Init-Data': WebApp.initData,
+    'X-Telegram-Init-Data': getInitData(),
   }
 }
 
@@ -151,7 +165,7 @@ export function getUserConfigs(): Promise<VpnConfig[]> {
  * Передаём init_data как query-параметр т.к. это прямая навигация, не fetch.
  */
 export function getConfigDownloadUrl(configId: number): string {
-  const encoded = encodeURIComponent(WebApp.initData)
+  const encoded = encodeURIComponent(getInitData())
   // API_BASE пустой в production-сборке (VITE_API_URL=""), поэтому берём origin окна.
   // WebApp.downloadFile() требует абсолютный https:// URL — относительный не принимает.
   const origin = API_BASE || window.location.origin
@@ -159,7 +173,7 @@ export function getConfigDownloadUrl(configId: number): string {
 }
 
 export function getConfigQrUrl(configId: number): string {
-  const encoded = encodeURIComponent(WebApp.initData)
+  const encoded = encodeURIComponent(getInitData())
   const origin = API_BASE || window.location.origin
   return `${origin}/api/vpn/config/${configId}/qr?init_data=${encoded}`
 }
@@ -320,7 +334,11 @@ export async function getPublicStatus(): Promise<PublicStatus> {
   // tab that has no Telegram initData.
   const res = await fetch((import.meta.env.VITE_API_URL ?? '') + '/api/status')
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  try {
+    return await res.json()
+  } catch {
+    throw new Error('Bad server response')
+  }
 }
 
 export interface IncidentHistory {
@@ -334,7 +352,11 @@ export async function getIncidentHistory(limit = 50, offset = 0): Promise<Incide
   const url = `${import.meta.env.VITE_API_URL ?? ''}/api/status/incidents?limit=${limit}&offset=${offset}`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  try {
+    return await res.json()
+  } catch {
+    throw new Error('Bad server response')
+  }
 }
 
 // ── eSIM ──────────────────────────────────────────────────────────────────────

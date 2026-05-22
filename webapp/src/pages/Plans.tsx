@@ -225,6 +225,10 @@ export default function Plans() {
 
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  // See VPN.tsx FR10 — monotonic token to drop stale Stars openInvoice
+  // callbacks after the 5-min guard has cleared loading and the user has
+  // started a fresh purchase.
+  const buyTokenRef = useRef(0)
 
   // Computed once per sub.plan change — not inside .map() on every render.
   const curPlan = useMemo(() => {
@@ -251,13 +255,21 @@ export default function Plans() {
       const raw = localStorage.getItem('pending_payment')
       if (raw) {
         const pp = JSON.parse(raw)
-        if (Date.now() - pp.started_at < 15 * 60 * 1000) {
+        // FR9: see VPN.tsx — validate shape, drop malformed entries.
+        if (
+          pp && typeof pp === 'object' &&
+          typeof pp.started_at === 'number' &&
+          typeof pp.plan_key === 'string' &&
+          Date.now() - pp.started_at < 15 * 60 * 1000
+        ) {
           setPendingPayment(pp)
         } else {
           localStorage.removeItem('pending_payment')
         }
       }
-    } catch { /* localStorage may be unavailable */ }
+    } catch {
+      try { localStorage.removeItem('pending_payment') } catch { /* noop */ }
+    }
     getActiveSubscription().then(sub => {
       if (cancelled) return
       setSub(sub)
@@ -336,17 +348,18 @@ export default function Plans() {
         // recurring=true → Telegram Stars subscription (30-day cycle). Только для 1m.
         const isRecurring = (starsPeriod ?? '1m') === '1m' && !!recurring
         const { invoice_url } = await createVpnInvoice(planKey, isRecurring)
-        let callbackFired = false
+        const myToken = ++buyTokenRef.current
         // Safety timeout: если юзер закроет Telegram до окончания платежа
         // или сеть упадёт — openInvoice callback может не сработать, кнопка
         // зависнет «загрузка». Через 5 минут принудительно снимаем loading.
         const guardId = setTimeout(() => {
-          if (!callbackFired && mountedRef.current) setLoading(null)
+          if (buyTokenRef.current === myToken && mountedRef.current) setLoading(null)
         }, 5 * 60 * 1000)
         WebApp.openInvoice(invoice_url, (s) => {
           ;(async () => {
-            callbackFired = true
             clearTimeout(guardId)
+            // FR10: drop late callbacks from a previous invoice — see VPN.tsx.
+            if (buyTokenRef.current !== myToken) return
             if (!mountedRef.current) return
             setLoading(null)
             if (s !== 'paid') {

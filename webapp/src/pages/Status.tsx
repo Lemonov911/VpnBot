@@ -30,9 +30,22 @@ export default function Status() {
     const load = () => {
       getPublicStatus().then(setData).catch(e => setErr(String(e?.message || e)))
     }
+    // Pause polling when the tab is hidden — no point hammering the API and
+    // the user can't see the result anyway. Resumes on next interval tick
+    // once the tab is visible again (plus an immediate `load()` below when
+    // the visibilitychange listener fires).
+    const tick = () => {
+      if (document.hidden) return
+      load()
+    }
+    const onVisible = () => { if (!document.hidden) load() }
     load()
-    const id = setInterval(load, 30_000)
-    return () => clearInterval(id)
+    const id = window.setInterval(tick, 30_000)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   if (err && !data) {
@@ -205,8 +218,23 @@ function UptimeChip({ label, w }: { label: string; w: { pct: number | null; samp
   return <span><span className="opacity-60">{label}</span> <span className={colour}>{w.pct}%</span></span>
 }
 
+/**
+ * Defensive parser for the "YYYY-MM-DD HH:MM:SS" timestamps returned by the
+ * /api/status endpoint. Backend currently always emits a valid UTC string,
+ * but null/undefined/garbage would crash the row render via `.replace(...)`
+ * on undefined. Returns null on any parse failure; caller renders "—".
+ */
+function safeParseISO(s: string | null | undefined): Date | null {
+  if (!s) return null
+  try {
+    const cleaned = s.replace(' ', 'T').replace(/[+-]\d\d:\d\d$/, '').replace(/Z$/, '')
+    const d = new Date(cleaned + 'Z')
+    return isNaN(d.getTime()) ? null : d
+  } catch { return null }
+}
+
 function IncidentRow({ inc, t }: { inc: Incident; t: TFn }) {
-  const started = new Date(inc.started_at.replace(' ', 'T') + 'Z')
+  const started = safeParseISO(inc.started_at)
   const isOpen = inc.resolved_at === null
   const durStr = (() => {
     if (isOpen) return t('status_inc_ongoing')
@@ -223,7 +251,9 @@ function IncidentRow({ inc, t }: { inc: Incident; t: TFn }) {
         {inc.flag} {inc.server_name}
       </span>
       <span className="flex-1 text-[var(--tg-theme-hint-color)]">
-        {started.toLocaleString('ru-RU', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        {started
+          ? started.toLocaleString('ru-RU', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : '—'}
       </span>
       <span className={`font-mono ${isOpen ? 'text-rose-500' : 'text-[var(--tg-theme-hint-color)]'}`}>
         {durStr}

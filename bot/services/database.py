@@ -1104,6 +1104,16 @@ async def extend_subscription(subscription_id: int, days: int) -> dict | None:
             return result
 
 
+# CA1: serialize concurrent grant attempts against the SAME user. Without
+# this, two admins clicking "выдать" simultaneously can each pass the
+# get_active_subscription check (TOCTOU window: read shows no active sub
+# → both create_subscription succeed → user ends up with parallel paid
+# subs, configs from both leak forever). Module-level dict keyed by user_id;
+# entries persist for the process lifetime but each Lock is ~150 bytes and
+# grants are infrequent, so growth is bounded in practice.
+_grant_locks: dict[int, asyncio.Lock] = {}
+
+
 class AdminGrantConflict(Exception):
     """admin_grant_subscription отказался: у юзера активная sub другого плана.
 
@@ -1151,7 +1161,6 @@ async def admin_grant_subscription(
         ValueError: bad plan_key / days
         AdminGrantConflict: юзер уже на другом активном плане
     """
-    import json as _json
     from services.plans import VPN_PLANS
 
     plan = VPN_PLANS.get(plan_key)
@@ -1159,6 +1168,37 @@ async def admin_grant_subscription(
         raise ValueError(f"unknown plan_key: {plan_key}")
     if not isinstance(days, int) or not (1 <= days <= 365):
         raise ValueError(f"days must be int in [1, 365], got {days}")
+
+    # CA1: per-user lock around the check-then-create. The old code raced
+    # — two concurrent grants for the same user could each see "no active
+    # sub" and then both insert, leaving the user with two parallel paid
+    # subs. The lock makes the read-then-write atomic in-process.
+    lock = _grant_locks.setdefault(target_user_id, asyncio.Lock())
+    async with lock:
+        return await _admin_grant_subscription_locked(
+            admin_id=admin_id,
+            target_user_id=target_user_id,
+            plan_key=plan_key,
+            plan=plan,
+            days=days,
+            reason=reason,
+            target_username=target_username,
+        )
+
+
+async def _admin_grant_subscription_locked(
+    admin_id: int,
+    target_user_id: int,
+    plan_key: str,
+    plan: dict,
+    days: int,
+    reason: str | None,
+    target_username: str | None,
+) -> dict:
+    """Inner body of admin_grant_subscription — runs under _grant_locks[user].
+    Validation already done by the public wrapper.
+    """
+    import json as _json
 
     # 1) Ensure user exists. Если юзер ещё не /start'нул бота — username из
     # admin-формы попадёт как first_name (для отображения «кому выдано»).
