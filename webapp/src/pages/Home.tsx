@@ -133,7 +133,9 @@ export default function Home() {
   }
 
   // EU-F6: RUB-paying users (CryptoBot/OxaPay/Lava) have stars_spent=0; include rub_spent in card visibility.
-  const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0 || stats.invited > 0)
+  // invited вытащен из stats-grid (см. ниже) — он показывается только на /referral
+  // чтобы не дублировать метрики на главной dashboard'е.
+  const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0)
 
   const quickActions = [
     {
@@ -473,8 +475,10 @@ export default function Home() {
         </div>
 
         {/* ── Referral banner ── */}
-        {/* Если юзер уже кого-то пригласил — показываем его прогресс прямо
-            в баннере (без клика). Иначе — generic CTA. */}
+        {/* Реф-баннер — generic CTA, всегда «Пригласи друга».  Прогресс
+            (сколько пригласил / бонусы / ожидание оплаты) показываем только
+            на странице /referral, чтобы Home оставалась чистой dashboard'ой
+            без дублирования метрик. */}
         <button
           type="button"
           onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); nav('/referral') }}
@@ -490,29 +494,12 @@ export default function Home() {
             </svg>
           </div>
           <div className="flex-1 min-w-0">
-            {stats && stats.invited > 0 ? (
-              <>
-                <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
-                  {t('home_invite_progress')
-                    .replace('{invited}', String(stats.invited))
-                    .replace('{bonus}', String(stats.bonus_days))}
-                </div>
-                <div className="text-xs text-[var(--tg-theme-hint-color)]">
-                  {stats.converted > 0
-                    ? t('home_invite_progress_sub_with_converts').replace('{converted}', String(stats.converted))
-                    : t('home_invite_progress_sub')}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
-                  {t('home_invite')}
-                </div>
-                <div className="text-xs text-[var(--tg-theme-hint-color)]">
-                  {t('home_invite_sub')}
-                </div>
-              </>
-            )}
+            <div className="text-sm font-bold text-[var(--tg-theme-text-color)] mb-[2px]">
+              {t('home_invite')}
+            </div>
+            <div className="text-xs text-[var(--tg-theme-hint-color)]">
+              {t('home_invite_sub')}
+            </div>
           </div>
           <svg width="7" height="12" viewBox="0 0 7 12" fill="none">
             <path d="M1 1l5 5-5 5" stroke="rgba(128,128,128,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
@@ -533,7 +520,8 @@ export default function Home() {
               // Без пробела между числом и единицей выглядело как «+12дн.»
               { value: `+${p(stats!.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}`,
                 label: t('home_bonus_label'),  show: stats!.bonus_days > 0 },
-              { value: String(stats!.invited),       label: t('home_invited_label'),      show: stats!.invited > 0     },
+              // «Приглашено N» убрано — дублировало инфу со страницы /referral.
+              // hasStats тоже не учитывает invited (см. выше).
             ].filter(x => x.show).map(({ value, label }) => (
               <div key={label} className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] px-2 py-3 text-center">
                 <div className="text-base font-extrabold text-[var(--tg-theme-text-color)]">{value}</div>
