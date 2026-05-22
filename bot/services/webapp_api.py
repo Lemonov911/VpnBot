@@ -4810,7 +4810,8 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     lava_recurring_charges: list[dict] = []
     if payment_source == "lavatop":
         import aiosqlite as _aiosqlite_local
-        async with _aiosqlite_local.connect(DB_PATH) as db:
+        from services.database import DB_PATH as _DB_PATH_lava
+        async with _aiosqlite_local.connect(_DB_PATH_lava) as db:
             async with db.execute(
                 "SELECT tx_id, amount_usd, created_at FROM payments "
                 "WHERE subscription_id=? AND method='lavatop' ORDER BY id DESC",
