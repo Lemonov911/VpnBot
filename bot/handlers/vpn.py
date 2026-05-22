@@ -560,6 +560,16 @@ async def _deliver_vpn(message: Message, payment, plan: dict, plan_key: str,
         from services.database import (
             is_payment_refunded, mark_payment_refunded,
         )
+        # Sentinel payment-row ПЕРЕД refund: без него mark_payment_refunded
+        # бьёт по несуществующей строке (rowcount=0), is_payment_refunded на
+        # ретрае возвращает False → branch повторно дёргает refund_star_payment
+        # → Telegram 400 CHARGE_ALREADY_REFUNDED + flood-control + дубль
+        # «звёзды возвращены» юзеру. Зеркало fcfe3ee на CryptoBot side.
+        await record_payment(
+            user_id=user_id, subscription_id=racing["id"],
+            method="stars", tx_id=payment_id,
+            stars=payment.total_amount,
+        )
         if not await is_payment_refunded(payment_id):
             try:
                 await message.bot.refund_star_payment(user_id, payment_id)
