@@ -200,6 +200,11 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_concurrent_plan_change": "План был изменён в другом окне. Перезагрузи страницу.",
         "bot_api_err_unknown_plan":         "Неизвестный тариф",
         "bot_api_err_current_plan_unknown": "Ошибка: текущий тариф не распознан",
+        # BUG-2/BUG-3 guard (audit 23.05): pro-rated upgrade pricing хардкодит /30
+        # и change_subscription_plan extends expires_at только для grace.
+        # Multi-period планы (3m/6m/12m) → underprice exploit + срезание
+        # купленного периода до остатка. До правильной реализации — отбиваем 400.
+        "bot_api_err_multi_period_unsupported": "Смена тарифа между многомесячными планами пока не поддерживается. Дождись окончания текущей подписки и оформи новую.",
         "bot_api_err_upgrade_unavailable":  "Оплата апгрейда временно недоступна",
         "bot_api_err_cryptobot_disabled":   "CryptoBot не настроен",
         "bot_api_err_oxapay_disabled":      "OxaPay не подключён",
@@ -477,6 +482,8 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_concurrent_plan_change": "Plan was changed in another window. Reload the page.",
         "bot_api_err_unknown_plan":         "Unknown plan",
         "bot_api_err_current_plan_unknown": "Error: current plan not recognized",
+        # BUG-2/BUG-3 guard (audit 23.05): see RU comment above.
+        "bot_api_err_multi_period_unsupported": "Switching between multi-month plans is not supported yet. Wait for the current subscription to end and purchase a new one.",
         "bot_api_err_upgrade_unavailable":  "Upgrade payment temporarily unavailable",
         "bot_api_err_cryptobot_disabled":   "CryptoBot is not configured",
         "bot_api_err_oxapay_disabled":      "OxaPay is not enabled",

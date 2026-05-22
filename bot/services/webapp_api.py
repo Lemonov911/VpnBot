@@ -1316,6 +1316,43 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                     pass
                 return web.Response(status=200)
 
+            # Multi-period guard (audit 23.05, BUG-2/BUG-3): defense-in-depth.
+            # API entry (handle_vpn_change_plan) уже отбивает 400 на multi-period —
+            # но in-flight invoice'ы, созданные до деплоя guard'а, могут долететь
+            # сюда. Pro-rated формула /30 underprice'ит upgrade, а
+            # change_subscription_plan не extends expires_at для не-grace юзеров.
+            # Если попало multi-period в webhook → отказ + admin alert + refund.
+            cur_plan_obj_guard = VPN_PLANS.get(old_plan_key)
+            if (up_plan.get("duration_days", 30) != 30 or (
+                    cur_plan_obj_guard is not None
+                    and cur_plan_obj_guard.get("duration_days", 30) != 30)):
+                logger.error(
+                    "CryptoBot upgrade rejected (multi-period guard): "
+                    "sub=%d %s→%s invoice=%s — money received, manual refund needed",
+                    up_sub_id, old_plan_key, up_plan_key, invoice.get("invoice_id"),
+                )
+                # record_payment чтобы тот же invoice не ретраился.
+                await _rp(user_id=up_user_id, subscription_id=up_sub_id,
+                          method="crypto", tx_id=payment_id)
+                try:
+                    if ADMIN_ID:
+                        bot_alert3: Bot = request.app["bot"]
+                        await bot_alert3.send_message(
+                            ADMIN_ID,
+                            f"🚨 <b>CryptoBot upgrade rejected (multi-period guard)</b>\n\n"
+                            f"User: <code>{up_user_id}</code>\n"
+                            f"Sub: #{up_sub_id}\n"
+                            f"Plan: <code>{old_plan_key}</code> → <code>{up_plan_key}</code>\n"
+                            f"Invoice: <code>{invoice.get('invoice_id')}</code>\n"
+                            f"Amount: {invoice.get('paid_amount', '')} {invoice.get('paid_asset', '')}\n\n"
+                            "Multi-period upgrade пока не поддерживается. "
+                            "Refund через CryptoBot вручную.",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    pass
+                return web.Response(status=200)
+
             # Пересчитываем deltas от ТЕКУЩЕГО sub.plan (новый формат) или
             # берём baked-in (legacy формат, in-flight pre-PS2 invoice'ы).
             if legacy_deltas is not None:
@@ -3418,6 +3455,28 @@ async def handle_vpn_change_plan(request: web.Request) -> web.Response:
 
     if plan_key == sub["plan"]:
         return web.json_response({"ok": True, "same": True})
+
+    # Multi-period guard (audit 23.05, BUG-2/BUG-3):
+    # Pro-rated формула ниже хардкодит /30 — `(new_rub - cur_rub) * remaining_days / 30`.
+    # Если duration_days != 30 хотя бы у одного плана, формула ломается:
+    # - cur multi-period (90d) → знаменатель остаётся 30, делитель отражает
+    #   только часть периода → underprice (вплоть до клампа max(1, ...) = 1₽,
+    #   когда (new_rub - cur_rub) уходит в минус из-за более низкой общей цены
+    #   длинного плана при upgrade по per-day).
+    # - new multi-period → change_subscription_plan extends expires_at только
+    #   для grace; active sub получает срезание купленного периода до
+    #   остатка старого (юзер платит за 90d, получает 10d).
+    # Frontend (Mini App, VISIBLE_PLANS) сейчас прячет multi-period — но
+    # прямой POST с валидной initData через DevTools обходит фильтр.
+    # До правильной реализации (deferred — отдельный задел) отбиваем 400.
+    if (cur_plan.get("duration_days", 30) != 30
+            or new_plan.get("duration_days", 30) != 30):
+        return await _user_err(
+            user["id"],
+            "multi_period_unsupported",
+            "bot_api_err_multi_period_unsupported",
+            400,
+        )
 
     from datetime import datetime
     # EU-F-r1: parallel to handle_vpn_subscription (EU-F4). NULL or unparseable

@@ -1211,6 +1211,44 @@ async def _apply_plan_upgrade(message: Message, payment):
             )
             return
 
+        # Multi-period guard (audit 23.05, BUG-2/BUG-3): defense-in-depth.
+        # Stars upgrade flow в текущем prod disabled (см. project_pending_details
+        # пункт «Stars upgrade выключен»), но invoice'ы могут долететь после
+        # re-enable. Pro-rated формула /30 underprice'ит, expires_at не
+        # extends'ится для активных sub'ов. Multi-period в payload → отказ +
+        # admin alert + manual refund (refundStarPayment).
+        cur_plan_guard = VPN_PLANS.get(old_plan_key)
+        if (plan.get("duration_days", 30) != 30 or (
+                cur_plan_guard is not None
+                and cur_plan_guard.get("duration_days", 30) != 30)):
+            logger.error(
+                "Stars upgrade rejected (multi-period guard): "
+                "user=%d sub=%d %s→%s charge=%s",
+                user_id, sub_id, old_plan_key, plan_key, payment_id,
+            )
+            from config import ADMIN_ID
+            try:
+                if ADMIN_ID:
+                    await message.bot.send_message(
+                        ADMIN_ID,
+                        f"🚨 <b>Stars upgrade rejected (multi-period guard)</b>\n\n"
+                        f"User: <code>{user_id}</code>\n"
+                        f"Sub: #{sub_id}\n"
+                        f"Plan: <code>{old_plan_key}</code> → <code>{plan_key}</code>\n"
+                        f"Charge: <code>{payment_id}</code>\n\n"
+                        "Multi-period upgrade пока не поддерживается. "
+                        "Refund через bot refundStarPayment (charge_id выше).",
+                        parse_mode="HTML",
+                    )
+            except Exception:
+                pass
+            await message.answer(
+                "⚠️ Произошла ошибка обработки. Админ уже уведомлён — деньги вернутся "
+                "в течение нескольких часов. Если не — напиши в поддержку.",
+                parse_mode="HTML",
+            )
+            return
+
         # Пересчитываем deltas от ТЕКУЩЕГО sub.plan (новый формат) или берём
         # baked-in (legacy формат).
         if legacy_deltas is not None:
