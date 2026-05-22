@@ -12,7 +12,7 @@ from aiogram.types import (
 from config import ADMIN_ID, SHOW_ESIM
 from services.database import (
     upsert_user, set_referred_by, get_referral_stats, add_referral_bonus,
-    has_any_subscription, has_active_paid_sub,
+    has_any_subscription, is_eligible_referrer,
 )
 from services.trial import can_claim_trial, TRIAL_DAYS
 
@@ -156,12 +156,15 @@ async def cmd_start(message: Message):
     if start_param.startswith("ref_"):
         try:
             referrer_id = int(start_param[4:])
-            if referrer_id > 0 and referrer_id != user_id:
+            # Sanity bound: Telegram user_id fits in int53 (~9e15). Всё что
+            # выше — мусор/попытка спама. Без upper-bound на /start ref_<huge>
+            # мы бы парсили произвольно длинные числа и били DB лишним запросом.
+            if 0 < referrer_id < 10**13 and referrer_id != user_id:
                 if await has_any_subscription(user_id):
                     ref_link_late = True
-                elif await has_active_paid_sub(referrer_id):
+                elif await is_eligible_referrer(referrer_id):
                     await set_referred_by(user_id, referrer_id)
-                # else: реферрер на триале/без подписки — silent skip
+                # else: referrer не существует / забанен / не paid — silent skip
         except ValueError:
             pass
 

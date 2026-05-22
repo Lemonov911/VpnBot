@@ -3768,12 +3768,20 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
 
     # Grace → active transition: unthrottle VPN configs so the user regains
     # full speed immediately (redeem_referral_bonus flips status to 'active').
+    # Await вместо _spawn_bg: fire-and-forget терял агент-ошибки → юзер залипал
+    # на slow tier после redeem. Тот же fix как в scheduler.py:451.
     if was_grace and sub_before is not None:
         from services.grace import unthrottle_sub_configs
-        _spawn_bg(
-            unthrottle_sub_configs(sub_before["id"], user["id"], sub_before["plan"]),
-            name=f"unthrottle_referral_sub{sub_before['id']}",
-        )
+        try:
+            await unthrottle_sub_configs(
+                sub_before["id"], user["id"], sub_before["plan"],
+            )
+        except Exception as e:
+            logger.error(
+                "referral redeem unthrottle sub #%d FAILED: %s — "
+                "user may be stuck on slow tier",
+                sub_before["id"], e, exc_info=True,
+            )
 
     # Notify юзеру в чат бота
     try:

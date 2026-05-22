@@ -3486,6 +3486,32 @@ async def has_active_paid_sub(user_id: int) -> bool:
             return (await cur.fetchone()) is not None
 
 
+async def is_eligible_referrer(referrer_id: int) -> bool:
+    """True если referrer_id может быть рефером для нового юзера.
+
+    Требования (все обязательны):
+      1. Запись в users существует (защита от orphan ref_999999999 которым
+         посторонний может проспамить /start). До этого `has_active_paid_sub`
+         молча возвращал False для несуществующих юзеров, но запрос к
+         subscriptions всё равно бил DB.
+      2. Юзер не забанен — у забаненного нет права делиться ссылками.
+      3. Есть активная или grace платная подписка (не trial).
+    """
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT 1
+               FROM users u
+               JOIN subscriptions s ON s.user_id = u.id
+               WHERE u.id=?
+                 AND COALESCE(u.is_banned, 0) = 0
+                 AND s.status IN ('active', 'grace')
+                 AND s.plan != 'vpn_trial'
+               LIMIT 1""",
+            (referrer_id,),
+        ) as cur:
+            return (await cur.fetchone()) is not None
+
+
 async def get_referred_by(user_id: int) -> int | None:
     """Возвращает referrer_id если юзер пришёл по реферальной ссылке, иначе None.
     Используется в trial.py для определения 7-day vs 3-day триала."""
