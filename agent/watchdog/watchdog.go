@@ -1,6 +1,7 @@
 package watchdog
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,7 +29,7 @@ func New(botToken string, adminIDs []int64, checkAddr string) *Watchdog {
 	}
 }
 
-func (w *Watchdog) Run() {
+func (w *Watchdog) Run(ctx context.Context) {
 	if w.botToken == "" || len(w.adminIDs) == 0 {
 		log.Println("watchdog: no bot token or admin IDs, disabled")
 		return
@@ -38,8 +39,14 @@ func (w *Watchdog) Run() {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		w.check()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("watchdog: stopped")
+			return
+		case <-ticker.C:
+			w.check()
+		}
 	}
 }
 
@@ -71,19 +78,25 @@ func (w *Watchdog) check() {
 }
 
 func (w *Watchdog) notify(text string) {
+	// Fan-out per-admin POSTs in goroutines so a stuck Telegram call doesn't
+	// block the watchdog ticker. Each call carries its own 5s client timeout.
 	for _, id := range w.adminIDs {
-		apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.botToken)
-		body := url.Values{
-			"chat_id":    {fmt.Sprintf("%d", id)},
-			"text":       {text},
-			"parse_mode": {"Markdown"},
-		}
-		resp, err := w.client.Post(apiURL, "application/x-www-form-urlencoded",
-			strings.NewReader(body.Encode()))
-		if err != nil {
-			log.Printf("watchdog: telegram notify error: %v", err)
-		} else {
-			resp.Body.Close()
-		}
+		go w.notifyOne(id, text)
 	}
+}
+
+func (w *Watchdog) notifyOne(adminID int64, text string) {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", w.botToken)
+	body := url.Values{
+		"chat_id":    {fmt.Sprintf("%d", adminID)},
+		"text":       {text},
+		"parse_mode": {"Markdown"},
+	}
+	resp, err := w.client.Post(apiURL, "application/x-www-form-urlencoded",
+		strings.NewReader(body.Encode()))
+	if err != nil {
+		log.Printf("watchdog: telegram notify error (admin=%d): %v", adminID, err)
+		return
+	}
+	resp.Body.Close()
 }

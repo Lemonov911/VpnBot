@@ -74,7 +74,8 @@ func (s *Server) handleServiceAddPeer(svc service.Service, compatWG bool) http.H
 			peer, err = svc.AddPeer(req.Label)
 		}
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("addPeer: %v", err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if compatWG {
@@ -100,7 +101,8 @@ func (s *Server) handleServiceListPeers(svc service.Service, compatWG bool) http
 	return func(w http.ResponseWriter, r *http.Request) {
 		peers, err := svc.ListPeers()
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("listPeers: %v", err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if compatWG {
@@ -143,7 +145,8 @@ func (s *Server) handleServiceRemovePeer(svc service.Service) http.HandlerFunc {
 			return
 		}
 		if err := svc.RemovePeer(id); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("removePeer id=%s: %v", id, err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, map[string]string{"status": "removed"})
@@ -158,7 +161,8 @@ func (s *Server) handleServiceSuspendPeer(svc service.Service) http.HandlerFunc 
 			return
 		}
 		if err := svc.SuspendPeer(id); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("suspendPeer id=%s: %v", id, err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, map[string]string{"status": "suspended"})
@@ -173,7 +177,8 @@ func (s *Server) handleServiceResumePeer(svc service.Service) http.HandlerFunc {
 			return
 		}
 		if err := svc.ResumePeer(id); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("resumePeer id=%s: %v", id, err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, map[string]string{"status": "resumed"})
@@ -227,7 +232,7 @@ func (s *Server) handleServiceThrottlePeer(iface string) http.HandlerFunc {
 				"u32", "match", "ip", "dst", peerIP + "/32", "flowid", classid},
 		}
 		for _, cmd := range cmds {
-			if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(r.Context(), cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
 				// ignore "already exists" errors
 				if !strings.Contains(string(out), "RTNETLINK answers: File exists") {
 					logger.Printf("throttle tc warn: %v: %s", err, out)
@@ -261,10 +266,16 @@ func (s *Server) handleServiceUnthrottlePeer(iface string) http.HandlerFunc {
 		}
 		octet := fmt.Sprintf("%d", ip4[3])
 		classid := "3:" + octet
-		// Remove filter and class for this peer
-		exec.Command("tc", "filter", "del", "dev", iface, "parent", "3:", "protocol", "ip",
-			"u32", "match", "ip", "dst", peerIP+"/32", "flowid", classid).Run()
-		exec.Command("tc", "class", "del", "dev", iface, "classid", classid).Run()
+		// Remove filter and class for this peer. tc cleanup is best-effort:
+		// the peer is already removed/quota-limited, so failures here only mean
+		// stale tc rules — log and continue rather than 500ing the request.
+		if out, err := exec.CommandContext(r.Context(), "tc", "filter", "del", "dev", iface, "parent", "3:", "protocol", "ip",
+			"u32", "match", "ip", "dst", peerIP+"/32", "flowid", classid).CombinedOutput(); err != nil {
+			log.Printf("tc unthrottle filter: %v: %s", err, out)
+		}
+		if out, err := exec.CommandContext(r.Context(), "tc", "class", "del", "dev", iface, "classid", classid).CombinedOutput(); err != nil {
+			log.Printf("tc unthrottle class: %v: %s", err, out)
+		}
 		jsonOK(w, map[string]string{"status": "unthrottled", "ip": peerIP})
 	}
 }
@@ -281,7 +292,8 @@ func (s *Server) handleServiceSuspendAll(svc service.Service, compatWG bool) htt
 			ids = req.Pubkeys
 		}
 		if err := svc.SuspendAll(ids); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("suspendAll: %v", err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, map[string]string{"status": "ok"})
@@ -300,7 +312,8 @@ func (s *Server) handleServiceResumeAll(svc service.Service, compatWG bool) http
 			ids = req.Pubkeys
 		}
 		if err := svc.ResumeAll(ids); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("resumeAll: %v", err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		jsonOK(w, map[string]string{"status": "ok"})
@@ -329,7 +342,8 @@ func (s *Server) handleServiceSync(svc service.Service, svcName string) http.Han
 		}
 		peers, err := svc.ListPeers()
 		if err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("sync[%s] listPeers: %v", svcName, err)
+			jsonError(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		valid := make(map[string]bool, len(req.ValidIDs))
@@ -370,7 +384,9 @@ func serviceNames(services map[string]service.Service) []string {
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("jsonOK encode: %v", err)
+	}
 }
 
 func peerID(r *http.Request) string {
@@ -389,5 +405,7 @@ func peerID(r *http.Request) string {
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
+		log.Printf("jsonError encode: %v", err)
+	}
 }

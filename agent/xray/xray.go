@@ -413,17 +413,23 @@ func parseStatValue(out []byte) int64 {
 }
 
 // Health pings the Xray HTTP health endpoint (legacy — separate from gRPC API).
+// Uses a bounded-timeout client so a wedged Xray can't hang our /health handler
+// (which fans out to all services). 5s is conservative — Xray is loopback.
 func (m *Manager) Health() (map[string]any, error) {
 	if m.apiAddr == "" {
 		return map[string]any{"status": "no-api"}, nil
 	}
-	resp, err := http.Get("http://" + m.apiAddr + "/health")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + m.apiAddr + "/health")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	var result map[string]any
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("xray health: malformed response: %v", err)
+		return nil, err
+	}
 	return result, nil
 }

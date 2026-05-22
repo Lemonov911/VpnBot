@@ -25,6 +25,9 @@ func main() {
 
 	cfg := config.Load()
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	services := make(map[string]service.Service)
 
 	// Ensure state directory exists for persistent agent state (suspended VLESS peers).
@@ -123,7 +126,7 @@ func main() {
 			cfg.FairShareIntervalSec,
 			wgMgr,
 		)
-		go fs.Run()
+		go fs.Run(ctx)
 	}
 
 	wd := watchdog.New(
@@ -131,18 +134,17 @@ func main() {
 		cfg.TelegramAdminIDs,
 		"http://"+cfg.ListenAddr+"/health",
 	)
-	go wd.Run()
+	go wd.Run(ctx)
 
 	srv := api.NewServer(services, wgMgr, cfg.AgentToken)
 	httpServer := &http.Server{
-		Addr:         cfg.ListenAddr,
-		Handler:      srv.Handler(),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:              cfg.ListenAddr,
+		Handler:           srv.Handler(),
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		log.Printf("vpnctl listening on %s (services: %v)", cfg.ListenAddr, cfg.Services)
@@ -151,12 +153,12 @@ func main() {
 		}
 	}()
 
-	<-quit
+	<-ctx.Done()
 	log.Println("shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := httpServer.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		// Shutdown returns the context deadline error if in-flight handlers
 		// don't drain within 5s. Logging makes the difference between
 		// "clean shutdown" and "killed mid-request" visible in journalctl.

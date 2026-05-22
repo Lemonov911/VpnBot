@@ -2,7 +2,6 @@ package wg
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -521,12 +520,6 @@ Endpoint = %s
 AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 `, cc.PrivateKey, cc.AssignedIP, cc.DNS, cc.PublicKey, cc.Endpoint)
-}
-
-func randomHex(n int) string {
-	b := make([]byte, n)
-	b = b[:copy(b, b)]
-	return base64.StdEncoding.EncodeToString(b)
 }
 
 func SetupInterface(iface string, port int) error {
