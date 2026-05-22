@@ -223,6 +223,38 @@ class VpnctlClient:
     async def list_wg_peers(self) -> list:
         return await self.list_peers("wg")
 
+    async def self_update(self, url: str, sha256: str, *, timeout_s: int = 360) -> dict:
+        """Триггерит remote-обновление agent binary без SSH.
+
+        Агент скачает binary из `url`, проверит SHA256, swap'нет в /usr/local/bin/
+        и сделает `systemctl restart` свого сервиса.  Если хеш не совпадает —
+        отказ без swap'а.  Если swap прошёл но agent не поднялся — backup
+        в `<binary>.old.<ts>` для ручного восстановления через SSH.
+
+        Args:
+            url: HTTP(S) URL до нового бинаря, достижимый с agent-сервера.
+                Обычно http://<bot-vps>:<port>/path/vpnctl_awg (raw file).
+            sha256: hex-encoded SHA256 ожидаемого binary (64 chars).
+            timeout_s: long timeout — agent скачивает ~8 МБ + verify + swap,
+                может занять 30-60с на медленном канале.
+
+        Returns: ответ агента, обычно
+            {"status":"ok","message":"...","bytes":N,"sha256":"...","backup":"..."}
+            После этого agent рестартится через ~2с — следующий HTTP-вызов
+            может отвалиться connection-reset, ловить и считать успехом
+            если HEAD /health отвечает с новым PID.
+        """
+        st, data = await self._request(
+            "POST", "/admin/self-update",
+            {"url": url, "sha256": sha256},
+            timeout_s=timeout_s,
+        )
+        if st != 200:
+            raise VpnctlError(
+                f"self_update: HTTP {st} — {data if data else 'no body'}"
+            )
+        return data if isinstance(data, dict) else {}
+
 
 def client_for_server(server: dict) -> VpnctlClient:
     if not server.get("agent_url") or not server.get("agent_token"):

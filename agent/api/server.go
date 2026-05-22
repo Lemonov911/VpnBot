@@ -20,19 +20,28 @@ import (
 )
 
 type Server struct {
-	services  map[string]service.Service
-	wgMgr     *wg.Manager
-	token     string
-	startTime time.Time
+	services              map[string]service.Service
+	wgMgr                 *wg.Manager
+	token                 string
+	startTime             time.Time
+	selfUpdateServiceName string // systemd unit для restart после self-update
 }
 
 func NewServer(services map[string]service.Service, wgMgr *wg.Manager, token string) *Server {
 	return &Server{
-		services:  services,
-		wgMgr:     wgMgr,
-		token:     token,
-		startTime: time.Now(),
+		services:              services,
+		wgMgr:                 wgMgr,
+		token:                 token,
+		startTime:             time.Now(),
+		selfUpdateServiceName: "vpnctl-awg.service",
 	}
+}
+
+// SetSelfUpdateServiceName переопределяет systemd unit name для restart-after-update.
+// Дефолт vpnctl-awg.service — для нашей инфры. Если разворачиваем agent под
+// другим service name, нужно вызвать это до Handler().
+func (s *Server) SetSelfUpdateServiceName(name string) {
+	s.selfUpdateServiceName = name
 }
 
 func (s *Server) Handler() http.Handler {
@@ -83,6 +92,15 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/peers/suspend-all", s.handleServiceSuspendAll(wgSvc, true))
 			r.Post("/peers/resume-all", s.handleServiceResumeAll(wgSvc, true))
 		}
+
+		// Self-update endpoint: позволяет remote обновлять agent binary без
+		// SSH-доступа к серверу. После первого обновления через SSH/web-console
+		// (нужного чтобы получить этот endpoint в binary) — все будущие
+		// апдейты через POST /admin/self-update. Auth — общий HMAC, плюс
+		// SHA256 hash скачанного бинаря должен совпадать с переданным.
+		r.Post("/admin/self-update", s.HandleSelfUpdate(SelfUpdateConfig{
+			ServiceName: s.selfUpdateServiceName,
+		}))
 	})
 
 	return r
