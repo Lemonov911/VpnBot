@@ -1027,9 +1027,9 @@ async def handle_vpn_config_activate(request: web.Request) -> web.Response:
     if sub_status == "grace" and config["protocol"] == "awg" and peer_ip:
         try:
             from services.vpnctl_client import throttle_peer
-            await throttle_peer(server, peer_name, "awg", peer_ip, kbps=256)
+            await throttle_peer(server, peer_name, "awg", peer_ip, kbps=512)
             logger.info(
-                "Слот #%d (AWG grace): применён throttle 256 кбит/с на %s",
+                "Слот #%d (AWG grace): применён throttle 512 кбит/с на %s",
                 config_id, peer_ip,
             )
         except Exception as e:

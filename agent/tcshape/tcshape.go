@@ -17,7 +17,7 @@
 //	1:10 → default, 1 Gbit/s (vless-base, vless-max, всё остальное)
 //	1:20 → vless-base-slow (5 Mbit/s)
 //	1:30 → vless-max-slow  (15 Mbit/s)
-//	1:40 → vless-grace     (256 kbit/s)
+//	1:40 → vless-grace     (default 512 kbit/s, override XRAY_GRACE_RATE_KBIT)
 //
 // Filter matchит source-port на offset 20 (первые 2 байта TCP header после
 // 20-byte IP header) — egress server'а отвечает с этого порта, throttle применяется.
@@ -51,10 +51,13 @@ func Apply(iface string, tiers []Tier) {
 
 	cmds := [][]string{
 		// Root HTB qdisc.  default 0x10 = всё что не match'нулось → класс 1:10 (full speed).
+		// `add` (не `replace`) — `replace` qdisc сбросил бы child classes + filters,
+		// поэтому идемпотентность здесь через "Exclusivity flag on" ловлю в errors-allowlist.
 		{"tc", "qdisc", "add", "dev", iface, "root", "handle", "1:", "htb", "default", "0x10"},
-		// Default class — full speed.  burst 100mb — позволяет initial TCP-всплеск
-		// чтобы handshake/первые TLS-пакеты не упирались в rate.
-		{"tc", "class", "add", "dev", iface, "parent", "1:", "classid", "1:10",
+		// Default class — full speed.  `replace` чтобы при изменении rate в config
+		// (например подняли с 1Gbit до 10Gbit) агент на следующий рестарт обновил класс,
+		// а не оставлял старое значение с "File exists" no-op.
+		{"tc", "class", "replace", "dev", iface, "parent", "1:", "classid", "1:10",
 			"htb", "rate", "1000mbit", "ceil", "1000mbit", "burst", "100mb"},
 	}
 
@@ -63,9 +66,12 @@ func Apply(iface string, tiers []Tier) {
 			continue
 		}
 		rateStr := kbitStr(t.RateKbit)
-		// Per-tier класс с rate==ceil (без overuse).  burst 64k = ~30ms на 256kbit.
+		// Per-tier класс с rate==ceil (без overuse).  burst 64k.
+		// `replace` (не `add`): когда мы меняем RateKbit в config (256→512 например),
+		// при agent restart класс обновляется на новый rate.  `add` бы возвращал
+		// "File exists" и класс остался бы со старым значением — баг 22.05 у Ангелины.
 		cmds = append(cmds, []string{
-			"tc", "class", "add", "dev", iface,
+			"tc", "class", "replace", "dev", iface,
 			"parent", "1:", "classid", t.ClassID,
 			"htb", "rate", rateStr, "ceil", rateStr, "burst", "64k",
 		})

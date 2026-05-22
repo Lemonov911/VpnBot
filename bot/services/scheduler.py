@@ -325,8 +325,8 @@ async def _process_expired_subscriptions(bot: Bot):
                 if protocol == "awg":
                     # tc-throttle: ограничиваем пир на awg0 по dst IP
                     if assigned_ip and peer_name:
-                        await client.throttle_peer("awg", peer_name, assigned_ip, kbps=256)
-                        logger.info("AWG конфиг #%d throttled 256kbps (sub=%d)", cfg_id, sub_id)
+                        await client.throttle_peer("awg", peer_name, assigned_ip, kbps=512)
+                        logger.info("AWG конфиг #%d throttled 512kbps (sub=%d)", cfg_id, sub_id)
                     else:
                         # Data drift: assigned_ip пустой → throttle невозможен
                         # без него (tc нужен dst IP для фильтра).  Без alert'а

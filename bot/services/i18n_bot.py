@@ -17,7 +17,7 @@ T: dict[str, dict[str, str]] = {
         "bot_trial_success_until":      "📅 До: <b>{until}</b>",
         "bot_trial_success_speed":      "🚀 Скорость: 60 Mbps",
         "bot_trial_success_after":      "💎 После trial — выбери постоянный тариф ↓",
-        "bot_grace_notice":             "⏳ <b>Подписка истекла — VPN работает на 256 кбит/с 14 дней</b>\n\nПродли в Mini App, чтобы вернуть полную скорость.",
+        "bot_grace_notice":             "⏳ <b>Подписка истекла — VPN работает на 512 кбит/с 14 дней</b>\n\nПродли в Mini App, чтобы вернуть полную скорость.",
         "bot_expiry_notice":            "❌ <b>Подписка закрыта</b>\n\nVPN-конфиги отключены. Открой Mini App чтобы оформить новую подписку ↓",
         "bot_trial_expiry_notice":      "⌛ <b>Trial закончился</b>\n\nЧтобы продолжить — выбери постоянный тариф ↓",
         "bot_renewal_reminder_today":   "🔁 <b>Сегодня спишется {amount} ₽ с твоей карты</b>",
@@ -52,7 +52,7 @@ T: dict[str, dict[str, str]] = {
         "bot_referral_bonus_activated": "🎁 <b>Бонусные дни активированы!</b>\n\nДобавлено: <b>+{days} {day_word}</b>\nПодписка действует до: <b>{until}</b>",
         "bot_server_decom":             "🔄 <b>Локация VPN обновлена</b>\n\nОдин из VPN-серверов выведен из эксплуатации. Открой Happ → потяни вниз для обновления подписки. Остальные локации работают как обычно.",
         "bot_server_migration":         "🔄 <b>Ваш VPN перенесён</b>\n\nСервер заменён на {server}.\nСкачайте обновлённый конфиг в <a href=\"{url}\">приложении</a>.",
-        "bot_lava_charge_failed":       "⚠️ <b>Не удалось продлить подписку</b>\n\nLava не смогла списать оплату с карты. Lava попробует ещё раз через сутки. Если не получится — VPN перейдёт в режим 256 кбит/с на 14 дней.\n\nПроверь баланс карты или оплати вручную через меню.",
+        "bot_lava_charge_failed":       "⚠️ <b>Не удалось продлить подписку</b>\n\nLava не смогла списать оплату с карты. Lava попробует ещё раз через сутки. Если не получится — VPN перейдёт в режим 512 кбит/с на 14 дней.\n\nПроверь баланс карты или оплати вручную через меню.",
         "bot_payment_failed":           "⚠️ <b>Оплата не прошла</b>\n\nLava не смогла списать с карты. Возможные причины:\n• недостаточно средств\n• 3DS не пройден\n• карта заблокирована для онлайн-оплат\n\nПопробуй оплатить ещё раз или выбери другой способ.",
         "bot_ban_message":              "🚫 Доступ ограничен.\n\nЕсли считаешь это ошибкой — напиши на support@maxvpnesim.com",
         # /start greetings + referral
@@ -96,7 +96,7 @@ T: dict[str, dict[str, str]] = {
             "Последний шанс продлить без перерыва в работе VPN.",
         "bot_grace_3d":
             "⏰ <b>Через 3 дня VPN отключится</b>\n\n"
-            "Подписка в режиме 256 кбит/с — а через 3 дня закроется совсем. "
+            "Подписка в режиме 512 кбит/с — а через 3 дня закроется совсем. "
             "Продли сейчас, чтобы вернуть полную скорость и не остаться без VPN.",
         "bot_stars_renewal_today":
             "🔁 <b>Сегодня Telegram спишет {stars} ⭐ за продление</b>\n\n"
@@ -297,7 +297,7 @@ T: dict[str, dict[str, str]] = {
         "bot_trial_success_until":      "📅 Until: <b>{until}</b>",
         "bot_trial_success_speed":      "🚀 Speed: 60 Mbps",
         "bot_trial_success_after":      "💎 After trial — pick a permanent plan ↓",
-        "bot_grace_notice":             "⏳ <b>Subscription expired — VPN throttled to 256 kbps for 14 days</b>\n\nRenew in Mini App to restore full speed.",
+        "bot_grace_notice":             "⏳ <b>Subscription expired — VPN throttled to 512 kbps for 14 days</b>\n\nRenew in Mini App to restore full speed.",
         "bot_expiry_notice":            "❌ <b>Subscription closed</b>\n\nVPN configs disabled. Open Mini App to pick a new plan ↓",
         "bot_trial_expiry_notice":      "⌛ <b>Trial ended</b>\n\nTo keep VPN — pick a permanent plan ↓",
         "bot_renewal_reminder_today":   "🔁 <b>Today {amount} ₽ will be charged from your card</b>",
@@ -332,7 +332,7 @@ T: dict[str, dict[str, str]] = {
         "bot_referral_bonus_activated": "🎁 <b>Bonus days activated!</b>\n\nAdded: <b>+{days} {day_word}</b>\nSubscription active until: <b>{until}</b>",
         "bot_server_decom":             "🔄 <b>VPN location updated</b>\n\nOne of the VPN servers was decommissioned. Open Happ → pull down to refresh the subscription. Other locations work as usual.",
         "bot_server_migration":         "🔄 <b>Your VPN has been migrated</b>\n\nServer replaced with {server}.\nDownload the updated config in the <a href=\"{url}\">app</a>.",
-        "bot_lava_charge_failed":       "⚠️ <b>Could not renew subscription</b>\n\nLava could not charge your card. Lava will retry in 24h. If it fails — VPN will throttle to 256 kbps for 14 days.\n\nCheck your card balance or pay manually via menu.",
+        "bot_lava_charge_failed":       "⚠️ <b>Could not renew subscription</b>\n\nLava could not charge your card. Lava will retry in 24h. If it fails — VPN will throttle to 512 kbps for 14 days.\n\nCheck your card balance or pay manually via menu.",
         "bot_payment_failed":           "⚠️ <b>Payment failed</b>\n\nLava could not charge your card. Possible reasons:\n• insufficient funds\n• 3DS not passed\n• card blocked for online payments\n\nTry paying again or use another method.",
         "bot_ban_message":              "🚫 Access restricted.\n\nIf you think this is a mistake — write to support@maxvpnesim.com",
         # /start greetings + referral
@@ -376,7 +376,7 @@ T: dict[str, dict[str, str]] = {
             "Last chance to renew without interrupting VPN service.",
         "bot_grace_3d":
             "⏰ <b>VPN shuts down in 3 days</b>\n\n"
-            "Subscription is throttled to 256 kbps — and in 3 days it will close completely. "
+            "Subscription is throttled to 512 kbps — and in 3 days it will close completely. "
             "Renew now to restore full speed and avoid losing your VPN.",
         "bot_stars_renewal_today":
             "🔁 <b>Today Telegram will charge {stars} ⭐ for renewal</b>\n\n"
