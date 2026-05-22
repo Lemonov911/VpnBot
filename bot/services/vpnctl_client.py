@@ -4,6 +4,7 @@
 плюс совместимость с legacy X-Agent-Token (агент принимает любой из двух).
 """
 
+import asyncio
 import hashlib
 import hmac as _hmac
 import json as _json
@@ -88,25 +89,41 @@ class VpnctlClient:
         headers = self._sign(method, path, body_bytes)
         url = f"{self.base}{path}"
         s = _get_session()
-        async with s.request(
-            method, url,
-            data=body_bytes if body_bytes else None,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(
-                total=timeout_s,
-                # connect/sock_connect предотвращают зависание при DROP-правиле
-                # (без RST). TCP SYN retransmit без connect timeout = ~2 min hang,
-                # что поглощает весь _safe() budget на один мёртвый сервер.
-                connect=min(10, timeout_s),
-                sock_connect=min(10, timeout_s),
-            ),
-        ) as r:
-            ctype = r.headers.get("Content-Type", "")
-            if "application/json" in ctype:
-                data = await r.json()
-            else:
-                data = await r.text()
-            return r.status, data
+        # Все aiohttp/asyncio транспортные ошибки оборачиваем в VpnctlError.
+        # Без этого per-slot try/except VpnctlError в provision-циклах
+        # (handlers/vpn.py:_deliver_vpn и provision_vpn_slots_async) пропускал
+        # asyncio.TimeoutError / aiohttp.ServerDisconnectedError наверх; в
+        # webhook-провижин-flow (CryptoBot/OxaPay/Lava) caller сбрасывал
+        # delivered=0 → mark_subscription_expired, при этом уже созданные
+        # пиры на агенте оставались orphan + active configs в БД для expired
+        # sub'ы. Никакой reconcile эти orphan'ы не подбирал (audit 2026-05-23
+        # BUG-1, scenario аудит покупки flow #1).
+        # Что НЕ ловим: BaseException (CancelledError, KeyboardInterrupt) —
+        # это lifecycle события, должны проходить через стек как-есть.
+        try:
+            async with s.request(
+                method, url,
+                data=body_bytes if body_bytes else None,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(
+                    total=timeout_s,
+                    # connect/sock_connect предотвращают зависание при DROP-правиле
+                    # (без RST). TCP SYN retransmit без connect timeout = ~2 min hang,
+                    # что поглощает весь _safe() budget на один мёртвый сервер.
+                    connect=min(10, timeout_s),
+                    sock_connect=min(10, timeout_s),
+                ),
+            ) as r:
+                ctype = r.headers.get("Content-Type", "")
+                if "application/json" in ctype:
+                    data = await r.json()
+                else:
+                    data = await r.text()
+                return r.status, data
+        except (aiohttp.ClientError, asyncio.TimeoutError, _json.JSONDecodeError) as e:
+            raise VpnctlError(
+                f"{method} {path}: {type(e).__name__}: {e}"
+            ) from e
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
