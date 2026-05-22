@@ -5,11 +5,10 @@ asyncssh==2.18.0
 aiohttp==3.9.5
 qrcode[pil]==7.4.2
 Pillow==10.4.0
-# pillow-heif — OPTIONAL. Включить HEIC/HEIF support от iPhone-юзеров.
-# Если установка падает (нет libheif на VPS, прокси к PyPI и т.п.) — оставить
-# закомментированным. Бот стартует без неё; HEIC-апдейты получают понятную
-# ошибку "unsupported_type", остальные форматы (JPEG/PNG/WebP) работают.
-# pillow-heif==0.18.0
+# pillow-heif: HEIC/HEIF support от iPhone-юзеров. Требует libheif1 на VPS
+# (apt install libheif1 libheif-dev — обычно уже стоит на Ubuntu 24+).
+# Если падает на установке: закомментируй, бот стартует без HEIC.
+pillow-heif==0.18.0
 
 # Test dependencies
 pytest>=8.0
