@@ -3902,11 +3902,24 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
 
                 # HEIC → JPEG conversion. Telegram clients on desktop/older
                 # Android can't render HEIC natively, so we normalise.
+                # pillow-heif опционален: если не установлен на VPS (нет
+                # libheif на ОС, прокси к PyPI отказал), HEIC-аплоад вернёт
+                # юзеру явный «unsupported», а не «bad file type».
                 if detected_ext == "heic":
                     try:
                         import io
                         from PIL import Image  # type: ignore[import-not-found]
-                        import pillow_heif  # type: ignore[import-not-found]
+                        try:
+                            import pillow_heif  # type: ignore[import-not-found]
+                        except ImportError:
+                            logger.warning(
+                                "HEIC upload rejected: pillow-heif not installed "
+                                "(add to requirements.txt + redeploy to enable)"
+                            )
+                            return await _user_err(
+                                user["id"], "heic_unsupported",
+                                "bot_api_err_heic_unsupported", 400,
+                            )
                         pillow_heif.register_heif_opener()
                         heic_img = Image.open(io.BytesIO(data))
                         out = io.BytesIO()

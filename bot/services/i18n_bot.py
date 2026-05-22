@@ -217,6 +217,7 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_file_too_large":       "Файл больше 5 МБ",
         "bot_api_err_total_too_large":      "Суммарный размер больше 25 МБ",
         "bot_api_err_bad_file_type":        "Поддерживаются только JPEG/PNG/WebP/HEIC",
+        "bot_api_err_heic_unsupported":     "HEIC временно недоступен — пересохрани как JPEG/PNG и отправь снова.",
         # Device label fallback
         "bot_device_fallback":              "Устройство #{n}",
         # Telegram invoice descriptions (shown in TG payment dialog)
@@ -491,6 +492,7 @@ T: dict[str, dict[str, str]] = {
         "bot_api_err_file_too_large":       "File over 5 MB",
         "bot_api_err_total_too_large":      "Total size over 25 MB",
         "bot_api_err_bad_file_type":        "Only JPEG/PNG/WebP/HEIC supported",
+        "bot_api_err_heic_unsupported":     "HEIC is temporarily unavailable — please re-export as JPEG/PNG and try again.",
         # Device label fallback
         "bot_device_fallback":              "Device #{n}",
         # Telegram invoice descriptions

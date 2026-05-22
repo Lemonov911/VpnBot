@@ -5,7 +5,11 @@ asyncssh==2.18.0
 aiohttp==3.9.5
 qrcode[pil]==7.4.2
 Pillow==10.4.0
-pillow-heif==0.18.0
+# pillow-heif — OPTIONAL. Включить HEIC/HEIF support от iPhone-юзеров.
+# Если установка падает (нет libheif на VPS, прокси к PyPI и т.п.) — оставить
+# закомментированным. Бот стартует без неё; HEIC-апдейты получают понятную
+# ошибку "unsupported_type", остальные форматы (JPEG/PNG/WebP) работают.
+# pillow-heif==0.18.0
 
 # Test dependencies
 pytest>=8.0
