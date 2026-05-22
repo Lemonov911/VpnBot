@@ -2434,12 +2434,19 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
         # Нижняя граница: предыдущий «слой» — для 1d это 0ч (всё что ближе
         # 30ч но ещё активно), для 3d — 2 дня (как раньше).
         lower_modifier = "0 hours" if days == 1 else f"+{days-1} days"
+        # N1: фильтруем юзеров, заблокировавших бота — _send_throttled всё равно
+        # отбился бы 403, но без pre-filter каждый scheduler tick потреблял
+        # rate-limit budget на гарантированно failing send'ах. И mark_reminded
+        # после 403 не вызвался → следующий час повтор. Раньше bot_blocked_at
+        # был только реактивным (memory: «реактивный подход»).
         async with db.execute(
-            f"""SELECT * FROM subscriptions
-                WHERE status='active'
-                AND {col}=0
-                AND datetime(expires_at) > datetime('now', '{lower_modifier}')
-                AND datetime(expires_at) < datetime('now', '+{int(upper_hours)} hours')""",
+            f"""SELECT s.* FROM subscriptions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.status='active'
+                AND s.{col}=0
+                AND u.bot_blocked_at IS NULL
+                AND datetime(s.expires_at) > datetime('now', '{lower_modifier}')
+                AND datetime(s.expires_at) < datetime('now', '+{int(upper_hours)} hours')""",
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 

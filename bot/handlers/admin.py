@@ -546,6 +546,29 @@ async def _deliver_free_vpn(
     Создаёт бесплатную подписку с пустыми слотами.
     Пользователь активирует конфиги сам в мини-апп → Мои конфиги.
     """
+    # H1: ban-bypass guard. Без него /send <banned_user> <plan> создавал sub
+    # игнорируя бан — админ забывал что юзер забанен, юзер по факту имел
+    # бесплатный доступ через активные конфиги.
+    from services.database import is_user_banned, has_active_subscription
+    if await is_user_banned(user_id):
+        if notify_admin:
+            await message.answer(
+                f"❌ user {user_id} забанен. /unban → потом /send."
+            )
+        return
+
+    # H2: дубль-sub guard. /gift поверх существующей active → две активные
+    # подписки на user_id, два набора слотов, путаница для админа и юзера.
+    # Если действительно нужно «компенсация» — продли подписку через админ-
+    # панель вместо создания второй.
+    if await has_active_subscription(user_id):
+        if notify_admin:
+            await message.answer(
+                f"❌ user {user_id} уже имеет активную подписку. "
+                f"Используй extend в админ-панели вместо /send."
+            )
+        return
+
     # Гарантируем запись в users — FK в subscriptions требует user_id.
     # Если юзер ещё не /start'нул бота, upsert создаёт минимальный ряд;
     # при первом /start он перезапишется реальными данными.

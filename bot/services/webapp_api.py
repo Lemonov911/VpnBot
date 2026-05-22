@@ -3998,7 +3998,11 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
                         pillow_heif.register_heif_opener()
                         heic_img = Image.open(io.BytesIO(data))
                         out = io.BytesIO()
-                        heic_img.convert("RGB").save(out, format="JPEG", quality=85)
+                        # exif=b"" чтобы не таскать GPS / camera-metadata в
+                        # JPEG — иначе админ видит координаты юзера. См. S1.
+                        heic_img.convert("RGB").save(
+                            out, format="JPEG", quality=85, exif=b"",
+                        )
                         data = out.getvalue()
                         detected_ext = "jpeg"
                     except Exception as e:
@@ -4008,18 +4012,36 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
                             "bot_api_err_bad_file_type", 400,
                         )
 
-                # Final structural validation — magic bytes alone don't catch
-                # truncated/corrupt streams that would explode Telegram's CDN.
-                # Только для изображений: PIL.verify не понимает MP4/MOV,
-                # для них валидация = magic-byte match + Telegram-side parse.
+                # Final structural validation + EXIF strip — magic bytes
+                # alone не ловят truncated/corrupt streams (взрывали бы Telegram
+                # CDN), а raw passthrough JPEG/PNG/WebP содержит EXIF с GPS /
+                # серийником камеры — privacy leak администратору. Re-save без
+                # EXIF (exif=b"") убирает оба класса проблем за один PIL pass.
+                # PIL.verify не понимает MP4/MOV — видео валидируем только по
+                # magic-bytes + Telegram-side parse.
                 if not is_video:
                     try:
                         import io
                         from PIL import Image  # type: ignore[import-not-found]
                         img = Image.open(io.BytesIO(data))
-                        img.verify()
+                        img.load()
+                        out = io.BytesIO()
+                        fmt = "JPEG" if detected_ext in ("jpeg", "jpg") else (
+                            "PNG" if detected_ext == "png" else (
+                                "WEBP" if detected_ext == "webp" else (
+                                    img.format or "JPEG"
+                                )
+                            )
+                        )
+                        save_kwargs: dict = {"format": fmt, "exif": b""}
+                        if fmt == "JPEG":
+                            save_kwargs["quality"] = 90
+                            if img.mode not in ("RGB", "L"):
+                                img = img.convert("RGB")
+                        img.save(out, **save_kwargs)
+                        data = out.getvalue()
                     except Exception as e:
-                        logger.warning("Image verify failed user=%d: %s", user["id"], e)
+                        logger.warning("Image verify/strip failed user=%d: %s", user["id"], e)
                         return await _user_err(
                             user["id"], "bad_file_type",
                             "bot_api_err_bad_file_type", 400,
@@ -4037,14 +4059,27 @@ async def handle_support_ticket(request: web.Request) -> web.Response:
         category = str(body.get("category", "other"))
 
     # Common validation — even with photos we require a meaningful text body.
-    if len(text) < 10:
+    # Strip non-printable: zero-width chars (U+200B-200F, U+202A-202E,
+    # U+2060-2064, U+FEFF, U+00AD) визуально пустые, но проходят len()-check.
+    # Без фильтра юзер мог писать «​ × 10» и обойти min-10.
+    # NFKC normalize чтобы full-width / compatibility варианты сжимались.
+    import unicodedata as _ud
+    import re as _re
+    _normalized = _ud.normalize("NFKC", text)
+    _visible = _re.sub(
+        r"[​-‏‪-‮⁠-⁤﻿­]"
+        r"|[\x00-\x1F\x7F]",
+        "", _normalized,
+    ).strip()
+    if len(_visible) < 10:
         return await _user_err(
             user["id"], "text_too_short", "bot_api_err_text_too_short", 400,
         )
-    if len(text) > 2000:
+    if len(_visible) > 2000:
         return await _user_err(
             user["id"], "text_too_long", "bot_api_err_text_too_long", 400,
         )
+    text = _visible
 
     if category not in CATEGORY_LABELS:
         category = "other"
