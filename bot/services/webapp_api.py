@@ -1656,7 +1656,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
             logger.error("CryptoBot 0/N: mark_subscription_expired sub=%d: %s",
                          sub_id, e, exc_info=True)
         try:
-            from config import ADMIN_ID
+            # NB: ADMIN_ID берётся из модульного импорта (line 34). Локальный
+            # `from config import ADMIN_ID` здесь раньше превращал ADMIN_ID
+            # в local-var для ВСЕЙ функции → все `if ADMIN_ID:` ВЫШЕ давали
+            # UnboundLocalError silent-caught by except: pass → 4 admin-alerta
+            # (ban / ratelimit / provision-fail / dedup) тихо не работали в проде.
             if ADMIN_ID:
                 # Не пишем paid_amount/paid_asset в TG-чат:
                 # device-compromise → financial profiling. Сумма всегда доступна
