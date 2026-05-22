@@ -1296,6 +1296,11 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                     up_user_id, up_sub_id, expected_from, up_sub["plan"],
                     expected_from, up_plan_key, invoice.get("invoice_id"),
                 )
+                # record_payment чтобы тот же invoice не ретраился и не
+                # спамил admin alert'ами (симметрия с multi-period/status
+                # guards ниже).
+                await _rp(user_id=up_user_id, subscription_id=up_sub_id,
+                          method="crypto", tx_id=payment_id)
                 try:
                     if ADMIN_ID:
                         bot_alert: Bot = request.app["bot"]
