@@ -38,8 +38,27 @@ jobs:
         run: |
           cd bot && python -m mypy services/ --no-error-summary
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: bot/requirements.txt
+      - name: Install bot deps (incl. test deps)
+        run: |
+          pip install -q -r bot/requirements.txt
+      # pytest гоняет всё кроме `legacy_broken` — список baseline-фейлов
+      # живёт в bot/tests/conftest.py::LEGACY_BROKEN_TESTS, фиксят отдельно.
+      # addopts="-m 'not legacy_broken'" задан в bot/tests/pytest.ini.
+      - name: pytest (bot/)
+        run: |
+          cd bot && python -m pytest tests/ -q --tb=short
+
   deploy:
-    needs: lint
+    needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
       # No git checkout needed — the server pulls main itself.
