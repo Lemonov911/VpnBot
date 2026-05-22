@@ -43,11 +43,25 @@ type Config struct {
 	// Per-service tier params. Key = service name ("vless", "vless-base", "vless-max").
 	// Each tier has its own Xray inbound tag and first-port for adu JSON.
 	XrayTiers map[string]TierConfig
+
+	// Интерфейс на котором ставится HTB-shaping для VLESS-tier'ов (slow/grace).
+	// На большинстве VPS дефолтный route — eth0; auto-detect неоправдан т.к. в
+	// контейнерах/AWS бывает ens5/enp0s3 — переопределяй через TC_SHAPE_IFACE.
+	// Пустая строка отключает tcshape (для dev/testing без root).
+	TCShapeIface string
 }
 
 type TierConfig struct {
 	InboundTag  string
 	InboundPort int
+	// RateKbit — server-side HTB throttle для этого tier'а (kbit/s). 0 = unlimited.
+	// Применяется через source-port filter на egress-интерфейсе (см. tcshape).
+	// Default'ы соответствуют ручному setup'у на Amsterdam: slow=5/15Mbit, grace=256kbit.
+	RateKbit int
+	// TCClassID + TCFilterPref — фиксированные для совместимости с уже
+	// задеплоенным HTB на серверах где tc ставился руками.
+	TCClassID    string
+	TCFilterPref int
 }
 
 func Load() *Config {
@@ -97,6 +111,7 @@ func Load() *Config {
 		XrayFingerprint: env("XRAY_FINGERPRINT", "chrome"),
 		XrayPeerLabel:   env("XRAY_PEER_LABEL", ""),
 		XrayTiers:       map[string]TierConfig{},
+		TCShapeIface:    env("TC_SHAPE_IFACE", "eth0"),
 	}
 
 	// Tier-specific config: каждый VLESS-service (vless, vless-base, vless-max)
@@ -110,12 +125,15 @@ func Load() *Config {
 		"vless-grace":     "XRAY_GRACE",
 	}
 	tierDefaults := map[string]TierConfig{
-		"vless":           {InboundTag: "vless-in", InboundPort: 8443},
-		"vless-base":      {InboundTag: "vless-reality-base", InboundPort: 8443},
-		"vless-max":       {InboundTag: "vless-reality-max", InboundPort: 8448},
-		"vless-base-slow": {InboundTag: "vless-reality-base-slow", InboundPort: 9443},
-		"vless-max-slow":  {InboundTag: "vless-reality-max-slow", InboundPort: 9448},
-		"vless-grace":     {InboundTag: "vless-reality-grace", InboundPort: 9453},
+		"vless":           {InboundTag: "vless-in", InboundPort: 8443, RateKbit: 0},
+		"vless-base":      {InboundTag: "vless-reality-base", InboundPort: 8443, RateKbit: 0},
+		"vless-max":       {InboundTag: "vless-reality-max", InboundPort: 8448, RateKbit: 0},
+		// Class-id / filter-pref совпадают с тем что ручной setup ставил на проде
+		// (Amsterdam). Менять их = повторный `add` упадёт с "File exists" норм,
+		// но если кто-то ОТЛИЧАЕТСЯ — будет два set'а классов с разными rate'ами.
+		"vless-base-slow": {InboundTag: "vless-reality-base-slow", InboundPort: 9443, RateKbit: 5000, TCClassID: "1:20", TCFilterPref: 49152},
+		"vless-max-slow":  {InboundTag: "vless-reality-max-slow", InboundPort: 9448, RateKbit: 15000, TCClassID: "1:30", TCFilterPref: 49151},
+		"vless-grace":     {InboundTag: "vless-reality-grace", InboundPort: 9453, RateKbit: 256, TCClassID: "1:40", TCFilterPref: 49150},
 	}
 	hasVLESS := false
 	for _, svc := range services {
@@ -132,9 +150,15 @@ func Load() *Config {
 			// in a way that's invisible until the bot tries to connect.
 			log.Fatalf("invalid env %s_INBOUND_PORT=%q: %v", prefix, portStr, err)
 		}
+		// RateKbit можно переопределить через ENV (например для дешёвых нод
+		// поднять vless-grace до 512kbit). Если ENV пуст — default'ы.
+		rateKbit := envInt(prefix+"_RATE_KBIT", def.RateKbit)
 		cfg.XrayTiers[svc] = TierConfig{
-			InboundTag:  env(prefix+"_INBOUND_TAG", def.InboundTag),
-			InboundPort: port,
+			InboundTag:   env(prefix+"_INBOUND_TAG", def.InboundTag),
+			InboundPort:  port,
+			RateKbit:     rateKbit,
+			TCClassID:    def.TCClassID,
+			TCFilterPref: def.TCFilterPref,
 		}
 	}
 

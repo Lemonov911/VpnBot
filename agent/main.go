@@ -15,6 +15,7 @@ import (
 	"vpnctl/config"
 	"vpnctl/fairshare"
 	"vpnctl/service"
+	"vpnctl/tcshape"
 	"vpnctl/watchdog"
 	wgpkg "vpnctl/wg"
 	xraypkg "vpnctl/xray"
@@ -116,6 +117,27 @@ func main() {
 
 	if len(services) == 0 {
 		log.Fatal("no services configured (set SERVICES=wg,awg,...)")
+	}
+
+	// VLESS HTB-shaping на egress (eth0).  Идемпотентно — повторные старты
+	// агента не ломают существующий tc-state, новые серверы получают throttle
+	// автоматически без ручного setup'а (баг 22.05 на Charlotte: vless-grace
+	// был запущен но HTB не настроен → юзер на истёкшей подписке имел full speed).
+	var shapeTiers []tcshape.Tier
+	for name, tier := range cfg.XrayTiers {
+		if tier.RateKbit <= 0 || tier.TCClassID == "" {
+			continue
+		}
+		shapeTiers = append(shapeTiers, tcshape.Tier{
+			Name:       name,
+			Port:       tier.InboundPort,
+			ClassID:    tier.TCClassID,
+			RateKbit:   tier.RateKbit,
+			FilterPref: tier.TCFilterPref,
+		})
+	}
+	if len(shapeTiers) > 0 {
+		tcshape.Apply(cfg.TCShapeIface, shapeTiers)
 	}
 
 	if wgMgr != nil {
