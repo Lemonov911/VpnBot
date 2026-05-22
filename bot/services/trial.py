@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 # Не чистим dict при completion — на 10k юзеров это ~1 MB, не drama.
 _TRIAL_LOCKS: dict[int, asyncio.Lock] = {}
 
+# Per-sub lock для bootstrap_vless_for_sub (audit F1): без него два
+# параллельных admin grant'а / retry на flaky network могли запустить
+# bootstrap дважды для одной sub, оба читали тот же empty_vless список,
+# оба генерировали свой slot_uuid → split-brain peers + active_peers drift.
+_BOOTSTRAP_LOCKS: dict[int, asyncio.Lock] = {}
+
 # Длина пробного периода. 3 дня — стандарт RU TG-VPN-рынка (Матушка дают 3,
 # Pink Panther 1). Достаточно чтобы юзер реально потестил скорость и обход
 # DPI на своём операторе.
@@ -200,10 +206,26 @@ async def _provision_trial_locked(user_id: int) -> dict:
         for server in vless_servers:
             cfg_id = await create_config_record(sub_id, user_id, protocol="vless",
                                                   server_id=server["id"])
+            flag = (server.get("flag") or "").replace(" ", "")
+            label = f"trial_{user_id}_{flag or server['id']}"
+            peer = None
             try:
-                flag = (server.get("flag") or "").replace(" ", "")
-                label = f"trial_{user_id}_{flag or server['id']}"
                 peer = await provision_peer(server, label, "vless-base", peer_id=slot_uuid)
+            except VpnctlError as e:
+                logger.warning("trial vless provision server=%s slot=%d: %s",
+                                server.get("id"), cfg_id, e, exc_info=True)
+                # Peer не поднялся — чистим orphan config-запись (status='empty')
+                try:
+                    from services.database import delete_config_record
+                    await delete_config_record(cfg_id)
+                except Exception as rb_err:
+                    logger.warning("trial vless cleanup cfg #%d: %s", cfg_id, rb_err)
+                continue
+            # F3: provision успешный — теперь save_peer_to_config + counter.
+            # Если они упадут (DB hiccup), peer уже на агенте → ghost.
+            # Compensating remove чтобы active_peers не дрейфовал и пир
+            # не висел навсегда не привязанный к юзеру.
+            try:
                 loc = " ".join(filter(None, [
                     (server.get("flag") or "").strip(),
                     (server.get("city") or server.get("name") or "").strip(),
@@ -219,16 +241,23 @@ async def _provision_trial_locked(user_id: int) -> dict:
                 )
                 await update_server_peer_count(server["id"], +1)
                 vless_provisioned += 1
-            except VpnctlError as e:
-                logger.warning("trial vless server=%s slot=%d: %s",
-                                server.get("id"), cfg_id, e, exc_info=True)
-                # Удаляем orphan config-запись (status='empty') созданную
-                # выше — peer не поднялся, слот не нужен.
+            except Exception as save_err:
+                logger.error("trial vless save/counter cfg #%d (peer=%s) failed: %s",
+                              cfg_id, peer.id, save_err, exc_info=True)
+                # Compensating: убираем ghost peer + cleanup config row
+                try:
+                    from services.vpnctl_client import client_for_server
+                    await client_for_server(server).remove_peer("vless-base", slot_uuid)
+                    logger.info("trial vless: compensating remove ghost peer srv=%s OK",
+                                server.get("id"))
+                except Exception as cleanup_err:
+                    logger.error("trial vless: compensating remove FAILED srv=%s: %s",
+                                  server.get("id"), cleanup_err)
                 try:
                     from services.database import delete_config_record
                     await delete_config_record(cfg_id)
-                except Exception as rb_err:
-                    logger.warning("trial vless cleanup cfg #%d: %s", cfg_id, rb_err)
+                except Exception:
+                    pass
         if vless_provisioned == 0:
             # Ни одна локация не запровижилась → триал не выдан
             raise TrialNoServer()
@@ -323,7 +352,10 @@ async def _provision_trial_locked(user_id: int) -> dict:
     }
 
 
-async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> int:
+async def bootstrap_vless_for_sub(
+    sub_id: int, user_id: int, plan_key: str,
+    bot: "object | None" = None,
+) -> int:
     """Активирует VLESS на всех active VLESS-серверах для свежей grant-sub.
 
     Зачем: admin-grant создаёт только empty слоты (см. admin_grant_subscription
@@ -336,13 +368,29 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
 
     Re-uses первые N empty VLESS-слотов этой sub (по числу active VLESS-серверов).
     Best-effort: ошибка одного сервера не останавливает остальные. Если все
-    серверы упали — sub остаётся без VLESS, log + админ-алёрт через caller.
+    серверы упали — sub остаётся без VLESS, log + админ-алёрт.
+
+    Idempotency: per-sub asyncio.Lock защищает от двойного запуска при
+    race grant retry / parallel admin clicks (audit F1).
+
+    Args:
+        bot: опциональный aiogram Bot для админ-алерта о partial fail (F11).
+             Не передан → только лог, без TG-уведомления.
 
     Returns: число успешно прованизированных пиров.
     """
     import uuid as _uuid
     from urllib.parse import quote as _q
 
+    # F1: per-sub lock — concurrent bootstrap'ы для одной sub серилизуются.
+    # После выхода из lock дальнейшие вызовы найдут empty_vless=[] и no-op'нутся
+    # (idempotent).
+    lock = _BOOTSTRAP_LOCKS.setdefault(sub_id, asyncio.Lock())
+    async with lock:
+        return await _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _uuid, _q)
+
+
+async def _bootstrap_vless_locked(sub_id, user_id, plan_key, bot, _uuid, _q) -> int:
     # get_configs_for_subscription() фильтрует status='active' — нам нужны empty.
     # Используем by_protocol-вариант: возвращает все статусы, empty в начале.
     from services.database import get_configs_for_subscription_by_protocol
@@ -351,6 +399,10 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
     vless_servers = await get_all_active_servers("vless")
     if not vless_servers:
         logger.warning("bootstrap_vless: no active VLESS servers, sub=%d skipped", sub_id)
+        await _alert_admin_bootstrap_failed(
+            bot, sub_id, user_id, plan_key, 0, 0,
+            reason="no active VLESS servers",
+        )
         return 0
 
     cfgs = await get_configs_for_subscription_by_protocol(sub_id, "vless")
@@ -369,14 +421,23 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
     # Один UUID на все серверы — Happ subscription с multi-location.
     slot_uuid = str(_uuid.uuid4())
     provisioned = 0
+    target_count = min(len(vless_servers), len(empty_vless))
     for i, server in enumerate(vless_servers):
         if i >= len(empty_vless):
             break  # серверов больше чем плановых слотов — оставляем хвост (rare)
         cfg = empty_vless[i]
+        flag = (server.get("flag") or "").replace(" ", "")
+        label = f"grant_{user_id}_{flag or server['id']}"
+        peer = None
         try:
-            flag = (server.get("flag") or "").replace(" ", "")
-            label = f"grant_{user_id}_{flag or server['id']}"
             peer = await provision_peer(server, label, tier_svc, peer_id=slot_uuid)
+        except VpnctlError as e:
+            logger.warning("bootstrap_vless provision cfg=%d server=%s: %s",
+                            cfg["id"], server.get("id"), e, exc_info=True)
+            continue
+        # F3-mirror: provision успешный — теперь save+counter. Если они упадут,
+        # peer на сервере останется ghost-ом → compensating remove.
+        try:
             loc = " ".join(filter(None, [
                 (server.get("flag") or "").strip(),
                 (server.get("city") or server.get("name") or "").strip(),
@@ -392,13 +453,62 @@ async def bootstrap_vless_for_sub(sub_id: int, user_id: int, plan_key: str) -> i
             )
             await update_server_peer_count(server["id"], +1)
             provisioned += 1
-        except VpnctlError as e:
-            logger.warning("bootstrap_vless cfg=%d server=%s: %s",
-                            cfg["id"], server.get("id"), e, exc_info=True)
         except Exception as e:
-            logger.error("bootstrap_vless unexpected cfg=%d: %s",
-                          cfg["id"], e, exc_info=True)
+            logger.error("bootstrap_vless save/counter cfg=%d (provisioned peer=%s) failed: %s",
+                          cfg["id"], peer.id, e, exc_info=True)
+            # Compensating remove — иначе ghost peer на агенте без записи в БД,
+            # юзер никогда не сможет его удалить через Mini App.
+            try:
+                from services.vpnctl_client import client_for_server
+                cli = client_for_server(server)
+                await cli.remove_peer(tier_svc, slot_uuid)
+                logger.info("bootstrap_vless: compensating remove ghost peer on srv=%s OK",
+                            server.get("id"))
+            except Exception as cleanup_err:
+                logger.error("bootstrap_vless: compensating remove FAILED srv=%s: %s — "
+                              "ghost peer останется до scheduler-sync",
+                              server.get("id"), cleanup_err)
 
     logger.info("bootstrap_vless: sub=%d user=%d provisioned %d/%d VLESS peers (tier=%s)",
-                sub_id, user_id, provisioned, len(vless_servers), tier_svc)
+                sub_id, user_id, provisioned, target_count, tier_svc)
+
+    # F11: админ-алёрт если provisioned < target. Любой partial fail для
+    # paid grant'а — потеря локации в Happ subscription, юзер этого не увидит,
+    # надо чтобы админ сам нашёл и руками починил.
+    if provisioned < target_count:
+        await _alert_admin_bootstrap_failed(
+            bot, sub_id, user_id, plan_key, provisioned, target_count,
+            reason="provision_peer / save failures на части серверов",
+        )
     return provisioned
+
+
+async def _alert_admin_bootstrap_failed(
+    bot, sub_id: int, user_id: int, plan_key: str,
+    provisioned: int, target: int, reason: str,
+) -> None:
+    """TG-алёрт админу: bootstrap_vless_for_sub отработал с partial/full fail.
+
+    Без алёрта админ не узнаёт что юзер получил grant'ed sub без VLESS —
+    в Mini App у юзера VLESS просто отсутствует (фильтр s.protocol !== 'vless'
+    скрывает empty slots), он не репортит «нет VLESS» а просто молча сидит.
+    """
+    if bot is None:
+        return
+    try:
+        from config import ADMIN_ID
+        from html import escape as _esc
+        if not ADMIN_ID:
+            return
+        await bot.send_message(
+            ADMIN_ID,
+            f"⚠️ <b>VLESS bootstrap partial fail</b>\n\n"
+            f"sub <code>#{sub_id}</code> (user <code>{user_id}</code>, plan {_esc(plan_key)})\n"
+            f"Provisioned: <b>{provisioned}/{target}</b>\n"
+            f"Reason: {_esc(reason)}\n\n"
+            f"Юзер видит sub_url с меньшим числом локаций чем должен. "
+            f"Проверь логи и при нужде повтори grant или manual provision.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.warning("bootstrap_vless admin alert failed: %s", e)

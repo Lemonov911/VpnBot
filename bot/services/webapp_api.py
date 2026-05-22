@@ -2364,7 +2364,7 @@ async def handle_lavatop_webhook(request: web.Request) -> web.Response:
         # None = sub уже expired (webhook пришёл слишком поздно) — не воскрешаем.
         was_grace = await extend_subscription_expires_at(sub["id"], plan["duration_days"])
         # Audit F4/F5: cache invalidate после изменения expires_at и/или status.
-        _invalidate_vpn_sub_cache(up_user_id)
+        _invalidate_vpn_sub_cache(sub["user_id"])
 
         if was_grace is None:
             # FFF3: либо sub уже expired (webhook поздний), либо юзер отменил
@@ -4940,12 +4940,17 @@ async def handle_admin_grant_subscription(request: web.Request) -> web.Response:
     # карточки вообще нет (per-slot UI для VLESS отфильтрован). На trial /
     # paid-flow первый VLESS-пир активируется автоматически; gift был
     # исключением — теперь паритет восстановлен.
+    # Передаём bot чтобы при partial fail (audit F11) уйти TG-алёрт админу —
+    # иначе юзер молча сидит без VLESS, никто не узнает.
     if result.get("action") == "created" and result.get("subscription_id"):
         plan_def = VPN_PLANS.get(plan_key, {})
         if plan_def.get("vless_slots", 0) > 0:
             from services.trial import bootstrap_vless_for_sub
             _spawn_bg(
-                bootstrap_vless_for_sub(result["subscription_id"], target_id, plan_key),
+                bootstrap_vless_for_sub(
+                    result["subscription_id"], target_id, plan_key,
+                    bot=request.app["bot"],
+                ),
                 name=f"vless_bootstrap_grant_sub{result['subscription_id']}",
             )
 
