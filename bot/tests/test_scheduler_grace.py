@@ -16,6 +16,7 @@ import pytest_asyncio
 import aiosqlite
 
 from services.database import (
+    upsert_user,
     create_subscription,
     create_config_record,
     activate_config_slot,
@@ -48,6 +49,8 @@ async def db_with_server(fresh_db, monkeypatch):
 
 
 async def _make_sub(user_id: int, expires_at: str, plan: str = "vpn_trial") -> int:
+    # FK guard: subscriptions.user_id → users.id, so the row must exist.
+    await upsert_user(user_id, username=f"u{user_id}", first_name=f"U{user_id}")
     return await create_subscription(
         user_id=user_id, plan=plan,
         payment_id=f"t_{user_id}_{expires_at[:10]}",
@@ -120,9 +123,14 @@ def _mock_client():
 async def test_awg_expiry_throttle_called_and_sub_goes_to_grace(
         fresh_db, db_with_server):
     """When an AWG sub expires: throttle_peer must be called and the sub
-    must transition to status='grace'."""
+    must transition to status='grace'.
+
+    EU-F-r4: scheduler's _process_expired_subscriptions skips plan='vpn_trial'
+    (trials go through a separate cleanup path). Use a paid plan so the
+    throttle branch fires.
+    """
     server_id = db_with_server
-    sub_id = await _make_sub(user_id=1, expires_at=PAST)
+    sub_id = await _make_sub(user_id=1, expires_at=PAST, plan="vpn_base")
     await _make_active_awg(sub_id, server_id, assigned_ip="10.0.0.2")
 
     mock_client = _mock_client()
@@ -135,7 +143,9 @@ async def test_awg_expiry_throttle_called_and_sub_goes_to_grace(
     mock_client.throttle_peer.assert_awaited_once()
     call_args = mock_client.throttle_peer.await_args
     assert call_args.args[0] == "awg"        # protocol
-    assert call_args.kwargs.get("kbps") == 256
+    # AWG grace throttle bumped from 256 kbps to 1024 kbps (1 Mbit) — see
+    # services/scheduler.py:GRACE_AWG_KBPS.
+    assert call_args.kwargs.get("kbps") == 1024
 
     sub = await get_subscription_by_id(sub_id)
     assert sub["status"] == "grace"
@@ -146,7 +156,7 @@ async def test_awg_expiry_throttle_called_and_sub_goes_to_grace(
 async def test_awg_expiry_no_server_still_marks_grace(fresh_db, db_with_server):
     """Config with no server_id (slot never activated on agent): sub still
     transitions to grace — throttle failure must not block the state change."""
-    sub_id = await _make_sub(user_id=2, expires_at=PAST)
+    sub_id = await _make_sub(user_id=2, expires_at=PAST, plan="vpn_base")
     # config with server_id=None (empty slot that was never fully provisioned)
     cfg_id = await create_config_record(sub_id, user_id=2, protocol="awg",
                                          server_id=None)
@@ -171,7 +181,7 @@ async def test_bot_offline_guard_skips_grace_goes_straight_to_expired(
     """Sub expired 20 days ago (> GRACE_DAYS=14): scheduler must skip grace
     and mark it expired immediately.  throttle_peer must NOT be called."""
     server_id = db_with_server
-    sub_id = await _make_sub(user_id=3, expires_at=LONG_AGO)
+    sub_id = await _make_sub(user_id=3, expires_at=LONG_AGO, plan="vpn_base")
     await _make_active_awg(sub_id, server_id)
 
     mock_client = _mock_client()
@@ -323,8 +333,8 @@ async def test_no_expired_subs_is_noop(fresh_db):
 async def test_multiple_subs_all_processed(fresh_db, db_with_server):
     """Two expired AWG subs → both get throttled and marked grace."""
     server_id = db_with_server
-    sub1 = await _make_sub(user_id=10, expires_at=PAST)
-    sub2 = await _make_sub(user_id=11, expires_at=PAST)
+    sub1 = await _make_sub(user_id=10, expires_at=PAST, plan="vpn_base")
+    sub2 = await _make_sub(user_id=11, expires_at=PAST, plan="vpn_base")
     await _make_active_awg(sub1, server_id, assigned_ip="10.0.0.10")
     await _make_active_awg(sub2, server_id, assigned_ip="10.0.0.11")
 

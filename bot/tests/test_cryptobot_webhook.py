@@ -17,6 +17,13 @@ from aiohttp import web
 
 import services.webapp_api as webapp_api
 from services.webapp_api import handle_cryptobot_webhook, VPN_PLANS
+from services.database import upsert_user as _upsert_user
+
+
+async def _ensure_user(user_id: int) -> None:
+    """FK guard: subscriptions.user_id → users.id. Webhook handler doesn't
+    auto-create the user, so tests must pre-seed it."""
+    await _upsert_user(user_id, username=f"u{user_id}", first_name=f"U{user_id}")
 
 
 def _sign(body: bytes, token: str) -> str:
@@ -52,11 +59,45 @@ def _build_invoice_paid_body(*, user_id: int, plan_key: str, invoice_id: int,
 
 
 @pytest_asyncio.fixture
-async def app_client(fresh_db, aiohttp_client, test_cryptobot_token):
+async def app_client(fresh_db, aiohttp_client, test_cryptobot_token, monkeypatch):
     """Builds a tiny aiohttp app with only the webhook handler mounted.
 
     Stubs bot.send_message so no real Telegram traffic fires.
+
+    Seeds AWG + VLESS test servers (backfilled=1 для vless — иначе
+    get_all_active_servers возвращает пустой список и слоты не создаются).
+
+    Stubs provision_peer + update_server_peer_count так чтобы slots
+    создавались/активировались без реального сетевого вызова к agent.
     """
+    # Pre-seed test servers (AWG + VLESS) for provision_vpn_slots_async.
+    async with aiosqlite.connect(fresh_db) as db:
+        await db.execute(
+            """INSERT INTO servers (name, host, protocol, agent_url, agent_token,
+                                    is_active, capacity, active_peers)
+               VALUES ('AWG-1', '1.2.3.4', 'awg', 'http://a:8080', 't', 1, 100, 0)"""
+        )
+        await db.execute(
+            """INSERT INTO servers (name, host, protocol, agent_url, agent_token,
+                                    is_active, capacity, active_peers, backfilled)
+               VALUES ('VLS-1', '1.2.3.5', 'vless', 'http://v:8080', 't', 1, 100, 0, 1)"""
+        )
+        await db.commit()
+
+    # Stub the vpnctl call so provisioning "succeeds" without touching network.
+    from services.vpnctl_client import PeerResult
+    async def _fake_provision(server, label, proto, **kw):
+        # AWG returns assigned_ip; VLESS does not.
+        extra = {"assigned_ip": "10.0.0.42"} if proto == "awg" else {}
+        return PeerResult(
+            id=kw.get("peer_id") or f"peer-{label}",
+            label=label,
+            config=f"# {proto} {label}",
+            extra=extra,
+        )
+    monkeypatch.setattr("handlers.vpn.provision_peer", _fake_provision)
+    # update_server_peer_count writes to the DB — let it run; it's harmless here.
+
     app = web.Application()
     fake_bot = MagicMock()
     fake_bot.send_message = AsyncMock(return_value=None)
@@ -98,6 +139,7 @@ async def test_C1_valid_invoice_paid_vpn_base_creates_subscription_and_configs(
     """C1. Valid signed invoice_paid for vpn_base with correct RUB amount → 200,
     one subscription row, vless_slots+awg_slots config rows."""
     user_id = 42
+    await _ensure_user(user_id)
     plan = VPN_PLANS["vpn_base"]
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_base", invoice_id=1001,
@@ -125,7 +167,10 @@ async def test_C1_valid_invoice_paid_vpn_base_creates_subscription_and_configs(
     assert len(vless) == plan["vless_slots"]
     assert len(awg) == plan["awg_slots"]
     assert len(wg) == plan.get("wg_slots", 0)
-    assert all(c["status"] == "empty" for c in cfgs)
+    # The webhook now calls provision_vpn_slots_async (stubbed in app_client),
+    # which actually activates each slot — so config rows land in status='active'
+    # not 'empty'. The "empty" expectation predates that consolidation.
+    assert all(c["status"] == "active" for c in cfgs)
 
     # Telegram notification fired exactly once
     app_client._fake_bot.send_message.assert_awaited_once()
@@ -137,6 +182,7 @@ async def test_C2_valid_invoice_paid_vpn_max_creates_more_slots(
 ):
     """C2. Same shape but vpn_max → more vless slots."""
     user_id = 99
+    await _ensure_user(user_id)
     plan = VPN_PLANS["vpn_max"]
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_max", invoice_id=2002,
@@ -205,6 +251,7 @@ async def test_C5_replay_same_invoice_id_is_idempotent(
 ):
     """C5. Replaying same invoice_id (→ same payment_id) → idempotent: sub count stays 1."""
     user_id = 55
+    await _ensure_user(user_id)
     plan = VPN_PLANS["vpn_base"]
     body = _build_invoice_paid_body(
         user_id=user_id, plan_key="vpn_base", invoice_id=5555,
@@ -318,6 +365,7 @@ async def test_C10_amount_rub_persisted_for_admin_revenue_tracking(
     """C10. RUB amount must be persisted into subscriptions.amount_rub so the
     admin dashboard can show real revenue (was 0/Stars-only before the fix)."""
     user_id = 1010
+    await _ensure_user(user_id)
     plan = VPN_PLANS["vpn_base"]
     invoice_id = 10010
     body = _build_invoice_paid_body(

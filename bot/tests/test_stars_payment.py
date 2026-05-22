@@ -60,7 +60,12 @@ def _make_message(user_id: int, payment) -> MagicMock:
 
 @pytest_asyncio.fixture
 async def db_with_servers(fresh_db, monkeypatch):
-    """fresh_db + AWG and VLESS test servers + a user.  Returns user_id."""
+    """fresh_db + AWG and VLESS test servers + a user.  Returns user_id.
+
+    Audit 22.05 F3: VLESS servers must have backfilled=1 to be picked up by
+    get_all_active_servers("vless") — otherwise multi-location provisioning
+    skips them (peer on agent but invisible in sub-URL).
+    """
     import services.database as db_mod
     monkeypatch.setattr(db_mod, "DB_PATH", fresh_db)
 
@@ -72,8 +77,8 @@ async def db_with_servers(fresh_db, monkeypatch):
         )
         await db.execute(
             """INSERT INTO servers (name, host, protocol, agent_url, agent_token,
-                                    is_active, capacity, active_peers)
-               VALUES ('VLS-1', '1.2.3.5', 'vless', 'http://v:8080', 't', 1, 100, 0)"""
+                                    is_active, capacity, active_peers, backfilled)
+               VALUES ('VLS-1', '1.2.3.5', 'vless', 'http://v:8080', 't', 1, 100, 0, 1)"""
         )
         await db.commit()
 
@@ -229,16 +234,17 @@ async def test_deliver_vpn_vless_replicated_across_all_active_servers(fresh_db, 
                                     is_active, capacity, active_peers, flag)
                VALUES ('AWG-1', '1.2.3.4', 'awg', 'http://a:8080', 't', 1, 100, 0, '🇳🇱')"""
         )
-        # 2 VLESS servers in different locations
+        # 2 VLESS servers in different locations (backfilled=1 required for
+        # get_all_active_servers("vless") to return them — see Audit 22.05 F3).
         await db.execute(
             """INSERT INTO servers (name, host, protocol, agent_url, agent_token,
-                                    is_active, capacity, active_peers, flag)
-               VALUES ('VLS-NL', '1.2.3.5', 'vless', 'http://v1:8080', 't', 1, 100, 0, '🇳🇱')"""
+                                    is_active, capacity, active_peers, flag, backfilled)
+               VALUES ('VLS-NL', '1.2.3.5', 'vless', 'http://v1:8080', 't', 1, 100, 0, '🇳🇱', 1)"""
         )
         await db.execute(
             """INSERT INTO servers (name, host, protocol, agent_url, agent_token,
-                                    is_active, capacity, active_peers, flag)
-               VALUES ('VLS-DE', '1.2.3.6', 'vless', 'http://v2:8080', 't', 1, 100, 0, '🇩🇪')"""
+                                    is_active, capacity, active_peers, flag, backfilled)
+               VALUES ('VLS-DE', '1.2.3.6', 'vless', 'http://v2:8080', 't', 1, 100, 0, '🇩🇪', 1)"""
         )
         await db.commit()
 
