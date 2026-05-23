@@ -69,7 +69,7 @@ export default async function Clients() {
 
   return (
     <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
-      <AdminNav />
+      <AdminNav username={session.username} />
 
       {/* KPIs. AD-F16: split LTV across Stars and RUB channels — the prior
           single "⭐ LTV" card divided Stars-only revenue by all payers, which

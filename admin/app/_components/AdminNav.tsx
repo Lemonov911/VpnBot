@@ -59,7 +59,13 @@ export default function AdminNav({ username, slaBreaches }: { username?: string;
     <div className="flex items-center justify-between pt-2">
       <div>
         <div className="text-xl font-extrabold tracking-tight">MAX VPN &amp; eSIM</div>
-        {username && <div className="text-xs text-neutral-500 mt-0.5">Привет, {username}</div>}
+        {/* min-h резервирует место под greeting даже если username не передан —
+            иначе вертикальная высота navbar дёргалась бы между страницами,
+            где username приходит (page/grant/payments/tickets/…) и где нет
+            (clients/attribution/monitoring/servers до этого фикса). */}
+        <div className="text-xs text-neutral-500 mt-0.5 min-h-[1rem]">
+          {username ? `Привет, ${username}` : ' '}
+        </div>
       </div>
       <div className="flex gap-4 items-center">
         {NAV_ITEMS.map(item => {

@@ -37,7 +37,7 @@ export default async function Monitoring() {
 
   return (
     <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
-      <AdminNav />
+      <AdminNav username={session.username} />
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
