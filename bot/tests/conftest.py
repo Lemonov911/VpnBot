@@ -43,10 +43,13 @@ import pytest_asyncio
 # изолированном запуске. Это known-broken, фиксить отдельным PR'ом.
 # ---------------------------------------------------------------------------
 LEGACY_BROKEN_TESTS: frozenset[str] = frozenset({
-    "tests/test_cryptobot_webhook.py::test_C1_valid_invoice_paid_vpn_base_creates_subscription_and_configs",
-    "tests/test_cryptobot_webhook.py::test_C2_valid_invoice_paid_vpn_max_creates_more_slots",
-    "tests/test_cryptobot_webhook.py::test_C5_replay_same_invoice_id_is_idempotent",
-    "tests/test_cryptobot_webhook.py::test_C10_amount_rub_persisted_for_admin_revenue_tracking",
+    # NB: C1/C2/C5/C10 (cryptobot webhook happy-path) un-skipped 2026-05-23.
+    # Root cause: test_trial.py::test_D4 imported `handlers.admin` INSIDE its
+    # `with patch("services.database.get_best_server", AsyncMock())` block.
+    # That first-time-import baked the AsyncMock permanently into the
+    # `handlers.vpn.get_best_server` re-export, breaking every later test that
+    # exercises provision_vpn_slots_async. Fix: D4 now imports cmd_trial
+    # BEFORE entering the patch block. See test_trial.py for details.
     "tests/test_grace_renewal.py::test_renews_when_user_in_grace_same_plan",
     "tests/test_grace_renewal.py::test_renew_extends_expires_at",
     "tests/test_grace_renewal.py::test_no_crash_when_unthrottle_fails",

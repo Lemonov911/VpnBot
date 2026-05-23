@@ -123,11 +123,19 @@ async def test_D4_cmd_trial_rejects_user_with_active_paid_sub(fresh_db):
     message.from_user.id = user_id
     message.answer = AsyncMock(return_value=None)
 
+    # Import cmd_trial BEFORE entering the patch block — otherwise the first
+    # load of handlers.admin (and its transitive `from handlers.vpn import …`)
+    # happens while services.database.get_best_server is mocked, baking the
+    # AsyncMock permanently into handlers.vpn.get_best_server. That leaks into
+    # later tests (cryptobot webhook C1/C2/C5/C10) which then get None back
+    # from the still-patched alias.  See conftest.py:LEGACY_BROKEN_TESTS — the
+    # webhook tests were quarantined because of THIS leak.
+    from handlers.admin import cmd_trial  # noqa: E402
+
     # Patch provisioning + server helpers so the test fails loudly if the
     # guard is ever removed and execution falls through.
     with patch("services.vpnctl_client.provision_peer", new=AsyncMock()) as prov_mock, \
          patch("services.database.get_best_server", new=AsyncMock(return_value=None)) as server_mock:
-        from handlers.admin import cmd_trial
         await cmd_trial(message)
 
     # The handler must have answered with the refusal text...
