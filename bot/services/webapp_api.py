@@ -4004,6 +4004,52 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
                 sub_before["id"], e, exc_info=True,
             )
 
+    # Audit 2026-05-23 (Олег): reactivate-путь должен auto-provision пиров.
+    # Раньше после reactivate sub.status='active', но configs.status='empty'
+    # и peers удалены с агента (revoke при expiry). Юзер видел «VPN активна»
+    # в UI, но интернета не было — нужно было руками тапать «Активировать»
+    # на каждый слот в Configs. UX-сюрприз: «заплатил бонусом — не работает».
+    # Теперь после reactivate удаляем empty configs (от прошлой жизни sub)
+    # и вызываем provision_vpn_slots_async — он создаст свежие slots по
+    # плану и сразу провизионит пиров на best-server. Если agent down —
+    # sub остаётся active, ошибки в логах, юзер может руками retry в Mini App.
+    if action == "reactivated":
+        try:
+            from services.database import delete_empty_configs_for_sub
+            from services.plans import VPN_PLANS
+            from handlers.vpn import provision_vpn_slots_async
+            sub_id_re = result["sub_id"]
+            plan_key_re = result["plan"]
+            plan_re = VPN_PLANS.get(plan_key_re)
+            if plan_re:
+                try:
+                    await delete_empty_configs_for_sub(sub_id_re)
+                except Exception as ce:
+                    logger.warning(
+                        "referral reactivate: delete_empty_configs sub #%d failed: %s "
+                        "(continuing — provision_vpn_slots_async создаст новые поверх)",
+                        sub_id_re, ce, exc_info=True,
+                    )
+                bot_re: Bot = request.app["bot"]
+                delivered_re, total_re = await provision_vpn_slots_async(
+                    bot_re, user["id"], sub_id_re, plan_re, plan_key_re,
+                )
+                logger.info(
+                    "referral reactivate sub #%d: provisioned %d/%d peers",
+                    sub_id_re, delivered_re, total_re,
+                )
+            else:
+                logger.warning(
+                    "referral reactivate sub #%d: plan_key %r not in VPN_PLANS",
+                    result["sub_id"], plan_key_re,
+                )
+        except Exception as e:
+            logger.error(
+                "referral reactivate auto-provision FAILED user=%d sub=%d: %s — "
+                "sub.status уже active, но peers не созданы",
+                user["id"], result.get("sub_id"), e, exc_info=True,
+            )
+
     # Notify юзеру в чат бота
     try:
         bot: Bot = request.app["bot"]

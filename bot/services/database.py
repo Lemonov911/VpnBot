@@ -1662,6 +1662,27 @@ async def delete_config_record(config_id: int):
         await db.commit()
 
 
+async def delete_empty_configs_for_sub(sub_id: int) -> int:
+    """DELETE FROM configs WHERE subscription_id=? AND status='empty'.
+
+    Используется в referral reactivate flow: после того как expired sub
+    перешла в active по бонусу, нужно очистить empty config-rows от
+    прошлой жизни (revoke на expiry оставил их с peer_name=NULL), чтобы
+    provision_vpn_slots_async создал свежие slots по плану без дублирования.
+
+    Status guard 'empty' — НЕ удаляем active/activating (теоретически их
+    не должно быть на expired sub, но defence-in-depth). Возвращает
+    количество удалённых rows.
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            "DELETE FROM configs WHERE subscription_id=? AND status='empty'",
+            (sub_id,),
+        )
+        await db.commit()
+        return cur.rowcount or 0
+
+
 async def get_active_subscription_by_id(sub_id: int) -> dict | None:
     """Возвращает subscription по id (любой статус). Для re-check внутри
     critical sections где статус мог измениться параллельно (race)."""
