@@ -108,6 +108,23 @@ export default function PaymentSheet({
     if (!methodSupportsMultiPeriod && period !== '1m') setPeriod('1m')
   }, [method, methodSupportsMultiPeriod, period])
 
+  // Olej feedback 23.05: нет очевидного способа закрыть sheet — backdrop
+  // легко промахнуться, drag-handle decorative. Wire'ём нативный TG
+  // BackButton + дублируем X-крестиком в углу (двойная страховка).
+  // Также Escape для desktop-режима TG (рабочий стол).
+  useEffect(() => {
+    try { WebApp.BackButton.show() } catch { /* WebApp может быть не инициализирован в dev */ }
+    const off = () => { try { onClose() } catch { /* noop */ } }
+    try { WebApp.BackButton.onClick(off) } catch {}
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', esc)
+    return () => {
+      try { WebApp.BackButton.offClick(off) } catch {}
+      try { WebApp.BackButton.hide() } catch {}
+      window.removeEventListener('keydown', esc)
+    }
+  }, [onClose])
+
   useEffect(() => {
     let cancelled = false
     getFeatures().then(f => {
@@ -136,6 +153,19 @@ export default function PaymentSheet({
       />
       <div className="fixed inset-x-0 bottom-0 z-[101] bg-[var(--tg-theme-bg-color,#fff)] rounded-t-[20px] p-5 pb-[calc(env(safe-area-inset-bottom)+24px)] shadow-[0_-4px_30px_rgba(0,0,0,0.18)]">
         <div className="w-9 h-1 rounded-sm bg-gray-500/30 -mt-2 mx-auto mb-[18px]" />
+        {/* X-крестик (правый верх) — закрывает sheet. Дублирует BackButton +
+            backdrop click, но видим без отдельной подсказки. 44×44px touch
+            target для нормального тапа на мобиле. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('common_close' as never)}
+          className="absolute top-3 right-3 w-9 h-9 flex items-center justify-center rounded-full bg-[var(--tg-theme-secondary-bg-color,#f1f1f1)] hover:bg-[var(--tg-theme-section-bg-color)] text-[var(--tg-theme-hint-color)] active:scale-95 transition-transform cursor-pointer border-none"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
         <div className="mb-[18px]">
           <div className="font-bold text-lg text-[var(--tg-theme-text-color,#000)]">
             {t('pay_buy')} «{t(plan.nameKey as never)}»
