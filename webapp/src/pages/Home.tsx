@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { useT, usePlural, useLang } from '../i18n'
 import TrialSuccessSheet from '../components/TrialSuccessSheet'
+import { SkeletonPage } from '../components/Skeleton'
 
 // "2026-05-30 21:00:58" / "2026-05-30T21:00:58.123" → "30 мая" / "May 30"
 function formatNiceDate(iso: string, lang: 'ru' | 'en'): string {
@@ -67,10 +68,20 @@ export default function Home() {
           .replace('{days}', String(res.days_applied))
           .replace('{date}', dateStr)
       )
-      // refresh sub + stats после redeem
+      // refresh sub + stats после redeem.
+      // W2 bonus: критичная sub-refresh после успешного redeem — если
+      // network fail, юзер видит stale expires_at и думает что redeem не
+      // прошёл (хотя на бэке всё OK). Алертим, но не падаем — redeem уже
+      // done на бэке.
       const [s, st] = await Promise.all([
-        getActiveSubscription().catch(() => null),
-        getUserStats().catch(() => null),
+        getActiveSubscription().catch(e => {
+          console.error('home_redeem_refresh_sub', e)
+          return null
+        }),
+        getUserStats().catch(e => {
+          console.error('home_redeem_refresh_stats', e)
+          return null
+        }),
       ])
       if (mountedRef.current) {
         setSub(s)
@@ -85,22 +96,43 @@ export default function Home() {
   }
 
   useEffect(() => {
+    // W2 #10 — mountedRef.current check ВЕЗДЕ. `cancelled` локальный был
+    // OK для самого useEffect, но handleRedeemBonus / handleClaimTrial ниже
+    // используют mountedRef, и единый источник правды легче поддерживать.
+    // VPN.tsx:171 — оригинальный шаблон с `cancelled` ref-флагом.
     let cancelled = false
     // MD-F-r2: distinguish transient errors (429 rate-limit) from genuine
     // "no subscription". Previously any error → setSub(null) → Home UI
     // collapses to the buy-flow CTA while the backend was just throttling
     // the visibility-refresh storm.
     getActiveSubscription().then(s => {
-      if (!cancelled) setSub(s)
+      if (cancelled || !mountedRef.current) return
+      setSub(s)
     }).catch(e => {
-      if (cancelled) return
+      if (cancelled || !mountedRef.current) return
       if (e instanceof Error && e.message === 'rate_limit') return  // keep current state
+      // W2 bonus: критичный поток (sub). Раньше silently глоталось — теперь
+      // алертим юзеру что network не ОК, чтобы он не сидел на пустом Home.
+      // 429 уже отфильтрован выше, остаются настоящие network/5xx — alert OK.
       setSub(null)
+      WebApp.showAlert(t('bot_err_network' as never))
     })
-    getUserStats().catch(() => null).then(s => { if (!cancelled) setStats(s) })
-    getTrialStatus().catch(() => null).then(s => { if (!cancelled) setTrial(s) })
+    getUserStats()
+      .then(s => { if (!cancelled && mountedRef.current) setStats(s) })
+      .catch(e => {
+        // W2 bonus: не-критичная метрика (stats). Не мешаем юзеру алертами,
+        // просто логируем и продолжаем рендер без stats-карточек.
+        console.error('home_stats_load', e)
+      })
+    getTrialStatus()
+      .then(s => { if (!cancelled && mountedRef.current) setTrial(s) })
+      .catch(e => {
+        // W2 bonus: не-критичный trial probe. Если 500'нул — скрываем
+        // trial-banner, юзер увидит обычный buy-flow CTA.
+        console.error('home_trial_load', e)
+      })
     return () => { cancelled = true }
-  }, [])
+  }, [t])
 
   // MD-F3: refresh sub/stats when user returns to tab. Other devices may
   // have purchased / cancelled / used a slot — without this the Home
@@ -115,9 +147,15 @@ export default function Home() {
       }).catch(e => {
         if (!mountedRef.current) return
         if (e instanceof Error && e.message === 'rate_limit') return
+        // W2 #10 — visibility-refresh path. Не алертим тут (юзер не
+        // инициировал действие — это фоновое обновление), просто скидываем
+        // в null. Следующий focus попробует ещё раз.
         setSub(null)
       })
-      getUserStats().catch(() => null).then(s => { if (mountedRef.current) setStats(s) })
+      // W2 bonus: visibility-refresh stats fetch. console.error и идём дальше.
+      getUserStats()
+        .then(s => { if (mountedRef.current) setStats(s) })
+        .catch(e => { console.error('home_stats_refresh', e) })
     }
     document.addEventListener('visibilitychange', refresh)
     window.addEventListener('focus', refresh)
@@ -136,12 +174,17 @@ export default function Home() {
     try {
       await claimTrial()
       WebApp.HapticFeedback.notificationOccurred('success')
+      // W2 #10 — guards для setState после await. Юзер мог уйти со страницы
+      // пока летел claimTrial (он рилейтед ~2-3s).
+      if (!mountedRef.current) return
       setTrialDone(true)
       setTrialSheet(true)
       // refresh subscription card — теперь юзер с активным trial
-      getActiveSubscription().catch(() => null).then(s => { if (mountedRef.current) setSub(s) })
+      getActiveSubscription().then(s => { if (mountedRef.current) setSub(s) })
+        .catch(e => { console.error('home_trial_refresh', e) })
       setTrial({ eligible: false, duration_days: trial?.duration_days ?? 3 })
     } catch (e: unknown) {
+      if (!mountedRef.current) return
       WebApp.HapticFeedback.notificationOccurred('error')
       const err = e as { message?: string }
       const msg = err.message || ''
@@ -151,7 +194,7 @@ export default function Home() {
       else                                          setTrialErr(t('trial_err_generic'))
     } finally {
       busyRef.current = false
-      setClaiming(false)
+      if (mountedRef.current) setClaiming(false)
     }
   }
 
@@ -179,6 +222,16 @@ export default function Home() {
   // метрики (сколько пригласил, сколько копится). Это «портфель», должно жить отдельно
   // от subscription state.
   const hasStats = stats && (stats.stars_spent > 0 || (stats.rub_spent ?? 0) > 0 || stats.bonus_days > 0 || stats.invited > 0)
+
+  // W2 #15 — first-load skeleton page. Если все три фетча ещё не вернулись —
+  // показываем полный skeleton-layout вместо «псевдо-пустой» страницы с
+  // одиночной skeleton-карточкой VPN. На медленной сети это выглядит как
+  // ровный loading-стейт, а не как сломанный Home (как было до W2 patch).
+  // Триггер: sub=undefined (initial) И stats=null (initial) И trial=null.
+  // После любого fetch'а — рендерим реальный layout с inline-плейсхолдерами.
+  if (sub === undefined && stats === null && trial === null) {
+    return <SkeletonPage />
+  }
 
   const quickActions = [
     {

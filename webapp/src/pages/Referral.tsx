@@ -32,7 +32,15 @@ export default function Referral() {
   const refreshStats = () => {
     return getReferralStats()
       .then(s => { if (mountedRef.current) setStats(s) })
-      .catch(() => { if (mountedRef.current) setStats(null) })
+      .catch(e => {
+        // W2 bonus — silent .catch audit. До этого ошибку просто глотали и
+        // показывали generic ref_error в UI. Теперь хотя бы логируем причину
+        // (на проде в DevTools видно: timeout / 5xx / json-parse) — это
+        // подскажет нам debug-trace когда юзер пишет «реферальная страница
+        // не открывается».
+        console.error('referral_stats_load', e)
+        if (mountedRef.current) setStats(null)
+      })
   }
 
   const handleRedeem = async () => {

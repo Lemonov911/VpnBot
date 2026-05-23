@@ -1,8 +1,9 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { getESimCountries, getMyESims, type Country } from '../api'
 import { useT, usePlural } from '../i18n'
+import { SkeletonPage } from '../components/Skeleton'
 
 function flagEmoji(code: string, fallback?: string): string {
   if (fallback) return fallback
@@ -22,6 +23,17 @@ export default function ESim() {
   const [tab, setTab]             = useState<'ru' | 'travel'>('ru')
   const [myCount, setMyCount]     = useState<number | null>(null)
 
+  // W2 #6 — mountedRef pattern. ESim async-fetch может вернуться уже после
+  // того как юзер ушёл на /esim/<code>; setState на размонтированном
+  // компоненте ничего не ломает в текущем React, но cancelled-флаг чистит
+  // подписки на pending request — meaningful когда добавим AbortController.
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+
+  // BackButton — wire+cleanup в отдельном useEffect. Cleanup return
+  // отрабатывает даже если ESim unmount'нулся во время pending request
+  // (deps=[nav] — стабильный nav-callback от react-router; useEffect
+  // вызовется один раз).
   useEffect(() => {
     WebApp.BackButton.show()
     const goBack = () => nav('/')
@@ -30,12 +42,28 @@ export default function ESim() {
   }, [nav])
 
   useEffect(() => {
+    // W2 #6 — local cancelled flag для async-fetches. Гарантирует что
+    // setCountries / setError / setLoading не вызовутся после unmount'а
+    // компонента.
+    let cancelled = false
     getESimCountries()
-      .then(setCountries)
-      .catch(() => setError(t('esim_err_load')))
-      .finally(() => setLoading(false))
-    getMyESims().then(list => setMyCount(list.length)).catch(() => {})
-  }, [])
+      .then(list => { if (!cancelled && mountedRef.current) setCountries(list) })
+      .catch(e => {
+        // W2 bonus: критичная ошибка (без countries страница пуста).
+        // Раньше silently показывало text-error; оставляем text-error И
+        // logging — на проде поможет понять причину (timeout / 5xx / parse).
+        console.error('esim_countries_load', e)
+        if (!cancelled && mountedRef.current) setError(t('esim_err_load'))
+      })
+      .finally(() => { if (!cancelled && mountedRef.current) setLoading(false) })
+    getMyESims()
+      .then(list => { if (!cancelled && mountedRef.current) setMyCount(list.length) })
+      .catch(e => {
+        // W2 bonus: не-критично — entry-card просто не покажется.
+        console.error('esim_my_load', e)
+      })
+    return () => { cancelled = true }
+  }, [t])
 
   const travelCountries = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -48,6 +76,14 @@ export default function ESim() {
 
   const goToCountry = (code: string, name: string, ruCompatible = false) =>
     nav(`/esim/${code}`, { state: { name, ruCompatible } })
+
+  // W2 #15 — first-load skeleton. Раньше при loading + countries=[] страница
+  // показывала tabs + пустой text-«Loading…». На медленной сети это пустой
+  // экран с одной строкой — выглядит как сломанное. Skeleton-layout
+  // адекватнее под визуальный footprint реального ESim.
+  if (loading && countries.length === 0 && !error) {
+    return <SkeletonPage />
+  }
 
   return (
     <div className="page" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 96px)' }}>

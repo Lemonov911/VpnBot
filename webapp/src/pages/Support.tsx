@@ -275,9 +275,23 @@ export default function Support() {
   const [errMsg,   setErrMsg]   = useState('')
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  // W2 #9 — heartbeat indicator. true когда прогресс не сдвинулся >10s.
+  // Гарантирует юзеру что аппа не зависла — просто медленная сеть.
+  const [slowUpload, setSlowUpload] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // W2 #6 — mountedRef pattern (BackButton cleanup audit). Гарантирует что
+  // setState из long-running upload не сработает на размонтированном
+  // компоненте если юзер уходит со страницы во время отправки.
+  const mountedRef = useRef(true)
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
+  // Tracking время последнего progress-tick для heartbeat-детекции.
+  // Mutable ref — без re-render когда обновляем (только interval читает).
+  const lastProgressAtRef = useRef<number>(0)
 
+  // BackButton wire+cleanup. Cleanup отрабатывает даже при unmount во время
+  // pending upload — BackButton.offClick очистит callback, чтобы хвост от
+  // прошлого Support не повёл юзера обратно при следующем mount'е.
   useEffect(() => {
     WebApp.BackButton.show()
     const goBack = () => nav('/')
@@ -372,6 +386,33 @@ export default function Support() {
     setState('sending')
     setErrMsg('')
     setUploadProgress(null)
+    setSlowUpload(false)
+    // W2 #9 — timeout / heartbeat infra.
+    //  • Hard 60s timeout — Promise.race с timeout-rejecter. Если upload
+    //    висит 60+с (плохая сеть / большой видео+медленный нет-channel) —
+    //    показываем юзеру alert и переключаем state в error. Реальный xhr
+    //    мы отсюда aborts'нуть не можем (api/index.ts — W1's territory),
+    //    но UI отписывается от результата через mountedRef-guards и timed-
+    //    out flag.
+    //  • Heartbeat 10s — interval, который смотрит на ref времени последнего
+    //    progress-tick'а и поднимает slowUpload state, рендерящий «🐢 Медленное
+    //    соединение…». Юзер видит что аппа не зависла, просто bytes медленно
+    //    идут.
+    let timedOut = false
+    const TIMEOUT_MS = 60_000
+    const HEARTBEAT_THRESHOLD_MS = 10_000
+    lastProgressAtRef.current = Date.now()
+    const heartbeatInterval = setInterval(() => {
+      if (!mountedRef.current) return
+      const sinceLastTick = Date.now() - lastProgressAtRef.current
+      setSlowUpload(sinceLastTick > HEARTBEAT_THRESHOLD_MS)
+    }, 1000)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        timedOut = true
+        reject(new Error('upload_timeout'))
+      }, TIMEOUT_MS)
+    })
     try {
       let ticket_id: number
       if (files.length === 0) {
@@ -383,13 +424,36 @@ export default function Support() {
         fd.append('category', category)
         fd.append('message', trimmed)
         files.forEach((att, i) => fd.append(`photo_${i + 1}`, att.file))
-        ;({ ticket_id } = await uploadTicketWithPhotos(fd, pct => setUploadProgress(pct)))
+        // Race upload vs timeout. Если upload победит — нормальный путь;
+        // если timeout — catch ниже обработает `upload_timeout` ветку.
+        const result = await Promise.race([
+          uploadTicketWithPhotos(fd, pct => {
+            if (!mountedRef.current || timedOut) return
+            lastProgressAtRef.current = Date.now()
+            setSlowUpload(false)
+            setUploadProgress(pct)
+          }),
+          timeoutPromise,
+        ])
+        ticket_id = result.ticket_id
       }
+      if (!mountedRef.current) return
       setTicketId(ticket_id)
       WebApp.HapticFeedback.notificationOccurred('success')
       setState('done')
     } catch (e) {
+      if (!mountedRef.current) return
       const raw = e instanceof Error ? e.message : ''
+      // W2 #9 — upload_timeout ветка. Алертим юзеру + сохраняем error-стейт
+      // чтобы он мог решить ретраить (просто закроет alert и нажмёт send
+      // ещё раз; форма + файлы сохранились).
+      if (raw === 'upload_timeout') {
+        WebApp.HapticFeedback.notificationOccurred('error')
+        WebApp.showAlert(t('bot_err_upload_timeout' as never))
+        setErrMsg(t('bot_err_upload_timeout' as never))
+        setState('error')
+        return
+      }
       // Whitelist known backend error codes → localised strings. Backend
       // now also returns bilingual `message` in JSON which xhr propagates
       // as e.message — show as-is when it doesn't match a legacy code.
@@ -404,7 +468,11 @@ export default function Support() {
       if (friendly) setErrMsg(friendly)
       setState('error')
     } finally {
-      setUploadProgress(null)
+      clearInterval(heartbeatInterval)
+      if (mountedRef.current) {
+        setUploadProgress(null)
+        setSlowUpload(false)
+      }
     }
   }
 
@@ -627,6 +695,13 @@ export default function Support() {
               style={{ width: `${uploadProgress}%`, background: accent }}
             />
           </div>
+          {/* W2 #9 — heartbeat indicator. Поднимается через 10s простоя
+              progress'а. Юзер видит что аппа жива, просто канал медленный. */}
+          {slowUpload && (
+            <div className="text-[11px] text-warning mt-1.5 text-center font-medium">
+              {t('bot_slow_connection' as never)}
+            </div>
+          )}
         </div>
       )}
 

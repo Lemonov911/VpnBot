@@ -601,6 +601,16 @@ const T = {
 
     // VPN page fallback when invoice creation fails (F11)
     vpn_invoice_error_fallback: 'Ошибка при создании счёта. Попробуйте ещё раз.',
+
+    // W2 #9 — Support upload feedback (timeout / slow connection).
+    // Hard 60s timeout abort'ит xhr и алертит юзеру; heartbeat (10s без
+    // прогресса) показывает inline-индикатор «медленное соединение».
+    bot_err_upload_timeout: 'Загрузка зависла. Проверь интернет и попробуй ещё раз.',
+    bot_slow_connection:    '🐢 Медленное соединение…',
+    // W2 bonus — общий network-error alert для silent .catch() мест где
+    // раньше глоталась ошибка (Home → bonus redeem refresh / Referral redeem
+    // refresh stats).
+    bot_err_network:        'Не удалось загрузить. Проверь интернет.',
   },
 
   en: {
@@ -1173,6 +1183,12 @@ const T = {
 
     // VPN page fallback when invoice creation fails (F11)
     vpn_invoice_error_fallback: 'Failed to create invoice. Try again.',
+
+    // W2 #9 — Support upload feedback (timeout / slow connection).
+    bot_err_upload_timeout: 'Upload stalled. Check your connection and try again.',
+    bot_slow_connection:    '🐢 Slow connection…',
+    // W2 bonus — generic network error alert for silent .catch() sites.
+    bot_err_network:        'Network error. Check your connection.',
   },
 } as const
 
