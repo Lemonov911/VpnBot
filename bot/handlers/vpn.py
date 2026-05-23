@@ -1075,8 +1075,15 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
                                 peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
                                 config_data = cfg.get("config_data") or ""
                                 if peer_id:
+                                    # Conditional decrement (audit 2026-05-23 round-3):
+                                    # `remove_peer` returns True если peer был на агенте,
+                                    # False если 404 (уже удалён ранее). При race с
+                                    # scheduler `_process_expired_trials` оба пути могут
+                                    # пытаться удалить один peer — counter декрементим
+                                    # только тогда, когда мы действительно удалили.
+                                    removed = False
                                     if proto == "awg":
-                                        await client.remove_peer("awg", peer_id)
+                                        removed = await client.remove_peer("awg", peer_id)
                                     elif proto in ("vless", "vless-reality"):
                                         # Используем current_vless_service (обрабатывает
                                         # vless-base / vless-base-slow / vless-grace по порту
@@ -1084,8 +1091,9 @@ async def _close_trial_on_paid_purchase(trial_sub_id: int, user_id: int):
                                         # vless-base-slow не удалится, а счётчик уйдёт в минус.
                                         from services.revoke import current_vless_service
                                         inbound = current_vless_service(config_data, "vpn_trial")
-                                        await client.remove_peer(inbound, peer_id)
-                                    await update_server_peer_count(server_id, -1)
+                                        removed = await client.remove_peer(inbound, peer_id)
+                                    if removed:
+                                        await update_server_peer_count(server_id, -1)
                             except Exception as e:
                                 logger.warning("trial close: revoke cfg #%d failed: %s", cfg["id"], e, exc_info=True)
                     try:

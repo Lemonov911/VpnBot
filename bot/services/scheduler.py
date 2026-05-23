@@ -567,9 +567,24 @@ async def _process_grace_expired_subscriptions(bot: Bot):
             assigned_ip = cfg.get("assigned_ip") or ""
             vless_uuid  = cfg.get("vless_uuid") or ""
 
+            # revoke_ok / agent_attempted — флаги для решения reset_config_slot ниже.
+            # До 2026-05-23 reset дёргался безусловно — даже при failed remove_peer
+            # на агенте (5xx/timeout). БД помечала slot empty + sub expired,
+            # peer оставался в kernel/xray-config (AWG-sync из бота не делается,
+            # см. _sync_vless_active_uuids = только VLESS). Это и был основной
+            # источник legacy `imported` peer-ов на Amsterdam — мёртвые подписки,
+            # у которых grace-revoke упал. Retry-механизм для оставшихся active
+            # configs — `_process_orphan_active_configs()` ниже в файле, идёт
+            # каждый tick (`SELECT WHERE configs.status='active' AND
+            # subscriptions.status='expired'`). Идемпотентен: повторный remove_peer
+            # на уже-удалённый peer возвращает 404 — vpnctl_client трактует как OK.
+            revoke_ok = True
+            agent_attempted = False
+
             if server_id:
                 server = await get_server_by_id(server_id)
                 if server and server.get("agent_url"):
+                    agent_attempted = True
                     try:
                         client = client_for_server(server)
 
@@ -583,18 +598,55 @@ async def _process_grace_expired_subscriptions(bot: Bot):
                                         cfg_id, unthrottle_err,
                                     )
                             if peer_name:
-                                await client.remove_peer("awg", peer_name)
-                                await update_server_peer_count(server_id, -1)
+                                # Conditional counter dec: 404 (peer уже не было) → counter
+                                # уже корректный, не декрементим повторно. См. remove_peer
+                                # bool-return + audit 2026-05-23 о double-decrement.
+                                if await client.remove_peer("awg", peer_name):
+                                    await update_server_peer_count(server_id, -1)
 
                         elif protocol in ("vless", "vless-reality"):
                             if vless_uuid:
                                 config_data = cfg.get("config_data") or ""
                                 svc = _current_vless_service(config_data, plan_key)
-                                await client.remove_peer(svc, vless_uuid)
-                                await update_server_peer_count(server_id, -1)
+                                if await client.remove_peer(svc, vless_uuid):
+                                    await update_server_peer_count(server_id, -1)
 
                     except Exception as e:
-                        logger.warning("revoke grace cfg #%d: %s", cfg_id, e, exc_info=True)
+                        logger.warning("revoke grace cfg #%d: %s — slot оставлен active для retry", cfg_id, e, exc_info=True)
+                        revoke_ok = False
+
+            # Решение что делать со slot'ом в БД зависит от того, могли
+            # ли мы вообще достучаться до агента:
+            #
+            # * agent_attempted=True, revoke_ok=False — попробовали и
+            #   упали (5xx/timeout/network). Peer мог остаться на агенте.
+            #   НЕ reset'им — `_process_orphan_active_configs` подберёт и
+            #   retry'нет на следующих тиках. Без этого reaper'а раньше
+            #   orphan висел вечно (КРИТ #1 в audit 2026-05-23).
+            #
+            # * server_id задан, но server.agent_url пуст / нет server-
+            #   row — DB inconsistency (пропущенная миграция или ручное
+            #   изменение). Тоже НЕ reset'им: возможно peer есть на
+            #   реальной железке, но мы её не знаем. Логируем error +
+            #   ждём ручного вмешательства / orphan-reaper'а при
+            #   восстановлении agent_url.
+            #
+            # * server_id IS NULL — legacy configs (например SSH-
+            #   provisioned до agent-эпохи). Агент в принципе недоступен,
+            #   peer мы оттуда не вычистим. Reset'им — нет другого пути.
+            if agent_attempted and not revoke_ok:
+                logger.warning(
+                    "Конфиг #%d — slot НЕ сброшен (agent revoke failed, retry next tick)",
+                    cfg_id,
+                )
+                continue
+            if server_id and not agent_attempted:
+                logger.error(
+                    "Конфиг #%d — server_id=%s но agent недостижим (нет row/agent_url) — "
+                    "slot НЕ сброшен, ждём admin / orphan-reaper",
+                    cfg_id, server_id,
+                )
+                continue
 
             await reset_config_slot(cfg_id)
             logger.info("Конфиг #%d отозван (grace истёк, sub=%d)", cfg_id, sub_id)
@@ -606,6 +658,124 @@ async def _process_grace_expired_subscriptions(bot: Bot):
             parse_mode="HTML",
             reply_markup=_renew_kb(_lang),
         )
+
+
+async def _process_orphan_active_configs():
+    """Retry-механизм для configs застрявших active под expired-sub.
+
+    Возникают когда grace-loop пометил sub expired атомарно (race против
+    renew-from-grace) и затем revoke peer на агенте упал (5xx/timeout).
+    На след. тике этот reaper подбирает orphan'ы и retry'нет.
+
+    Idempotent через `remove_peer→bool`: на повторе агент возвращает 404,
+    counter НЕ декрементим (был сделан в grace-loop при первом успехе).
+
+    Storm-protection: если первая попытка по серверу X упала с
+    `VpnctlError` (timeout/network), остальные orphan'ы на этом server_id
+    пропускаются в этом тике (`dead_servers` set). Иначе 100 cfg × 30s
+    timeout = 50 мин wall-clock → `_safe(timeout=180)` обрежет mid-loop.
+    """
+    from services.database import get_orphan_active_configs_for_expired_subs
+    configs = await get_orphan_active_configs_for_expired_subs(limit=200)
+    if not configs:
+        return
+
+    # Pre-fetch unique servers (N+1 fix): 200 cfg × 3 уникальных server_id
+    # = 3 SELECT вместо 200. server_id=None — legacy, не fetch'им.
+    unique_ids = {c["server_id"] for c in configs if c.get("server_id")}
+    servers_by_id: dict[int, dict] = {}
+    for sid in unique_ids:
+        srv = await get_server_by_id(sid)
+        if srv:
+            servers_by_id[sid] = srv
+
+    logger.info("orphan-reaper: %d configs застряли active под expired-sub", len(configs))
+
+    dead_servers: set[int] = set()
+    revoked = 0
+    skipped_dead = 0
+    skipped_legacy = 0
+
+    for cfg in configs:
+        cfg_id      = cfg["id"]
+        sub_id      = cfg["subscription_id"]
+        server_id   = cfg.get("server_id")
+        protocol    = cfg.get("protocol", "")
+        peer_name   = cfg.get("peer_name") or ""
+        assigned_ip = cfg.get("assigned_ip") or ""
+        vless_uuid  = cfg.get("vless_uuid") or ""
+        plan_key    = cfg.get("plan_key") or ""
+
+        if not server_id:
+            # Legacy SSH-provisioned config (до agent-эпохи). Раньше
+            # делали `reset_config_slot` → создавали reverse-orphan на
+            # железке (peer есть, БД чистая). Теперь НЕ reset'им —
+            # error-лог, чтобы admin видел и мог сходить вручную.
+            # Реальных таких configs в проде уже не должно остаться;
+            # если появляются — это signal что миграция куда-то делась.
+            skipped_legacy += 1
+            logger.error(
+                "orphan-reaper cfg #%d: server_id IS NULL (legacy SSH config?) — slot НЕ сброшен, "
+                "иначе peer повиснет на неучтённой железке. sub=%d",
+                cfg_id, sub_id,
+            )
+            continue
+
+        if server_id in dead_servers:
+            skipped_dead += 1
+            continue
+
+        server = servers_by_id.get(server_id)
+        if not server or not server.get("agent_url"):
+            logger.warning(
+                "orphan-reaper cfg #%d: server_id=%s но row/agent_url отсутствуют — пропуск",
+                cfg_id, server_id,
+            )
+            continue
+
+        try:
+            client = client_for_server(server)
+            if protocol == "awg":
+                if assigned_ip and peer_name:
+                    try:
+                        await client.unthrottle_peer("awg", peer_name, assigned_ip)
+                    except VpnctlError as ue:
+                        logger.debug("orphan-reaper cfg #%d unthrottle skipped: %s", cfg_id, ue)
+                if peer_name:
+                    # 404 → peer уже удалён ранее (grace-loop успел до crash'а
+                    # на reset_config_slot). Counter уже декрементирован — НЕ
+                    # повторяем (double-decrement bug, audit 2026-05-23).
+                    if await client.remove_peer("awg", peer_name):
+                        await update_server_peer_count(server_id, -1)
+            elif protocol in ("vless", "vless-reality"):
+                if vless_uuid:
+                    config_data = cfg.get("config_data") or ""
+                    svc = _current_vless_service(config_data, plan_key)
+                    if await client.remove_peer(svc, vless_uuid):
+                        await update_server_peer_count(server_id, -1)
+        except VpnctlError as e:
+            # Network/timeout/5xx — пометить server как dead в этом тике,
+            # пропустить остальные orphan'ы на нём, retry на след. тике.
+            dead_servers.add(server_id)
+            logger.warning(
+                "orphan-reaper cfg #%d server=%d down (%s) — skip остальные orphan'ы на этом сервере в этом тике",
+                cfg_id, server_id, e,
+            )
+            continue
+        except Exception as e:
+            logger.warning(
+                "orphan-reaper cfg #%d (%s on srv=%s): %s — повторим в следующем тике",
+                cfg_id, protocol, server_id, e,
+            )
+            continue
+
+        await reset_config_slot(cfg_id)
+        revoked += 1
+
+    logger.info(
+        "orphan-reaper: revoked=%d, skipped_dead_servers=%d, skipped_legacy=%d, total=%d",
+        revoked, skipped_dead, skipped_legacy, len(configs),
+    )
 
 
 async def _reconcile_partial_refunds(bot: Bot) -> None:
@@ -804,12 +974,17 @@ async def _process_expired_trials(bot: Bot):
                             peer_id = cfg.get("vless_uuid") or cfg.get("peer_name") or ""
                             config_data = cfg.get("config_data") or ""
                             if peer_id:
+                                # Conditional decrement (audit 2026-05-23 round-3): peer
+                                # мог быть удалён ранее vpn.py:1077 (trial close on paid
+                                # purchase) — 404 → НЕ декрементим повторно.
+                                removed = False
                                 if proto == "awg":
-                                    await client.remove_peer("awg", peer_id)
+                                    removed = await client.remove_peer("awg", peer_id)
                                 elif proto in ("vless", "vless-reality"):
                                     svc = _current_vless_service(config_data, "vpn_trial")
-                                    await client.remove_peer(svc, peer_id)
-                                await update_server_peer_count(server_id, -1)
+                                    removed = await client.remove_peer(svc, peer_id)
+                                if removed:
+                                    await update_server_peer_count(server_id, -1)
                         except Exception as e:
                             logger.warning(
                                 "trial expiry: revoke cfg #%d failed: %s",
@@ -1056,6 +1231,22 @@ async def _sync_vless_active_uuids():
         try:
             client = client_for_server(server)
             valid = await get_active_vless_uuids_by_server(server["id"])
+
+            # SAFETY GUARD (2026-05-23 incident): пустой valid → wipe всех
+            # peer-ов на агенте. Если server.active_peers > 0 по БД-счётчику
+            # И SELECT вернул [] — это почти наверняка DB-ошибка / drift,
+            # а не legitimate «никто не платит». Лучше пропустить sync и
+            # дать orphan-peer-ам пожить лишний час, чем снести платных.
+            # Реальный empty-state (новый сервер) тоже сюда попадёт, но
+            # active_peers=0 в этом случае → guard не сработает.
+            if not valid and (server.get("active_peers") or 0) > 0:
+                logger.error(
+                    "vless sync ABORTED: empty valid_ids but server.active_peers=%d "
+                    "(server=%s id=%d) — likely DB drift, NOT wiping",
+                    server.get("active_peers"), server.get("name"), server["id"],
+                )
+                continue
+
             total_kept = 0
             total_removed: list[str] = []
             timed_out = False
@@ -1063,8 +1254,14 @@ async def _sync_vless_active_uuids():
                 try:
                     # Per-call timeout: 6 услуг × hung agent = весь _safe()
                     # сожран; 30 сек хватит на любой здоровый sync_active_ids.
+                    # allow_empty=True: scheduler уже сделал собственный sanity-check
+                    # выше (active_peers floor). Здесь client.sync_active_ids
+                    # имеет defence-in-depth raise при пустом valid_ids — без
+                    # этого флага legitimate empty sync (новый сервер, 0 peers)
+                    # спамил бы VpnctlError каждый тик.
                     result = await asyncio.wait_for(
-                        client.sync_active_ids(svc, valid), timeout=30,
+                        client.sync_active_ids(svc, valid, allow_empty=True),
+                        timeout=30,
                     )
                     total_kept += result.get("kept", 0)
                     total_removed += result.get("removed", []) or []
@@ -1671,6 +1868,11 @@ async def run_scheduler(bot: Bot):
         await _safe("expired_subs",     _process_expired_subscriptions(bot),       timeout=180)
         await _safe("expired_trials",   _process_expired_trials(bot),              timeout=180)
         await _safe("grace_expired",    _process_grace_expired_subscriptions(bot), timeout=180)
+        # Orphan-configs retry: configs застрявшие active под expired-sub
+        # (grace-revoke упал из-за agent timeout/5xx). Без этого reaper'а
+        # orphan-peer на сервере висит вечно — ни grace-reaper, ни
+        # active-expiry не подбирают (sub.status='expired', cfg.status='active').
+        await _safe("orphan_configs",   _process_orphan_active_configs(),          timeout=180)
         # Refund cascade catch-up: ищет sub'ы, где Telegram money refund
         # (необратим) прошёл, но DB/agent cleanup не доехал из-за crash.
         # Идемпотентен — если всё чисто, get_partial_refunds вернёт [].
@@ -1692,16 +1894,24 @@ async def run_scheduler(bot: Bot):
         # Stuck activating slots — каждые 4 часа. Слоты зависают в
         # 'activating' если provision упал (агент недоступен, таймаут).
         # Без этого юзер видит "слот занят" бесконечно до рестарта бота.
-        # Пропускаем первый cleanup-tick после старта бота: если бот упал
-        # mid-provision, peer мог успеть создаться на агенте, но slot завис
-        # в 'activating'. На первом tick сразу cleanup → reset slot → ghost
-        # peer на агенте. Лучше подождать ещё одну итерацию (8h после boot),
-        # чтобы оставшиеся retry-механизмы и юзер успели среагировать.
-        if _TICK > 0 and _TICK % 4 == 0:
-            from services.database import cleanup_stuck_activating_slots
-            n = await cleanup_stuck_activating_slots()
-            if n:
-                logger.info("cleanup_stuck_activating: сброшено %d слотов", n)
+        # Пропускаем первый cleanup-tick после старта бота (_TICK == 4 даст
+        # ~3h paused after boot): если бот упал mid-provision, peer мог
+        # успеть создаться на агенте, но slot завис в 'activating'. На
+        # первом tick сразу cleanup → reset slot → ghost peer на агенте.
+        # Лучше подождать ещё одну итерацию (8h после boot), чтобы
+        # оставшиеся retry-механизмы и юзер успели среагировать.
+        # _safe-обёртка (добавлено 2026-05-23 после audit): без неё
+        # exception из cleanup_stuck_activating_slots / DB-lock-timeout /
+        # сетевой стопор пробрасывался в run_scheduler-while-loop и убивал
+        # ВЕСЬ scheduler до restart бота. Каждый тик scheduler-а должен
+        # быть isolated от других — в т.ч. этот ad-hoc cleanup.
+        if _TICK % 4 == 0:
+            async def _cleanup_stuck():
+                from services.database import cleanup_stuck_activating_slots
+                n = await cleanup_stuck_activating_slots()
+                if n:
+                    logger.info("cleanup_stuck_activating: сброшено %d слотов", n)
+            await _safe("cleanup_stuck", _cleanup_stuck(), timeout=60)
         # Win-back кампания — раз в сутки. Шлём реактивационное сообщение
         # пользователям у которых sub истёк 7-14 дней назад и они не вернулись.
         if _TICK % 24 == 0:

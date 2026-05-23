@@ -292,31 +292,38 @@ async def _close_dangling_grace(bot: Bot, sub_id: int, plan_key: str) -> None:
                 try:
                     cli = client_for_server(server)
                     if protocol == "awg" and peer_name:
+                        # Conditional decrement (audit 2026-05-23 round-4):
+                        #   - 200/204 (peer был и удалён) → counter -1
+                        #   - 404 (peer уже не было) → counter не трогаем (был
+                        #     декрементирован тем кто реально удалил, например
+                        #     `_process_orphan_active_configs` или admin revoke)
+                        #   - 5xx/timeout (raise VpnctlError) → counter не
+                        #     трогаем, orphan-reaper retry'нет на след. тике
+                        # Раньше комментарий обещал "AWG-аналог sync" — его не
+                        # существует (только VLESS sync), counter drift'ил при
+                        # каждой 404/5xx. Audit нашёл inconsistency с
+                        # `revoke_subscription_configs` + orphan-reaper, теперь
+                        # все callsites используют один и тот же bool-gate.
                         try:
-                            await cli.remove_peer("awg", peer_name)
+                            if await cli.remove_peer("awg", peer_name):
+                                await update_server_peer_count(server_id, -1)
                         except VpnctlError as e:
                             logger.warning(
                                 "remove_peer awg failed in _close_dangling_grace "
-                                "(orphan will be reaped by sync): %s", e,
+                                "(orphan-reaper подберёт next tick): %s", e,
                             )
-                        # Счётчик уменьшаем всегда: ниже мы делаем reset_config_slot
-                        # → DB-сторона показывает «слот empty». Если бы декремент
-                        # пропускали при ошибке агента, counter завис бы и сервер
-                        # выглядел переполненным навсегда. Orphan-пир на агенте
-                        # подберёт hourly `_sync_vless_active_uuids` / AWG-аналог.
-                        await update_server_peer_count(server_id, -1)
                     elif protocol in ("vless", "vless-reality") and vless_uuid:
                         # peer мог быть в vless-grace или обычном inbound
                         config_data = cfg.get("config_data") or ""
                         svc = current_vless_service(config_data, plan_key)
                         try:
-                            await cli.remove_peer(svc, vless_uuid)
+                            if await cli.remove_peer(svc, vless_uuid):
+                                await update_server_peer_count(server_id, -1)
                         except VpnctlError as e:
                             logger.warning(
                                 "remove_peer vless failed in _close_dangling_grace "
-                                "(orphan will be reaped by sync): %s", e,
+                                "(_sync_vless_active_uuids подберёт next tick): %s", e,
                             )
-                        await update_server_peer_count(server_id, -1)
                 except Exception as e:
                     logger.warning("close_dangling_grace cfg #%d: %s", cfg_id, e)
         await reset_config_slot(cfg_id)

@@ -143,14 +143,15 @@ async def test_awg_cfg_removed_counter_decremented_slot_reset(fresh_db, db_with_
 
 
 @pytest.mark.asyncio
-async def test_awg_counter_decrements_even_when_agent_fails(fresh_db, db_with_server):
-    """Если remove_peer падает (агент down/peer уже не существует) — counter
-    ВСЁ РАВНО уменьшаем, потому что DB-сторона делает reset_config_slot
-    ниже. Если бы пропускали декремент, counter застрял бы навсегда — orphan
-    на агенте подберёт hourly _sync_vless_active_uuids, но counter
-    decoupled от agent state и нужен явный fix.
+async def test_awg_counter_NOT_decremented_when_agent_raises(fresh_db, db_with_server):
+    """Если remove_peer raises (5xx/timeout) — counter НЕ декрементим.
+    Audit 2026-05-23 round-4: раньше counter уменьшался безусловно с
+    обещанием "AWG-sync подберёт orphan'а" — AWG-sync не существует,
+    counter drift'ил. Теперь _process_orphan_active_configs retry'нет
+    remove_peer на след. тике; при успехе decrement сделает он.
 
-    Это поведение явно baked-in to comment в grace.py:302-307."""
+    Sub всё равно expired (atomic), slot всё равно reset — peer на агенте
+    останется orphan пока orphan-reaper до него не доберётся."""
     from services.grace import _close_dangling_grace
 
     sub_id = await _make_grace_sub("vpn_base")
@@ -158,23 +159,49 @@ async def test_awg_counter_decrements_even_when_agent_fails(fresh_db, db_with_se
                            peer_name="ghost", assigned_ip="10.0.0.99")
 
     client = _mock_client()
-    client.remove_peer.side_effect = VpnctlError("404 not found")  # ghost peer
+    client.remove_peer.side_effect = VpnctlError("500 internal")  # 5xx
 
     with patch("services.grace.client_for_server", return_value=client):
         await _close_dangling_grace(_fake_bot(), sub_id, "vpn_base")
 
-    # Counter всё равно -1
+    # Counter НЕ декремент — orphan-reaper доделает позже
     async with aiosqlite.connect(fresh_db) as db:
         async with db.execute("SELECT active_peers FROM servers WHERE id=?", (db_with_server,)) as cur:
             row = await cur.fetchone()
-    assert row[0] == 4, (
-        "counter decrement must happen even on agent failure — иначе counter "
-        "застрял бы навсегда (DB сторона: slot reset, agent сторона: ghost peer)"
+    assert row[0] == 5, (
+        "counter НЕ должен декрементиться при VpnctlError — orphan-reaper "
+        "сделает retry и decrement при реальном успехе"
     )
 
-    # Sub всё равно expired
+    # Sub всё равно expired (atomic mark)
     sub = await get_subscription_by_id(sub_id)
     assert sub["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_awg_counter_NOT_decremented_when_remove_returns_false(fresh_db, db_with_server):
+    """Если remove_peer возвращает False (peer 404, уже удалён ранее) —
+    counter НЕ декрементим. Кто-то другой (orphan-reaper, admin manual
+    revoke, racing path) уже декрементировал. Audit 2026-05-23 round-4."""
+    from services.grace import _close_dangling_grace
+
+    sub_id = await _make_grace_sub("vpn_base")
+    await _make_active_cfg(sub_id, db_with_server, protocol="awg",
+                           peer_name="ghost", assigned_ip="10.0.0.99")
+
+    client = _mock_client()
+    client.remove_peer.return_value = False  # 404 path (peer already gone)
+
+    with patch("services.grace.client_for_server", return_value=client):
+        await _close_dangling_grace(_fake_bot(), sub_id, "vpn_base")
+
+    async with aiosqlite.connect(fresh_db) as db:
+        async with db.execute("SELECT active_peers FROM servers WHERE id=?", (db_with_server,)) as cur:
+            row = await cur.fetchone()
+    assert row[0] == 5, (
+        "counter НЕ должен декрементиться когда remove_peer вернул False "
+        "(404 = peer уже был удалён ранее, double-decrement prevention)"
+    )
 
 
 # ── VLESS path ────────────────────────────────────────────────────────────────

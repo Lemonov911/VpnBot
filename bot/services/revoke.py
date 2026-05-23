@@ -97,15 +97,18 @@ async def revoke_subscription_configs(
                             except Exception as ue:
                                 logger.debug("%s cfg #%d unthrottle skipped: %s",
                                              log_prefix, cfg_id, ue)
-                        await client.remove_peer("awg", peer_name)
-                        await update_server_peer_count(server_id, -1)
+                        # Conditional decrement (audit 2026-05-23 round-3): если peer
+                        # уже удалён (404 от агента) — counter уже декрементирован,
+                        # повтор сломает счётчик. См. также remove_peer bool-return.
+                        if await client.remove_peer("awg", peer_name):
+                            await update_server_peer_count(server_id, -1)
                         revoked += 1
                     elif protocol in ("vless", "vless-reality"):
                         if vless_uuid:
                             config_data = cfg.get("config_data") or ""
                             svc = current_vless_service(config_data, plan_key)
-                            await client.remove_peer(svc, vless_uuid)
-                            await update_server_peer_count(server_id, -1)
+                            if await client.remove_peer(svc, vless_uuid):
+                                await update_server_peer_count(server_id, -1)
                             revoked += 1
                 except Exception as e:
                     failed += 1
@@ -222,8 +225,11 @@ async def revoke_excess_configs_on_downgrade(
                                         "%s cfg #%d unthrottle skipped: %s",
                                         log_prefix, cfg_id, ue,
                                     )
-                            await client.remove_peer("awg", peer_name)
-                            await update_server_peer_count(server_id, -1)
+                            # Conditional decrement (audit 2026-05-23 round-3):
+                            # remove_peer 404 → counter уже декрементирован,
+                            # не повторяем.
+                            if await client.remove_peer("awg", peer_name):
+                                await update_server_peer_count(server_id, -1)
                             revoked += 1
                         elif protocol in ("vless", "vless-reality"):
                             if vless_uuid:
@@ -234,14 +240,14 @@ async def revoke_excess_configs_on_downgrade(
                                 svc = current_vless_service(
                                     config_data, old_plan_key,
                                 )
-                                await client.remove_peer(svc, vless_uuid)
-                                await update_server_peer_count(server_id, -1)
+                                if await client.remove_peer(svc, vless_uuid):
+                                    await update_server_peer_count(server_id, -1)
                                 revoked += 1
                         elif protocol == "wg":
                             # plain wg ещё не используется, но не оставляем
                             # silent skip — лог + counter.
-                            await client.remove_peer("wg", peer_name)
-                            await update_server_peer_count(server_id, -1)
+                            if await client.remove_peer("wg", peer_name):
+                                await update_server_peer_count(server_id, -1)
                             revoked += 1
                     except Exception as e:
                         failed += 1

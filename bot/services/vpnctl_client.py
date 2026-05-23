@@ -161,12 +161,25 @@ class VpnctlClient:
             )
         raise VpnctlError(f"unexpected response: {data}")
 
-    async def remove_peer(self, service: str, peer_id: str):
+    async def remove_peer(self, service: str, peer_id: str) -> bool:
+        """Удаляет peer с агента. Возвращает True если peer действительно
+        был удалён (200/204), False если его уже не было (404).
+
+        Bool-return позволяет caller'ам решать, декрементить ли локальный
+        счётчик `servers.active_peers`. Это важно для idempotent retry:
+        grace-loop удалил peer (counter--), потом `reset_config_slot` упал,
+        orphan-reaper подобрал и вызвал remove_peer ещё раз — агент
+        возвращает 404 (peer уже нет), counter оставляем как есть.
+        Без bool-return retry даёт двойное декремент (audit 2026-05-23).
+        """
         st, _ = await self._request(
             "DELETE", f"/services/{service}/peers/{quote(peer_id, safe='')}"
         )
-        if st not in (200, 404):
-            raise VpnctlError(f"remove_peer({service}): {st}")
+        if st in (200, 204):
+            return True
+        if st == 404:
+            return False
+        raise VpnctlError(f"remove_peer({service}): {st}")
 
     async def suspend_peer(self, service: str, peer_id: str):
         st, _ = await self._request("PUT", f"/services/{service}/peers/{quote(peer_id, safe='')}/suspend")
@@ -215,7 +228,21 @@ class VpnctlClient:
         if st not in (200, 204):
             raise VpnctlError(f"unthrottle_peer({service}, {peer_id}): {st}")
 
-    async def sync_active_ids(self, service: str, valid_ids: list[str]) -> dict:
+    async def sync_active_ids(self, service: str, valid_ids: list[str], *, allow_empty: bool = False) -> dict:
+        # Client-side guard против сегодняшнего инцидента (2026-05-23): пустой
+        # valid_ids на агенте трактуется как desired-state = ∅ → wipe всех
+        # peer-ов в сервисе. Если caller случайно передаёт [] (DB-ошибка
+        # вернула пустой active-set, новая server-запись ещё без подписок,
+        # bug в SELECT WHERE protocol/status) — мы стираем платных юзеров.
+        # Caller, который реально хочет wipe (например админ-инструмент),
+        # должен явно сказать allow_empty=True. См. также защиту в
+        # scheduler._sync_vless_active_uuids (проверка floor через
+        # реальный peer-count на агенте).
+        if not valid_ids and not allow_empty:
+            raise VpnctlError(
+                f"sync({service}): refusing to send empty valid_ids without allow_empty=True "
+                f"— would wipe all peers"
+            )
         st, data = await self._request(
             "POST", f"/services/{service}/sync", {"valid_ids": valid_ids}, timeout_s=15,
         )

@@ -284,11 +284,50 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_configs_subscription_id ON configs(subscription_id)"
         )
+        # Hot-path reaper query в scheduler:
+        #   get_expired_subscriptions / get_expired_trials —
+        #     WHERE status='active' AND ...expires_at <= now
+        # До 2026-05-23 — full table scan каждый час по subscriptions
+        # (тысячи строк, ~100–500ms блокировки + worker contention).
+        # predicate `datetime(REPLACE(expires_at,'T',' '))` non-sargable,
+        # но композитный (status,expires_at) даёт index-scan по status'у
+        # и линейный пробег только по тем строкам, где status='active'.
+        # idx_subs_status_grace — по grace_until — создаётся ниже после
+        # _migrate, потому что grace_until добавляется ALTER'ом.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subs_status_expires "
+            "ON subscriptions(status, expires_at)"
+        )
+        # admin/server-load lookups + reconcile reduction:
+        #   COUNT(configs WHERE server_id=? AND status='active')
+        # Используется и в reconcile_active_peers_counters, и в
+        # capacity-selector при provision'е.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_configs_server_status "
+            "ON configs(server_id, status)"
+        )
+        # orphan-reaper hot-path:
+        #   SELECT c.* JOIN subscriptions s ON s.id=c.subscription_id
+        #     WHERE c.status='active' AND s.status='expired'
+        # Без этого index'а — full scan по configs (тысячи строк) каждый
+        # tick. (status, subscription_id) даёт driver-сторону JOIN'а:
+        # filter `status='active'` + ready subscription_id для merge.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_configs_status_sub "
+            "ON configs(status, subscription_id)"
+        )
         await _migrate(db)
         # idx_users_referred_by must come after _migrate — referred_by column
         # is added by the migration and doesn't exist in the base CREATE TABLE.
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_users_referred_by ON users(referred_by)"
+        )
+        # grace_until добавлен миграцией (ALTER TABLE) — индекс на неё
+        # обязан идти после _migrate(db). Используется в
+        # get_grace_expired_subscriptions hot-path reaper.
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subs_status_grace "
+            "ON subscriptions(status, grace_until)"
         )
         await db.commit()
 
@@ -1517,6 +1556,37 @@ async def get_grace_expired_subscriptions() -> list[dict]:
             SELECT id, user_id, plan FROM subscriptions
             WHERE status='grace' AND grace_until IS NOT NULL AND grace_until <= ?
         """, (datetime.utcnow().isoformat(),)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_orphan_active_configs_for_expired_subs(limit: int = 200) -> list[dict]:
+    """Конфиги застрявшие в status='active' под уже-expired подпиской.
+
+    Возникают когда `_process_grace_expired_subscriptions` атомарно
+    помечает sub expired (для race-protection с renew-from-grace), а
+    затем agent revoke падает (timeout / сеть / 5xx). Старая логика
+    дёргала `reset_config_slot` безусловно → orphan peer на сервере,
+    но БД чистая. Новая логика (2026-05-23) при failed-revoke оставляет
+    slot active → нужен этот reaper чтобы retry'нуть на следующих тиках.
+
+    Без него: sub expired + cfg active = «висит вечно», ни
+    grace-reaper (status='grace') ни active-expiry-reaper (`expires_at <=
+    now` где sub.status='active') не подхватит. Был баг в комменте — он
+    обещал retry через `_process_expired_…`, фактически такого пути не
+    было.
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT c.id, c.subscription_id, c.user_id, c.server_id,
+                   c.protocol, c.peer_name, c.assigned_ip, c.vless_uuid,
+                   c.config_data, s.plan AS plan_key
+            FROM configs c
+            JOIN subscriptions s ON s.id = c.subscription_id
+            WHERE c.status = 'active' AND s.status = 'expired'
+            ORDER BY c.id
+            LIMIT ?
+        """, (limit,)) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
 

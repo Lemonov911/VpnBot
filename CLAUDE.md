@@ -69,8 +69,8 @@ Bot → Go agent HTTP API → WireGuard/Xray на VPN-сервере
 - **VPN-сервер**: `68.183.15.95` (DigitalOcean Amsterdam) — там крутится:
   - Go-агент `vpnctl-awg.service` (бинарь `/usr/local/bin/vpnctl_awg`, env `/opt/vpnctl/.env`) — обслуживает **awg + wg + vless** (SERVICES=awg,wg,vless-base,vless-max,vless-base-slow,vless-max-slow,vless-grace)
   - `xray.service` — VLESS Reality, 5 tier-inbounds на портах 8443 (base), 8448 (max), 9443 (base-slow), 9448 (max-slow), 9453 (grace)
-  - SNI в проде = `yandex.ru` (с 2026-05-23, был `www.microsoft.com` — сменили для shutdown-bypass: yandex в whitelist Минцифры, microsoft нет; см. `Темки/VPN телеграмм/Что нужно чтобы начать продавать.md` → секцию «Белые списки»). pubkey/short_id в `/opt/vpnctl/.env` (XRAY_PUBKEY/XRAY_SHORT_ID).
-  - **xray config.json**: realitySettings.dest=`yandex.ru:443`, serverNames=`["", "yandex.ru"]` во всех 5 vless-reality-* inbounds. Per-server SNI лежит в БД `servers.xray_sni`, fallback на env `XRAY_DEFAULT_SNI` или хардкод `www.microsoft.com` в [webapp_api.py:260](bot/services/webapp_api.py:260) — но для Amsterdam (id=11) теперь явно `yandex.ru` в БД.
+  - SNI в проде = `www.microsoft.com` (revert 2026-05-23 вечер: пробовали yandex.ru для shutdown-bypass, но скорость пострадала; откатили). Charlotte (id=14) и Frankfurt (id=17) до сих пор на yandex.ru в БД — юзер откатит с другого компа. pubkey/short_id в `/opt/vpnctl/.env` (XRAY_PUBKEY/XRAY_SHORT_ID).
+  - **xray config.json (Amsterdam)**: realitySettings.dest=`www.microsoft.com:443`, serverNames=`["", "www.microsoft.com"]` во всех 5 vless-reality-* inbounds. Per-server SNI лежит в БД `servers.xray_sni`.
   - В БД бота зарегистрированы 3 записи: id=8 AWG, id=10 WG, id=11 VLESS (все указывают на этот же IP)
 
 ### Bot (`bot/`)
