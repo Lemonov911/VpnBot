@@ -1511,3 +1511,259 @@ export function userContextForTicket(userId: number): UserContextPayload {
     ban: ban ?? null,
   }
 }
+
+// ─── Track F: cohort retention ────────────────────────────────────────
+// Weekly cohort retention matrix: rows = signup-week, cols = «недель с
+// регистрации». Cell = % cohort с активной/grace платной подпиской в
+// эту календарную неделю. Стандартный SaaS-метрик: видно, насколько
+// клиенты «застревают» в продукте.
+//
+// Почему matrix считается в TS, а не одним SQL:
+// SQLite не имеет generate_series / window-функций уровня PostgreSQL,
+// и сборка 12×12 матрицы через рекурсивный CTE превращается в ad-hoc
+// нечитаемое нечто. Объём данных мал (≤ 3 мес users + их subs) — full-scan
+// в TS даёт O(users * 12) которое < 1мс на типичной БД. Тестируемо
+// и читаемо. Если cohort window вырастет до 52 недель — пересмотреть.
+//
+// Week boundary: Monday 00:00 UTC. Совпадает с monOffsetExpr из
+// revenueWindows() — единый стандарт по проекту (revenue-чарт уже считает
+// WTD от понедельника).
+
+export type CohortRow = {
+  cohortLabel: string         // e.g. "May 12" — дата понедельника
+  cohortWeekStart: string     // ISO date Monday — для дебага/тестов
+  cohortSize: number          // сколько юзеров зарегалось в эту неделю
+  retention: Array<{
+    week: number              // 0 = сама неделя регистрации, 1 = следующая…
+    active: number            // сколько cohort'а было активно в эту неделю
+    pct: number               // active / cohortSize * 100, округлено до int
+  }>
+}
+
+/**
+ * Возвращает 12 cohort'ов за последние 12 недель (включая текущую), от
+ * самой старой к самой новой. Для каждого — массив `retention[0..11]`,
+ * где cell[k] = % юзеров cohort'а, у которых была активная (`active` или
+ * `grace`) платная подписка хотя бы в один день недели N+k.
+ *
+ * «Активная подписка в неделю W» = существует sub где
+ *   created_at <= week_end AND
+ *   (expires_at IS NULL OR expires_at >= week_start) AND
+ *   status IN ('active','grace') AND
+ *   plan != 'vpn_trial' AND refunded_at IS NULL
+ *
+ * Триалы не считаем — это не retention платящих, а retention пользователей
+ * вообще. Метрика про paid retention.
+ *
+ * Cells с week > current-week (т.е. в будущем относительно cohort'а)
+ * фронт рендерит как «empty» — клиент не дожил ещё до этой клетки.
+ * Здесь возвращаем все 12 cells всегда; фронт сам решает по
+ * `week > weeks_since_cohort` показывать ли %.
+ */
+export function cohortRetention12w(): CohortRow[] {
+  const d = db()
+
+  const WEEKS = 12
+  const MS_PER_DAY = 24 * 60 * 60 * 1000
+  const MS_PER_WEEK = 7 * MS_PER_DAY
+
+  // ── Шаг 1: определить 12 границ недель (Monday 00:00 UTC). ──
+  // Берём now в UTC, отматываем до ближайшего предыдущего понедельника,
+  // и формируем массив из 12 weekStart-таймстампов (от самого старого).
+  const now = new Date()
+  // Date.getUTCDay(): 0=вс..6=сб → понедельник = (day + 6) % 7 дней назад
+  const currentMonday = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
+  ))
+  const dow = currentMonday.getUTCDay()
+  const daysToMonday = (dow + 6) % 7  // 0 если уже пн, 6 если вс
+  currentMonday.setUTCDate(currentMonday.getUTCDate() - daysToMonday)
+
+  // weekStarts[0] = 11 недель назад (самый старый cohort)
+  // weekStarts[11] = текущая неделя
+  const weekStarts: Date[] = []
+  for (let i = WEEKS - 1; i >= 0; i--) {
+    weekStarts.push(new Date(currentMonday.getTime() - i * MS_PER_WEEK))
+  }
+
+  // ── Шаг 2: вытянуть всех юзеров, зарегавшихся в окне [weekStarts[0], +12 недель]. ──
+  // SQLite хранит created_at в UTC ISO-like формате; сравнение строкой работает
+  // для ISO-8601 (датосортируется лексикографически). Используем datetime() для
+  // нормализации (CURRENT_TIMESTAMP пишет «YYYY-MM-DD HH:MM:SS» без T).
+  const exclU = excludeAdminsClause('id')
+  const windowStartISO = weekStarts[0].toISOString().replace('T', ' ').slice(0, 19)
+
+  const users = d.prepare(`
+    SELECT id, created_at
+    FROM users
+    WHERE datetime(REPLACE(created_at, 'T', ' ')) >= datetime(?) ${exclU}
+  `).all(windowStartISO) as Array<{ id: number; created_at: string }>
+
+  if (users.length === 0) {
+    // Пустые cohort'ы — фронт показывает grid с нулями.
+    return weekStarts.map(ws => ({
+      cohortLabel: formatCohortLabel(ws),
+      cohortWeekStart: ws.toISOString().slice(0, 10),
+      cohortSize: 0,
+      retention: Array.from({ length: WEEKS }, (_, w) => ({
+        week: w,
+        active: 0,
+        pct: 0,
+      })),
+    }))
+  }
+
+  // ── Шаг 3: распределить юзеров по cohort'ам. ──
+  // Для каждого юзера: какой weekStart-индекс соответствует его created_at?
+  // Парсим created_at как UTC, делим на MS_PER_WEEK.
+  const userIds = users.map(u => u.id)
+  // userCohortIdx[user_id] = индекс в weekStarts (или -1 если вне окна)
+  const userCohortIdx = new Map<number, number>()
+  const cohortUserIds: Set<number>[] = weekStarts.map(() => new Set())
+
+  for (const u of users) {
+    const ts = parseSqliteTimestamp(u.created_at)
+    if (ts === null) continue
+    // Находим индекс недели: ts должен попасть в [weekStarts[idx], weekStarts[idx]+1week)
+    const diffMs = ts - weekStarts[0].getTime()
+    if (diffMs < 0) continue
+    const idx = Math.floor(diffMs / MS_PER_WEEK)
+    if (idx < 0 || idx >= WEEKS) continue
+    userCohortIdx.set(u.id, idx)
+    cohortUserIds[idx].add(u.id)
+  }
+
+  // ── Шаг 4: вытянуть подписки этих юзеров. ──
+  // IN (...) с inline list — userIds может быть до пары сотен; для большего
+  // объёма стоит сделать temp table, но здесь 12 weeks * ~средняя welcome rate
+  // даёт малый scope.
+  // Стабильность фильтра: status IN ('active','grace'), plan != trial, не возвращены.
+  let subs: Array<{
+    user_id: number
+    created_at: string
+    expires_at: string | null
+  }> = []
+
+  if (userIds.length > 0) {
+    // SQLite limit: 999 параметров. Делим на чанки если надо.
+    const CHUNK = 900
+    // refunded_at — миграционная колонка (ALTER TABLE). На production уже есть,
+    // но в очень старом dev DB её может не быть → query упадёт. Graceful detect.
+    const hasRefundedAt = (() => {
+      try {
+        d.prepare(`SELECT refunded_at FROM subscriptions LIMIT 0`).all()
+        return true
+      } catch { return false }
+    })()
+    const refundFilter = hasRefundedAt
+      ? "AND (refunded_at IS NULL OR refunded_at = '')"
+      : ''
+    for (let i = 0; i < userIds.length; i += CHUNK) {
+      const chunk = userIds.slice(i, i + CHUNK)
+      const placeholders = chunk.map(() => '?').join(',')
+      const rows = d.prepare(`
+        SELECT user_id, created_at, expires_at
+        FROM subscriptions
+        WHERE user_id IN (${placeholders})
+          AND plan != 'vpn_trial'
+          AND status IN ('active','grace')
+          ${refundFilter}
+      `).all(...chunk) as Array<{
+        user_id: number
+        created_at: string
+        expires_at: string | null
+      }>
+      subs = subs.concat(rows)
+    }
+  }
+
+  // ── Шаг 5: для каждого cohort'а пройтись по 12 «неделям с регистрации». ──
+  // Для cohort idx и retention week w: рассматриваемая calendar-week W =
+  // weekStarts[idx + w] (если idx + w < WEEKS) либо weekStarts[idx] + w*WEEK
+  // (но мы не показываем будущее, т.к. WeekStart > now). w=0 всегда week
+  // регистрации, в которой по определению юзер «активен» только если уже
+  // купил sub до конца недели.
+  //
+  // Чтобы избежать O(N_subs * N_weeks) — для каждой подписки за один проход
+  // получим (firstWeekActive, lastWeekActive) индексы в weekStarts; и для
+  // каждого user'а соберём Set активных week-индексов.
+  const userActiveWeeks = new Map<number, Set<number>>()
+  for (const s of subs) {
+    const subStartTs = parseSqliteTimestamp(s.created_at)
+    if (subStartTs === null) continue
+    // expires_at может быть null (бессрочка) — тогда «активна до сейчас».
+    const expTs = s.expires_at ? parseSqliteTimestamp(s.expires_at) : null
+    const subEndTs = expTs ?? Date.now()
+
+    // Какие weekStarts[k] пересекаются с [subStartTs, subEndTs]?
+    // week k активна если subStartTs < weekEnd AND subEndTs > weekStart.
+    for (let k = 0; k < WEEKS; k++) {
+      const wStart = weekStarts[k].getTime()
+      const wEnd = wStart + MS_PER_WEEK
+      if (subStartTs < wEnd && subEndTs >= wStart) {
+        let set = userActiveWeeks.get(s.user_id)
+        if (!set) { set = new Set(); userActiveWeeks.set(s.user_id, set) }
+        set.add(k)
+      }
+    }
+  }
+
+  // ── Шаг 6: посчитать матрицу. ──
+  const result: CohortRow[] = weekStarts.map((ws, idx) => {
+    const cohortIds = cohortUserIds[idx]
+    const size = cohortIds.size
+    const retention: CohortRow['retention'] = []
+
+    for (let w = 0; w < WEEKS; w++) {
+      const calendarIdx = idx + w
+      if (calendarIdx >= WEEKS) {
+        // Эта клетка в будущем относительно cohort'а — фронт нарисует empty.
+        retention.push({ week: w, active: 0, pct: 0 })
+        continue
+      }
+      let active = 0
+      for (const uid of cohortIds) {
+        const aw = userActiveWeeks.get(uid)
+        if (aw && aw.has(calendarIdx)) active++
+      }
+      const pct = size > 0 ? Math.round((active / size) * 100) : 0
+      retention.push({ week: w, active, pct })
+    }
+
+    return {
+      cohortLabel: formatCohortLabel(ws),
+      cohortWeekStart: ws.toISOString().slice(0, 10),
+      cohortSize: size,
+      retention,
+    }
+  })
+
+  return result
+}
+
+/**
+ * Парсит timestamp из SQLite в epoch ms.
+ *
+ * SQLite хранит два формата: «YYYY-MM-DD HH:MM:SS» (CURRENT_TIMESTAMP)
+ * и ISO-8601 «YYYY-MM-DDTHH:MM:SS» (Python datetime.isoformat()). Оба
+ * считаем UTC (бот так и пишет — naive datetime в UTC).
+ *
+ * Возвращает null если строка пустая или unparsable — caller просто
+ * пропустит запись.
+ */
+function parseSqliteTimestamp(s: string | null): number | null {
+  if (!s) return null
+  // Если уже ISO (с T) — Date умеет. Если «YYYY-MM-DD HH:MM:SS» —
+  // явно прибавим 'Z' (UTC), иначе JS интерпретирует как local time.
+  const iso = s.includes('T') ? s : s.replace(' ', 'T')
+  const withTz = iso.endsWith('Z') ? iso : iso + 'Z'
+  const ms = Date.parse(withTz)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** "May 12" — короткий ярлык для cohort row. Локаль en-US, фиксированная UTC. */
+function formatCohortLabel(d: Date): string {
+  const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+  const day = d.getUTCDate()
+  return `${month} ${day}`
+}

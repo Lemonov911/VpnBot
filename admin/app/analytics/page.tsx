@@ -8,12 +8,14 @@ import {
   payingUsersGrowth,
   activePayingCount,
   methodBreakdown30d,
+  cohortRetention12w,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
 import { RevenueArea } from '../_components/RevenueChart'
 import { MethodBreakdownChart } from '../_components/MethodBreakdownChart'
 import { GoalChart } from '../_components/GoalChart'
+import { CohortRetentionTable } from '../_components/CohortRetentionTable'
 import { StatCard } from '../_components/ui'
 
 function planName(key: string) {
@@ -101,6 +103,10 @@ export default async function Analytics() {
             : 'нет данных за 30 дней'}
         </div>
       </div>
+
+      {/* Cohort retention — heatmap 12×12, % cohort'а с активной подпиской
+          в каждой из последующих 12 недель. Track F. */}
+      <CohortRetentionTable data={cohortRetention12w()} />
 
       {/* Funnel + plan mix */}
       <div className="grid md:grid-cols-2 gap-6">
