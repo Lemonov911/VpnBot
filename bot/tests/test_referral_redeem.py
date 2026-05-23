@@ -35,6 +35,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
+import pytest_asyncio
+from aiohttp import web
 
 from services.database import (
     upsert_user,
@@ -484,3 +486,249 @@ async def test_send_purchase_success_custom_title_key(fresh_db, monkeypatch):
     fake_bot.send_message.assert_awaited_once()
     text = fake_bot.send_message.call_args.args[1]
     assert "Бонусные дни активированы" in text
+
+
+# ── Integration: POST /api/referral/redeem endpoint (reactivate path) ────────
+#
+# Endpoint поднимается через aiohttp test client, _resolve_user мокается
+# на фикс. USER_ID (минуем initData/HMAC). Цель — закрыть end-to-end ветку
+# `action='reactivated'` целиком: DB UPDATE → delete_empty_configs →
+# provision_vpn_slots_async(...) → send_purchase_success_message(
+#     ..., title_key='bot_referral_reactivate_title').
+#
+# Unit-тесты сверху покрывают каждый кирпич изолированно — integration
+# смотрит «склеилось ли всё вместе» (правильные kwargs, правильный
+# title_key, реально дёрнули delete_empty_configs).
+
+INTEGRATION_USER_ID = 999
+
+
+@pytest_asyncio.fixture
+async def redeem_client(fresh_db, aiohttp_client, monkeypatch):
+    """aiohttp test app c handle_referral_redeem.
+
+    Мокаем:
+      - _resolve_user → {'id': INTEGRATION_USER_ID} (минуем initData).
+      - handlers.vpn.provision_vpn_slots_async — AsyncMock(return_value=(3,3)),
+        иначе он будет лезть к настоящему агенту по сети.
+      - handlers.vpn.send_purchase_success_message — AsyncMock, иначе он
+        попытается отдать sub_url + кнопку Happ через _fake_bot.
+
+    delete_empty_configs_for_sub НЕ мокаем — хотим проверить что реально
+    удалит empty configs.
+    """
+    import services.webapp_api as wapi
+    from services.webapp_api import handle_referral_redeem
+
+    monkeypatch.setattr(
+        wapi, "_resolve_user",
+        lambda req, body=None: {"id": INTEGRATION_USER_ID},
+    )
+
+    # Mock provision_vpn_slots_async at its source module — handler импортирует
+    # его inline `from handlers.vpn import provision_vpn_slots_async`, поэтому
+    # патчим именно `handlers.vpn.provision_vpn_slots_async` (источник),
+    # не webapp_api.
+    import handlers.vpn as vpn_mod
+    fake_provision = AsyncMock(return_value=(3, 3))
+    monkeypatch.setattr(vpn_mod, "provision_vpn_slots_async", fake_provision)
+
+    fake_notify = AsyncMock(return_value=None)
+    monkeypatch.setattr(vpn_mod, "send_purchase_success_message", fake_notify)
+
+    app = web.Application()
+    fake_bot = MagicMock()
+    fake_bot.send_message = AsyncMock(return_value=None)
+    app["bot"] = fake_bot
+    app.router.add_post("/api/referral/redeem", handle_referral_redeem)
+
+    client = await aiohttp_client(app)
+    # stash mocks for assertions
+    client._fake_provision = fake_provision
+    client._fake_notify = fake_notify
+    client._fake_bot = fake_bot
+    return client
+
+
+async def _count_empty_configs(db_path, sub_id: int) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM configs WHERE subscription_id=? AND status='empty'",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0]
+
+
+async def _count_configs_for_sub(db_path, sub_id: int) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM configs WHERE subscription_id=?",
+            (sub_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_reactivate_full_flow(redeem_client, fresh_db):
+    """End-to-end: POST /api/referral/redeem с bank=10, expired vpn_max sub
+    в истории, 3 empty configs.
+
+    Ожидаем:
+      1. Response 200, JSON: ok=True, action='reactivated', days_applied=10,
+         sub_id=<seeded>, plan='vpn_max', new_expires_at непустой.
+      2. users.ref_bonus_days == 0 (CAS-claim сработал).
+      3. subscriptions[id=sub].status='active', expires_at ≈ now+10d,
+         pending_plan IS NULL, grace_until IS NULL.
+      4. delete_empty_configs_for_sub реально стёр 3 empty rows.
+      5. provision_vpn_slots_async вызван 1 раз с правильными kwargs.
+      6. send_purchase_success_message вызван 1 раз с
+         title_key='bot_referral_reactivate_title'.
+    """
+    from services.plans import VPN_PLANS
+
+    # ── Seed ────────────────────────────────────────────────────────────────
+    await upsert_user(
+        INTEGRATION_USER_ID,
+        username=f"u{INTEGRATION_USER_ID}",
+        first_name="Test",
+    )
+    sub_id = await create_subscription(
+        user_id=INTEGRATION_USER_ID, plan="vpn_max",
+        payment_id=f"e2e_{INTEGRATION_USER_ID}_vpn_max",
+        stars_paid=450,
+        expires_at=datetime.utcnow() + timedelta(days=30),
+    )
+    await mark_subscription_expired(sub_id)
+
+    # 3 empty configs привязанные к sub
+    for _ in range(3):
+        await create_config_record(sub_id, INTEGRATION_USER_ID, protocol="awg")
+    assert await _count_empty_configs(fresh_db, sub_id) == 3
+
+    # Bank = 10 (прямой UPDATE — нет публичного setter'а на bank)
+    async with aiosqlite.connect(fresh_db) as db:
+        await db.execute(
+            "UPDATE users SET ref_bonus_days=? WHERE id=?",
+            (10, INTEGRATION_USER_ID),
+        )
+        await db.commit()
+
+    # ── Act ─────────────────────────────────────────────────────────────────
+    resp = await redeem_client.post(
+        "/api/referral/redeem",
+        headers={"X-Telegram-Init-Data": "ignored-via-mock"},
+    )
+
+    # ── Assert: response shape ─────────────────────────────────────────────
+    assert resp.status == 200, f"expected 200, got {resp.status}"
+    body = await resp.json()
+    assert body.get("ok") is True
+    assert body.get("action") == "reactivated"
+    assert body.get("days_applied") == 10
+    assert body.get("sub_id") == sub_id
+    assert body.get("plan") == "vpn_max"
+    assert body.get("new_expires_at"), "new_expires_at must be non-empty"
+
+    # ── Assert: DB state ───────────────────────────────────────────────────
+    # bank zeroed
+    async with aiosqlite.connect(fresh_db) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT ref_bonus_days FROM users WHERE id=?",
+            (INTEGRATION_USER_ID,),
+        ) as cur:
+            row = dict(await cur.fetchone())
+    assert row["ref_bonus_days"] == 0, "bank must be zeroed by CAS-claim"
+
+    # sub flipped to active, expires_at ≈ now+10d, flags cleared
+    async with aiosqlite.connect(fresh_db) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT status, expires_at, grace_until, pending_plan "
+            "FROM subscriptions WHERE id=?",
+            (sub_id,),
+        ) as cur:
+            sub_row = dict(await cur.fetchone())
+    assert sub_row["status"] == "active"
+    assert sub_row["grace_until"] is None
+    assert sub_row["pending_plan"] is None
+    new_exp = datetime.fromisoformat(sub_row["expires_at"].replace(" ", "T"))
+    expected = datetime.utcnow() + timedelta(days=10)
+    assert abs((new_exp - expected).total_seconds()) < 120, (
+        f"expires_at must be ~now+10d, got {new_exp}"
+    )
+
+    # empty configs удалены delete_empty_configs_for_sub.
+    # provision_vpn_slots_async замокан → не создаёт новые config rows
+    # (он AsyncMock, бизнес-логику create_config_record не дёргает).
+    # Поэтому total configs for sub_id = 0.
+    assert await _count_configs_for_sub(fresh_db, sub_id) == 0, (
+        "empty configs must be deleted; provision is mocked so no replacements"
+    )
+
+    # ── Assert: mocks called correctly ─────────────────────────────────────
+    redeem_client._fake_provision.assert_awaited_once()
+    # provision_vpn_slots_async(bot, user_id, sub_id, plan_dict, plan_key)
+    call_args = redeem_client._fake_provision.await_args
+    # positional: (bot, user_id, sub_id, plan, plan_key)
+    pos = call_args.args
+    assert pos[1] == INTEGRATION_USER_ID, f"user_id mismatch: {pos[1]}"
+    assert pos[2] == sub_id, f"sub_id mismatch: {pos[2]}"
+    assert pos[3] == VPN_PLANS["vpn_max"], "plan dict must be VPN_PLANS['vpn_max']"
+    assert pos[4] == "vpn_max", f"plan_key mismatch: {pos[4]}"
+
+    redeem_client._fake_notify.assert_awaited_once()
+    notify_kwargs = redeem_client._fake_notify.await_args.kwargs
+    # title_key передаётся kwarg'ом в handler — это критичная asserция
+    assert notify_kwargs.get("title_key") == "bot_referral_reactivate_title", (
+        f"title_key must be 'bot_referral_reactivate_title', "
+        f"got {notify_kwargs.get('title_key')!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_endpoint_no_eligible_sub_response(redeem_client, fresh_db):
+    """Юзер с bank=5, в истории только активный trial (нет paid sub) →
+    response 200, ok=True, action='no_eligible_sub'. Bank остаётся 5
+    (CAS не дёрнут — redeem_referral_bonus возвращает sentinel до UPDATE)."""
+    # Seed: trial only, bank=5
+    await upsert_user(
+        INTEGRATION_USER_ID,
+        username=f"u{INTEGRATION_USER_ID}",
+        first_name="Test",
+    )
+    await create_subscription(
+        user_id=INTEGRATION_USER_ID, plan="vpn_trial",
+        payment_id=f"trial_e2e_{INTEGRATION_USER_ID}",
+        stars_paid=0,
+        expires_at=datetime.utcnow() + timedelta(days=3),
+    )
+    async with aiosqlite.connect(fresh_db) as db:
+        await db.execute(
+            "UPDATE users SET ref_bonus_days=? WHERE id=?",
+            (5, INTEGRATION_USER_ID),
+        )
+        await db.commit()
+
+    resp = await redeem_client.post(
+        "/api/referral/redeem",
+        headers={"X-Telegram-Init-Data": "ignored-via-mock"},
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body == {"ok": True, "action": "no_eligible_sub"}
+
+    # bank stays put (CAS не отработал — sentinel branch)
+    async with aiosqlite.connect(fresh_db) as db:
+        async with db.execute(
+            "SELECT ref_bonus_days FROM users WHERE id=?",
+            (INTEGRATION_USER_ID,),
+        ) as cur:
+            row = await cur.fetchone()
+    assert row[0] == 5, "bank must stay 5 when no eligible sub"
+
+    # provision не должен был быть вызван
+    redeem_client._fake_provision.assert_not_awaited()
+    redeem_client._fake_notify.assert_not_awaited()
