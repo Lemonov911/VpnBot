@@ -650,6 +650,11 @@ export type AttributionRow = {
   paying_users: number   // купили платный план хотя бы раз
   revenue_stars: number  // суммарно ⭐ за период
   revenue_rub: number    // суммарно ₽ (CryptoBot/Lava/Cryptomus)
+  // ── для source='referral:USER_ID' резолвим реферера в users:
+  // username (для t.me/{username} линка) + first_name (для отображения).
+  // Для не-referral строк оба null.
+  referrer_username: string | null
+  referrer_first_name: string | null
 }
 
 /**
@@ -686,7 +691,12 @@ export function attributionByPeriod(days: number | null = 30): AttributionRow[] 
       SUM(had_trial)                        as trial_users,
       SUM(had_paid)                         as paying_users,
       SUM(stars_total)                      as revenue_stars,
-      SUM(rub_total)                        as revenue_rub
+      SUM(rub_total)                        as revenue_rub,
+      -- referrer-данные одинаковы для всех строк с одним source (referrer_id
+      -- запечён в строке source), поэтому MAX() — просто способ aggregate'нуть
+      -- без GROUP BY. NULL пройдёт NULL для не-referral source'ов.
+      MAX(referrer_username)                as referrer_username,
+      MAX(referrer_first_name)              as referrer_first_name
     FROM (
       SELECT
         COALESCE(u.traffic_source, 'direct') as source,
@@ -708,7 +718,22 @@ export function attributionByPeriod(days: number | null = 30): AttributionRow[] 
         COALESCE((
           SELECT SUM(s.amount_rub) FROM subscriptions s
           WHERE s.user_id = u.id AND s.plan != 'vpn_trial' AND s.refunded_at IS NULL
-        ), 0)                                 as rub_total
+        ), 0)                                 as rub_total,
+        -- Резолв реферера: если source = 'referral:USER_ID', тянем username и
+        -- first_name. Subquery'и быстрые (PK lookup), но выполняются per-user;
+        -- alternatively можно делать post-aggregation map, но dataset небольшой.
+        CASE
+          WHEN u.traffic_source LIKE 'referral:%'
+          THEN (SELECT ru.username FROM users ru
+                WHERE ru.id = CAST(substr(u.traffic_source, 10) AS INTEGER))
+          ELSE NULL
+        END                                   as referrer_username,
+        CASE
+          WHEN u.traffic_source LIKE 'referral:%'
+          THEN (SELECT ru.first_name FROM users ru
+                WHERE ru.id = CAST(substr(u.traffic_source, 10) AS INTEGER))
+          ELSE NULL
+        END                                   as referrer_first_name
       FROM users u
       WHERE 1=1 ${dateWhere} ${exclU}
     ) per_user

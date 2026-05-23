@@ -10,6 +10,10 @@ type AttributionRow = {
   paying_users: number
   revenue_stars: number
   revenue_rub: number
+  // Резолвится на бэке для source='referral:USER_ID' — JOIN users по этому id.
+  // Если username не пустой → рендерим t.me-ссылку (как в /payments, /clients).
+  referrer_username: string | null
+  referrer_first_name: string | null
 }
 
 type RecentUtm = { code: string; paying: number; starts: number }
@@ -296,6 +300,14 @@ export default function AttributionPage() {
               const meta = formatSource(r.source)
               const rub = totalRub(r)
               const conv = r.starts > 0 ? Math.round((r.paying_users / r.starts) * 100) : 0
+              // Для referral-источников делаем ссылку на телегу реферера —
+              // как в /payments и /clients. Когда username есть → t.me-link
+              // открывает чат с этим юзером (clickable из таблицы); если
+              // username = NULL (приватный аккаунт без @username), оставляем
+              // просто first_name или fallback на user_id из source.
+              const isRef = meta.tone === 'ref'
+              const refId = isRef ? r.source.slice(9) : ''
+              const refDisplay = r.referrer_first_name || r.referrer_username || refId
               return (
                 <div key={r.source} className="px-5 py-3 grid grid-cols-[1fr_60px_60px_60px_90px_60px] gap-3 items-center">
                   <div className="min-w-0">
@@ -307,7 +319,30 @@ export default function AttributionPage() {
                         meta.tone === 'deeplink' ? 'bg-emerald-900/40 text-emerald-300' :
                         'bg-yellow-900/40 text-yellow-300'
                       }`}>{meta.chip}</span>
-                      <span className="font-medium truncate">{meta.label}</span>
+                      {isRef ? (
+                        <span className="font-medium truncate flex items-center gap-1.5">
+                          <span className="text-neutral-500">Реф от</span>
+                          {r.referrer_username ? (
+                            <a
+                              href={`https://t.me/${r.referrer_username}`}
+                              target="_blank"
+                              rel="noopener"
+                              className="text-sky-400 hover:underline truncate"
+                              title={`Открыть @${r.referrer_username} в Telegram`}
+                            >
+                              {refDisplay}
+                              <span className="text-neutral-500 ml-1">@{r.referrer_username}</span>
+                            </a>
+                          ) : (
+                            <span className="truncate" title={`user_id=${refId}, username не задан`}>
+                              {refDisplay}
+                              <span className="text-neutral-600 ml-1 text-[10px]">id:{refId}</span>
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="font-medium truncate">{meta.label}</span>
+                      )}
                     </div>
                   </div>
                   <div className="text-right text-neutral-300">{r.starts}</div>
