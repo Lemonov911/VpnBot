@@ -462,7 +462,25 @@ async def handle_vpn_invoice(request: web.Request) -> web.Response:
     if recurring:
         invoice_kwargs["subscription_period"] = 2592000  # 30 days, единственное поддерживаемое значение
 
-    url = await bot.create_invoice_link(**invoice_kwargs)
+    try:
+        url = await bot.create_invoice_link(**invoice_kwargs)
+    except TypeError as e:
+        # aiogram <3.15 не знает `subscription_period`. Раньше дефолт recurring
+        # был False, и сюда не доходило — но 23.05 W3-фикс PaymentSheet включил
+        # auto-renew по дефолту → 500 на каждый Stars-invoice.
+        # Graceful degrade: ретраим без subscription_period (one-time invoice),
+        # юзер всё равно может оплатить. Auto-renew починим upgrade'ом aiogram
+        # отдельным деплоем.
+        if "subscription_period" in str(e) and "subscription_period" in invoice_kwargs:
+            logger.warning(
+                "create_invoice_link: aiogram does not support subscription_period — "
+                "falling back to one-time invoice. Upgrade aiogram>=3.15 to fix. (%s)", e,
+            )
+            invoice_kwargs.pop("subscription_period", None)
+            url = await bot.create_invoice_link(**invoice_kwargs)
+            recurring = False  # для accurate лога ниже
+        else:
+            raise
     logger.info("VPN invoice: user=%s plan=%s recurring=%s",
                 user.get("id"), body["plan_key"], recurring)
     return web.json_response({"invoice_url": url})
