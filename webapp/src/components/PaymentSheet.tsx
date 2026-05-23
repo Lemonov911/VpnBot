@@ -331,11 +331,14 @@ export default function PaymentSheet({
             ? `${t('pay_pay_btn')} ${starsPrice} ⭐`
             : `${t('pay_pay_btn')} ${rubPrice} ₽`}
         </button>
-        {discountPct > 0 && (
-          <div className="mt-1.5 text-center text-[11px] text-success font-semibold">
-            {t('pay_stars_save' as never).replace('{pct}', String(discountPct))}
-          </div>
-        )}
+        {/* Олег feedback 23.05: раньше «Экономия N%» был conditional render —
+            при переключении периода 1m ↔ 3m/6m/12m строка появлялась/исчезала,
+            и весь layout под Pay-кнопкой прыгал на ~18px. Теперь div всегда
+            рендерится с min-h-[18px] — высота карточки оплаты consistent
+            на любом периоде. */}
+        <div className="mt-1.5 text-center text-[11px] text-success font-semibold min-h-[18px]">
+          {discountPct > 0 ? t('pay_stars_save' as never).replace('{pct}', String(discountPct)) : ''}
+        </div>
         {/* После оплаты юзер уходит в CryptoBot / Stars-диалог.  Без подсказки
             что делать дальше — теряются: «я заплатил, а где конфиг?». */}
         <div className="mt-2 text-[11px] text-[var(--tg-theme-hint-color)] text-center px-2">
