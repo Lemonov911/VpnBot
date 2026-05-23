@@ -4948,6 +4948,111 @@ async def handle_admin_sub_refund(request: web.Request) -> web.Response:
     })
 
 
+async def handle_admin_sub_mark_refunded(request: web.Request) -> web.Response:
+    """POST /api/admin/sub/{id}/mark-refunded
+    Body: { "reason": "..." }
+
+    «Локальная пометка» возврата — БЕЗ обращения к внешнему провайдеру.
+    Используется как fallback в admin-панели когда Telegram/CryptoBot/Lava
+    отказывают в refund (например Stars charge > 21 day → bot.refund_star_payment
+    бросает CHARGE_ALREADY_REFUNDED или CHARGE_TIMEOUT_EXPIRED).
+
+    Поведение:
+      - mark_subscription_refunded → status='refunded', refunded_at=now
+      - revoke active configs на агенте + БД
+      - rollback referral bonus (если был начислен)
+      - НЕ дёргает refund_star_payment / CryptoBot API / Lava API. Юзеру
+        деньги не возвращаются — админ ОСОЗНАННО выбрал этот путь после
+        провала автоматического refund'а.
+
+    Аудит: action='sub_mark_refunded' (не 'sub_refund') — чтобы forensics
+    отличал «вернули деньги через провайдера» vs «локально пометили».
+    """
+    if not _check_admin_rate_limit(request):
+        return web.json_response({"error": "rate_limited"}, status=429)
+    if not _check_admin_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    sub_id = _parse_path_int(request, "id")
+    if sub_id is None:
+        return web.json_response({"error": "bad id"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = (body.get("reason") or "").strip()[:200] or None
+    admin_id = body.get("admin_id")
+    if not isinstance(admin_id, int) or admin_id <= 0:
+        admin_id = 0
+
+    from services.database import (
+        get_subscription_by_id, mark_subscription_refunded,
+        mark_subscription_trial_rolled_back,
+        rollback_referral_bonus, audit_log_record,
+        disable_auto_renew,
+    )
+    sub = await get_subscription_by_id(sub_id)
+    if not sub:
+        return web.json_response({"error": "sub not found"}, status=404)
+    if sub["user_id"] in ADMIN_IDS or sub["user_id"] == ADMIN_ID:
+        return web.json_response(
+            {"error": "Cannot refund an admin's subscription"},
+            status=400,
+        )
+    if sub.get("refunded_at"):
+        # Уже помечена — idempotent ответ. Не возвращаем 4xx, иначе UI
+        # покажет «ошибка» хотя по факту state уже achieved.
+        return web.json_response({
+            "ok": True, "already_refunded": True,
+            "user_id": sub["user_id"],
+        })
+
+    # Trial — особый case (см. handle_admin_sub_refund): mark_refunded заблокировал
+    # бы юзера на 30 дней через cooldown-фильтр триала. Применяем тот же подход
+    # — rollback вместо refund.
+    payment_id = sub.get("payment_id") or ""
+    if payment_id.startswith("trial_"):
+        await mark_subscription_trial_rolled_back(sub_id)
+    else:
+        await mark_subscription_refunded(sub_id)
+    _invalidate_vpn_sub_cache(sub["user_id"])
+    await rollback_referral_bonus(sub_id)
+
+    # Lava auto-renew: даже на local-mark разрываем рекуррент локально.
+    # API Lava НЕ дёргаем — это всё ещё local-mark; если хочется вызвать
+    # cancel, есть отдельный refund-path.
+    if sub.get("auto_renew") and sub.get("payment_provider") == "lavatop":
+        try:
+            await disable_auto_renew(sub_id)
+        except Exception as e:
+            logger.warning("mark-refunded sub=%d: disable_auto_renew failed: %s", sub_id, e)
+
+    from services.revoke import revoke_subscription_configs
+    revoked, failed = await revoke_subscription_configs(
+        sub_id, sub["plan"], log_prefix=f"mark_refund#{sub_id}"
+    )
+    logger.info(
+        "mark-refunded sub #%d: revoked %d config(s), failed %d, reason=%r",
+        sub_id, revoked, failed, reason,
+    )
+
+    await audit_log_record(
+        admin_id=admin_id, action="sub_mark_refunded",
+        target=f"sub:{sub_id}",
+        details=(
+            f"user={sub['user_id']} revoked={revoked} "
+            f"revoke_failed={failed} reason={reason or '-'}"
+        ),
+    )
+    return web.json_response({
+        "ok": True,
+        "user_id": sub["user_id"],
+        "configs_revoked": revoked,
+        "configs_revoke_failed": failed,
+    })
+
+
 async def handle_admin_user_ban(request: web.Request) -> web.Response:
     """POST /api/admin/user/{id}/ban
     Body: { "reason": "..." }
@@ -5652,6 +5757,10 @@ def create_api_app(bot: Bot) -> web.Application:
     app.router.add_post("/api/admin/tickets/{id}/close",   handle_admin_ticket_close)
     app.router.add_post("/api/admin/sub/{id}/extend",      handle_admin_sub_extend)
     app.router.add_post("/api/admin/sub/{id}/refund",      handle_admin_sub_refund)
+    # B3 (admin track): local-mark fallback когда внешний refund провалился
+    # (Stars charge >21d, CryptoBot refused, Lava manual-only). Не дёргает
+    # провайдера, только sub→refunded + revoke configs.
+    app.router.add_post("/api/admin/sub/{id}/mark-refunded", handle_admin_sub_mark_refunded)
     app.router.add_post("/api/admin/user/{id}/ban",        handle_admin_user_ban)
     app.router.add_post("/api/admin/user/{id}/unban",      handle_admin_user_unban)
     app.router.add_post("/api/admin/grant_subscription",   handle_admin_grant_subscription)

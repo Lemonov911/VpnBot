@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
-import { allPayments, type PaymentRow } from '@/lib/db'
+import { searchPayments, type PaymentRow } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
 import { StatCard, Table, type Column } from '../_components/ui'
+import { PaymentsSearchBar } from './_search'
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -43,6 +44,9 @@ type Filters = {
   plan?: string
   days?: number
   hideRefunds?: boolean
+  // B1: свободный search — поверх остальных фильтров, не вместо. Юзер может
+  // сузить «последние 30д Stars» + найти конкретного юзера в этом срезе.
+  q?: string
 }
 
 function parseFilters(sp: Record<string, string | string[] | undefined>): Filters {
@@ -56,6 +60,11 @@ function parseFilters(sp: Record<string, string | string[] | undefined>): Filter
     if ([7, 30, 90, 365].includes(d)) f.days = d
   }
   if (sp.hideRefunds === '1') f.hideRefunds = true
+  if (typeof sp.q === 'string') {
+    // Cap длину чтобы не вешать SQLite на «1MB-search» от случайной paste-bomba
+    const trimmed = sp.q.trim().slice(0, 200)
+    if (trimmed) f.q = trimmed
+  }
   return f
 }
 
@@ -68,8 +77,22 @@ function buildHref(current: Filters, patch: Partial<Filters> & { reset?: true })
   if (next.plan)        params.set('plan', next.plan)
   if (next.days)        params.set('days', String(next.days))
   if (next.hideRefunds) params.set('hideRefunds', '1')
+  if (next.q)           params.set('q', next.q)
   const qs = params.toString()
   return qs ? `/payments?${qs}` : '/payments'
+}
+
+/** B4: формируем query-string для CSV-export endpoint'а — те же фильтры что
+ * в текущем page-view, чтобы юзер получил ровно то что видит на экране. */
+function buildExportHref(f: Filters): string {
+  const p = new URLSearchParams()
+  if (f.method)      p.set('method', f.method)
+  if (f.plan)        p.set('plan', f.plan)
+  if (f.days)        p.set('days', String(f.days))
+  if (f.hideRefunds) p.set('hideRefunds', '1')
+  if (f.q)           p.set('q', f.q)
+  const qs = p.toString()
+  return qs ? `/admin/api/payments/export?${qs}` : '/admin/api/payments/export'
 }
 
 function FilterChip({ label, href, active }: { label: string; href: string; active: boolean }) {
@@ -97,11 +120,12 @@ export default async function Payments({
 
   const sp = await searchParams
   const filters = parseFilters(sp)
-  const rows = allPayments({
+  const rows = searchPayments({
     method: filters.method,
     plan: filters.plan,
     days: filters.days,
     includeRefunds: !filters.hideRefunds,
+    q: filters.q,
     limit: 500,
   })
 
@@ -136,6 +160,10 @@ export default async function Payments({
         <StatCard label="💎 ₽"      value={totalRub.toLocaleString('ru')} />
       </div>
 
+      {/* B1: free-form search bar поверх фильтров. Юзер вводит payment_id /
+          user_id / username / tx_id и страница перезагружается с ?q=. */}
+      <PaymentsSearchBar initial={filters.q ?? ''} />
+
       {/* Filters */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -169,11 +197,21 @@ export default async function Payments({
             href={buildHref(filters, { hideRefunds: filters.hideRefunds ? undefined : true })}
             active={!!filters.hideRefunds}
           />
-          {(filters.method || filters.plan || filters.days || filters.hideRefunds) && (
+          {(filters.method || filters.plan || filters.days || filters.hideRefunds || filters.q) && (
             <Link href="/payments" className="text-xs text-neutral-500 hover:text-white">
               сбросить фильтры
             </Link>
           )}
+          {/* B4: Export CSV — server-side, по текущему фильтру. Не <Link>,
+              а <a> чтобы браузер скачал ответ (Next.js Link перехватывает
+              навигацию и хочет показать страницу). */}
+          <a
+            href={buildExportHref(filters)}
+            className="ml-auto px-3 py-1 rounded-md text-xs bg-neutral-800 text-neutral-200
+                       border border-neutral-700 hover:bg-neutral-700 transition-colors"
+          >
+            ⬇ Export CSV
+          </a>
         </div>
       </div>
 
@@ -207,7 +245,14 @@ const paymentsColumns: Column<PaymentRow>[] = [
     label: 'Когда',
     align: 'left',
     className: 'text-neutral-400 text-xs whitespace-nowrap',
-    render: r => fmtDate(r.created_at),
+    // B2: дата → ссылка на /payments/[id]. Раньше колонка была статическая,
+    // и единственный способ открыть детали — клик по user→/clients/[id]. Тут
+    // делаем основной jump-point именно «открыть платёж».
+    render: r => (
+      <Link href={`/payments/${r.id}`} className="hover:text-sky-400">
+        {fmtDate(r.created_at)}
+      </Link>
+    ),
   },
   {
     key: 'user',

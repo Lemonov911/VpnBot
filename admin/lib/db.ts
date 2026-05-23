@@ -1080,3 +1080,190 @@ export function stuckPayments(limit = 50): StuckPayment[] {
     return []
   }
 }
+
+// ─── Track B: payments ────────────────────────────────────────────────────────
+// Search/detail/export helpers, добавлены для /payments search bar и
+// /payments/[id]. Метрики (Track A) живут выше — здесь только row-level
+// доступы: «найди эту строку», «дай мне детали этого платежа», «выгрузи».
+
+/**
+ * Расширение `allPayments` с поддержкой свободного поиска.
+ *
+ * Логика поиска (одна строка q, ищется в любом из полей):
+ *  - q = чистое число → user_id (точно) ИЛИ subscription_id (точно), OR-склейка
+ *    (юзер мог ввести и то и другое; показываем что нашли)
+ *  - q = строка → username LIKE %q% OR payment_id LIKE q% (prefix-match для
+ *    tx_id, потому что charge_id длинный и юзер копирует начало). first_name
+ *    тоже добавляем — UI показывает first_name, не username, в основной колонке.
+ *
+ * Эскейпим LIKE-wildcards (`%`, `_`) чтобы юзер мог искать tx_id содержащий
+ * подчёркивание (напр. `crypto_abc`) — без эскейпа `_` матчит любой символ.
+ */
+function escapeLike(s: string): string {
+  // SQLite LIKE: `_` = любой символ, `%` = любая строка. Используем
+  // ESCAPE '\' в SQL — здесь экранируем `\`, `%`, `_`.
+  return s.replace(/\\/g, '\\\\').replace(/[%_]/g, c => '\\' + c)
+}
+
+export function searchPayments(filters: {
+  method?: 'stars' | 'crypto' | 'oxapay' | 'lavatop' | 'free' | 'admin_grant' | 'trial'
+  plan?: string
+  days?: number
+  includeRefunds?: boolean
+  q?: string
+  limit?: number
+} = {}) {
+  const { method, plan, days, includeRefunds = true, q, limit = 500 } = filters
+  const excl = excludeAdminsClause('s.user_id')
+
+  const where: string[] = ['1=1']
+  const params: unknown[] = []
+
+  if (method === 'crypto')           where.push("s.payment_id LIKE 'crypto_%'")
+  else if (method === 'oxapay')      where.push("s.payment_id LIKE 'oxapay_%'")
+  else if (method === 'lavatop')     where.push("s.payment_id LIKE 'lavatop_%'")
+  else if (method === 'free')        where.push("s.payment_id LIKE 'free_%'")
+  else if (method === 'admin_grant') where.push("s.payment_id LIKE 'admin_grant_%'")
+  else if (method === 'trial')       where.push("s.payment_id LIKE 'trial_%'")
+  else if (method === 'stars')       where.push(
+    "s.payment_id NOT LIKE 'crypto_%' "
+    + "AND s.payment_id NOT LIKE 'oxapay_%' "
+    + "AND s.payment_id NOT LIKE 'lavatop_%' "
+    + "AND s.payment_id NOT LIKE 'free_%' "
+    + "AND s.payment_id NOT LIKE 'admin_grant_%' "
+    + "AND s.payment_id NOT LIKE 'trial_%' "
+    + "AND s.payment_id IS NOT NULL",
+  )
+
+  if (plan) { where.push('s.plan = ?'); params.push(plan) }
+  const daysNum = Math.floor(Number(days))
+  if (days && Number.isFinite(daysNum) && daysNum > 0) {
+    where.push(`s.created_at > datetime('now', '-${daysNum} days')`)
+  }
+  if (!includeRefunds) where.push('s.refunded_at IS NULL')
+
+  // Свободный поиск — последним фильтром (после всех остальных). LIKE-параметры
+  // с эскейпом + ESCAPE '\\' в SQL.
+  if (q && q.trim()) {
+    const qTrim = q.trim()
+    // numeric → дублим как user_id OR sub_id; иначе строковый OR (username/first_name/payment_id)
+    if (/^\d+$/.test(qTrim)) {
+      const n = parseInt(qTrim, 10)
+      where.push('(s.user_id = ? OR s.id = ?)')
+      params.push(n, n)
+    } else {
+      const like = escapeLike(qTrim)
+      where.push(
+        "(u.username LIKE ? ESCAPE '\\' "
+        + "OR u.first_name LIKE ? ESCAPE '\\' "
+        + "OR s.payment_id LIKE ? ESCAPE '\\')",
+      )
+      params.push(`%${like}%`, `%${like}%`, `${like}%`)
+    }
+  }
+
+  const sql = `
+    SELECT s.id, s.user_id, s.plan, s.stars_paid, s.amount_rub, s.payment_id,
+           s.status, s.refunded_at, s.created_at, s.expires_at,
+           COALESCE(s.payment_provider,
+                    CASE
+                      WHEN s.payment_id LIKE 'crypto_%'      THEN 'cryptobot'
+                      WHEN s.payment_id LIKE 'oxapay_%'      THEN 'oxapay'
+                      WHEN s.payment_id LIKE 'lavatop_%'     THEN 'lavatop'
+                      WHEN s.payment_id LIKE 'admin_grant_%' THEN 'gift'
+                      WHEN s.payment_id LIKE 'trial_%'       THEN 'trial'
+                      WHEN s.payment_id LIKE 'free_%'        THEN 'free'
+                      ELSE 'stars'
+                    END) as method,
+           u.username, u.first_name,
+           (SELECT p.granted_by_admin_id
+              FROM payments p
+              WHERE p.subscription_id = s.id AND p.is_free_grant = 1
+              ORDER BY p.id DESC LIMIT 1) AS granted_by_admin_id
+    FROM subscriptions s
+    JOIN users u ON u.id = s.user_id
+    WHERE ${where.join(' AND ')} ${excl}
+    ORDER BY s.created_at DESC LIMIT ?
+  `
+  params.push(limit)
+  return db().prepare(sql).all(...params) as PaymentRow[]
+}
+
+/**
+ * Детальная вьюха одного платежа.
+ *
+ * Возвращает sub-row (та же базовая структура что и в `allPayments`), плюс:
+ *  - связанный user (id, username, first_name, is_banned)
+ *  - все `payments` строки этой подписки (для multi-charge upgrade-сценариев)
+ *
+ * Timeline на frontend'е собирается из:
+ *   created_at  — `subscriptions.created_at` (момент покупки)
+ *   paid_at     — то же что created_at (наша БД фиксирует только успешную
+ *                 покупку, нет отдельного `paid_at`-события)
+ *   applied_at  — `subscriptions.created_at` если sub перешла в active/grace/
+ *                 expired/refunded (~всё кроме pending)
+ *   refunded_at — `subscriptions.refunded_at`
+ */
+export type PaymentDetailRow = PaymentRow & {
+  ban_status: number | null            // users.is_banned
+  payments_count: number               // сколько payments-строк связано с этой sub
+  pending_plan: string | null
+}
+
+export type PaymentChargeRow = {
+  id: number
+  method: string
+  amount_usd: number | null
+  stars: number | null
+  tx_id: string | null
+  status: string
+  refunded_at: string | null
+  created_at: string
+  is_free_grant: number
+  granted_by_admin_id: number | null
+}
+
+export function paymentDetail(subId: number): {
+  row: PaymentDetailRow | null
+  charges: PaymentChargeRow[]
+} {
+  const d = db()
+  const row = d.prepare(`
+    SELECT s.id, s.user_id, s.plan, s.stars_paid, s.amount_rub, s.payment_id,
+           s.status, s.refunded_at, s.created_at, s.expires_at,
+           s.pending_plan,
+           COALESCE(s.payment_provider,
+                    CASE
+                      WHEN s.payment_id LIKE 'crypto_%'      THEN 'cryptobot'
+                      WHEN s.payment_id LIKE 'oxapay_%'      THEN 'oxapay'
+                      WHEN s.payment_id LIKE 'lavatop_%'     THEN 'lavatop'
+                      WHEN s.payment_id LIKE 'admin_grant_%' THEN 'gift'
+                      WHEN s.payment_id LIKE 'trial_%'       THEN 'trial'
+                      WHEN s.payment_id LIKE 'free_%'        THEN 'free'
+                      ELSE 'stars'
+                    END) as method,
+           u.username, u.first_name, u.is_banned as ban_status,
+           (SELECT p.granted_by_admin_id
+              FROM payments p
+              WHERE p.subscription_id = s.id AND p.is_free_grant = 1
+              ORDER BY p.id DESC LIMIT 1) AS granted_by_admin_id,
+           (SELECT COUNT(*) FROM payments WHERE subscription_id = s.id) AS payments_count
+    FROM subscriptions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.id = ?
+  `).get(subId) as PaymentDetailRow | undefined
+
+  if (!row) return { row: null, charges: [] }
+
+  // Все payments-строки этой подписки. На Stars upgrade-сценарии будет 2+ строк.
+  const charges = d.prepare(`
+    SELECT id, method, amount_usd, stars, tx_id, status, refunded_at, created_at,
+           is_free_grant, granted_by_admin_id
+    FROM payments
+    WHERE subscription_id = ?
+    ORDER BY id ASC
+  `).all(subId) as PaymentChargeRow[]
+
+  return { row, charges }
+}
+
