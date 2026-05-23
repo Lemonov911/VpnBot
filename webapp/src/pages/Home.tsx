@@ -59,13 +59,22 @@ export default function Home() {
     WebApp.HapticFeedback.impactOccurred('medium')
     try {
       const res = await redeemReferralBonus()
+      // RedeemResult может вернуть action='no_eligible_sub' без days_applied
+      // и new_expires_at (нет paid sub в истории). Этот handler в Home
+      // больше не привязан к UI (см. commit fd421d8 — referral убран с Home),
+      // но remains для возможного future-use. Защита от undefined чтобы
+      // TS-билд проходил и runtime не падал если кто-то re-wire'нет кнопку.
+      if (res.action === 'no_eligible_sub' || !res.new_expires_at) {
+        WebApp.showAlert(t('home_bonus_redeem_no_sub' as never))
+        return
+      }
       WebApp.HapticFeedback.notificationOccurred('success')
       const dateStr = new Date(res.new_expires_at).toLocaleDateString(
         lang === 'en' ? 'en-US' : 'ru-RU',
         { day: '2-digit', month: 'long', year: 'numeric' })
       WebApp.showAlert(
         (t('home_bonus_redeem_done' as never) as string)
-          .replace('{days}', String(res.days_applied))
+          .replace('{days}', String(res.days_applied ?? 0))
           .replace('{date}', dateStr)
       )
       // refresh sub + stats после redeem.

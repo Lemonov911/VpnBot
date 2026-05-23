@@ -3953,7 +3953,16 @@ async def handle_referral_stats(request: web.Request) -> web.Response:
 
 
 async def handle_referral_redeem(request: web.Request) -> web.Response:
-    """POST /api/referral/redeem — активация bonus-дней к active sub."""
+    """POST /api/referral/redeem — активация bonus-дней.
+
+    Сценарии (см. redeem_referral_bonus):
+      - action='extended'   — продлили active/grace sub
+      - action='reactivated' — вернули последнюю expired sub
+      - action='no_eligible_sub' — есть bank, но нет paid sub в истории
+        (только trial / refunded). Возвращаем 200+OK с этим флагом, чтобы
+        фронт показал юзеру нужное сообщение без error-state.
+      - None / no_bonus      — bank=0, кнопка не должна была быть активна.
+    """
     user = _resolve_user(request)
     if not user:
         return web.json_response({"error": "Unauthorized"}, status=401)
@@ -3964,17 +3973,25 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
     from services.database import redeem_referral_bonus
     result = await redeem_referral_bonus(user["id"])
     if result is None:
-        # Узнаем причину для понятного error message
-        from services.database import has_active_paid_sub
-        if not await has_active_paid_sub(user["id"]):
-            return web.json_response({"error": "no_active_sub"}, status=400)
+        # bank=0 — кнопка не должна была быть активна
         return web.json_response({"error": "no_bonus"}, status=400)
+
+    action = result.get("action")
+    if action == "no_eligible_sub":
+        # bank>0 но нет paid sub в истории (только trial) — soft response
+        # чтобы фронт показал «купи подписку чтобы применить» вместо ошибки
+        return web.json_response({
+            "ok": True,
+            "action": "no_eligible_sub",
+        })
 
     # Grace → active transition: unthrottle VPN configs so the user regains
     # full speed immediately (redeem_referral_bonus flips status to 'active').
     # Await вместо _spawn_bg: fire-and-forget терял агент-ошибки → юзер залипал
     # на slow tier после redeem. Тот же fix как в scheduler.py:451.
-    if was_grace and sub_before is not None:
+    # Только для extended-пути: при reactivate slot'ы остались empty (revoke
+    # при expiry убрал пиров с агента), unthrottle нечего делать.
+    if action == "extended" and was_grace and sub_before is not None:
         from services.grace import unthrottle_sub_configs
         try:
             await unthrottle_sub_configs(
@@ -4010,8 +4027,11 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
 
     return web.json_response({
         "ok": True,
+        "action":         action,                    # "extended" | "reactivated"
         "days_applied":   result["days"],
         "new_expires_at": result["new_expires_at"],
+        "sub_id":         result["sub_id"],
+        "plan":           result["plan"],
     })
 
 

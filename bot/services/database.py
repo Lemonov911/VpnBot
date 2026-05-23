@@ -3480,29 +3480,52 @@ async def try_award_referral_bonus(user_id: int, days: int, paid_sub_id: int | N
 
 
 async def redeem_referral_bonus(user_id: int) -> dict | None:
-    """Манульная активация bonus-дней реферрера → продлевает active/grace sub.
+    """Манульная активация bonus-дней реферрера.
+
+    Два пути активации:
+
+    A) **EXTEND** — у юзера есть active/grace платная sub. Добавляем bonus
+       дни к её expires_at, grace→active с очисткой grace_until.
+       Возвращает {"action":"extended", days, sub_id, plan, new_expires_at}.
+
+    B) **REACTIVATE** (новое, 2026-05-23, Олег feedback) — у юзера НЕТ active
+       sub, но есть expired платная (не trial, не refunded). Юзер копил
+       бонусы пока подписка истекала — вместо того чтобы сжечь bank, даём
+       вернуть последнюю expired sub на bonus-дни. Reactivate:
+         status='active', expires_at=now+N days, grace_until=NULL,
+         pending_plan=NULL.
+       Слоты в configs остаются empty (после revoke при expiry) — юзер
+       сам активирует их в Mini App. **НЕ** автоматически создаём пиров на
+       агенте — иначе при reactivate без бэкенд-контекста (агент down,
+       сервер недоступен) останется зомби-sub.
+       Возвращает {"action":"reactivated", days, sub_id, plan, new_expires_at}.
+
+    Что НЕ reactivate'им:
+    - `plan='vpn_trial'` (trial имеет отдельный cooldown через
+      trial_cooldown_until/recent_trial_user_ids — не вмешиваемся).
+    - `refunded_at IS NOT NULL` (юзер вернул деньги — sub формально
+      «не было», возвращать её через бонусы было бы способом обхода refund).
 
     Условия:
-    - У юзера есть active или grace sub (grace = заплатил, но истекло — всё ещё «платный»)
     - users.ref_bonus_days > 0
+    - есть платная sub в истории (active/grace ИЛИ expired-not-refunded)
 
-    Возвращает {days, new_expires_at} если успешно, None если нет sub
-    или нет бонуса. Caller (API endpoint) должен показать юзеру нужный error.
+    Возвращает None если bonus=0.
+    Возвращает {"action":"no_eligible_sub"} если bonus>0, но нет ни одной
+    paid sub в истории (только trial) — caller покажет «Купи подписку».
 
     Race-safe через ATOMIC CLAIM:
-    1. Сначала ищем sub (если нет — выходим без trying-claim, иначе банк
-       мог бы обнулиться даже без extend'a)
+    1. Сначала ищем target-sub (если нет — выходим без trying-claim, иначе
+       банк мог бы обнулиться даже без extend/reactivate)
     2. CAS-claim `UPDATE users SET ref_bonus_days=0 WHERE id=? AND ref_bonus_days=?`
        — rowcount=0 если кто-то параллельно уже редимнул
-    3. Если claim успешен — extend sub.expires_at + ставим redeemed_at
+    3. Если claim успешен — extend/reactivate sub + ставим redeemed_at
 
-    Транзакционность: все 3 UPDATE'а внутри одного `_connect()`-контекста.
+    Транзакционность: все UPDATE'ы внутри одного `_connect()`-контекста.
     aiosqlite default isolation_level дёргает implicit BEGIN перед первым
-    UPDATE, явный `await db.commit()` в конце фиксирует все 3 операции
-    атомарно. Любой exception до commit() → context-manager закрывает
-    connection → rollback → bank восстанавливается, extend не применяется.
-    Не выносить отдельные операции в отдельные `_connect()` — потеряется
-    атомарность и юзер сможет потерять bank без extend'a при сбое DB.
+    UPDATE, явный `await db.commit()` в конце фиксирует операции атомарно.
+    Любой exception до commit() → context-manager закрывает connection →
+    rollback → bank восстанавливается, extend/reactivate не применяется.
     """
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
@@ -3515,16 +3538,39 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
         if bank <= 0:
             return None
 
-        # Шаг 1: ищем active или grace sub (grace = тоже «платный»)
+        # Шаг 1a: ищем active или grace платную sub (grace = тоже «платный»)
         async with db.execute(
-            """SELECT id, expires_at FROM subscriptions
-               WHERE user_id=? AND status IN ('active', 'grace')
+            """SELECT id, plan, expires_at FROM subscriptions
+               WHERE user_id=?
+                 AND status IN ('active', 'grace')
+                 AND plan != 'vpn_trial'
+                 AND refunded_at IS NULL
                ORDER BY id DESC LIMIT 1""",
             (user_id,),
         ) as cur:
             sub = await cur.fetchone()
-        if not sub:
-            return None  # нет sub — caller покажет «Купи подписку»
+
+        action: str
+        if sub:
+            action = "extended"
+        else:
+            # Шаг 1b: нет active/grace — ищем последнюю expired платную sub
+            # для reactivate. Trial и refunded исключены (см. docstring).
+            async with db.execute(
+                """SELECT id, plan, expires_at FROM subscriptions
+                   WHERE user_id=?
+                     AND status='expired'
+                     AND plan != 'vpn_trial'
+                     AND refunded_at IS NULL
+                   ORDER BY id DESC LIMIT 1""",
+                (user_id,),
+            ) as cur:
+                sub = await cur.fetchone()
+            if not sub:
+                # Bank>0 но платных sub в истории нет (только trial либо
+                # вообще ничего). Bank НЕ обнуляем — пусть лежит до покупки.
+                return {"action": "no_eligible_sub"}
+            action = "reactivated"
 
         # Шаг 2: ATOMIC CLAIM — обнуляем bank только если значение совпало с
         # прочитанным. Если параллельный redeem уже обнулил — rowcount=0,
@@ -3537,26 +3583,52 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
             await db.commit()
             return None  # race: параллельный redeem забрал bank первым
 
-        # Шаг 3: claim успешен — extend sub и ставим redeemed_at на tracking.
-        # Для grace-подписки: сбрасываем статус в active и очищаем grace_until,
-        # иначе sub остаётся throttled и scheduler заэкспайрит её по grace_until
-        # несмотря на только что продлённый expires_at.
-        # NULL guard: если expires_at NULL (legacy row), datetime(NULL, '+N days')
-        # вернёт NULL и затрёт колонку → подписка станет бессрочной. Используем
-        # тот же CASE-паттерн, что в extend_subscription.
-        await db.execute(
-            """UPDATE subscriptions
-               SET expires_at  = CASE
-                       WHEN expires_at IS NULL
-                            OR datetime(REPLACE(expires_at, 'T', ' ')) < datetime('now')
-                       THEN datetime('now', ?)
-                       ELSE datetime(expires_at, ?)
-                   END,
-                   status      = CASE WHEN status = 'grace' THEN 'active' ELSE status END,
-                   grace_until = CASE WHEN status = 'grace' THEN NULL ELSE grace_until END
-               WHERE id = ?""",
-            (f"+{bank} days", f"+{bank} days", sub["id"]),
-        )
+        # Шаг 3: claim успешен — extend ИЛИ reactivate.
+        if action == "extended":
+            # Для grace-подписки: сбрасываем статус в active и очищаем grace_until,
+            # иначе sub остаётся throttled и scheduler заэкспайрит её по grace_until
+            # несмотря на только что продлённый expires_at.
+            # NULL guard: если expires_at NULL (legacy row), datetime(NULL, '+N days')
+            # вернёт NULL и затрёт колонку → подписка станет бессрочной. Используем
+            # тот же CASE-паттерн, что в extend_subscription.
+            await db.execute(
+                """UPDATE subscriptions
+                   SET expires_at  = CASE
+                           WHEN expires_at IS NULL
+                                OR datetime(REPLACE(expires_at, 'T', ' ')) < datetime('now')
+                           THEN datetime('now', ?)
+                           ELSE datetime(expires_at, ?)
+                       END,
+                       status      = CASE WHEN status = 'grace' THEN 'active' ELSE status END,
+                       grace_until = CASE WHEN status = 'grace' THEN NULL ELSE grace_until END
+                   WHERE id = ?""",
+                (f"+{bank} days", f"+{bank} days", sub["id"]),
+            )
+        else:
+            # REACTIVATE: expired → active, новый expires_at = now+N days.
+            # Очищаем grace_until + pending_plan (могли остаться с прошлой
+            # жизни sub'ы). reminded_* флаги сбрасываем — иначе scheduler
+            # не пошлёт «3 дня до конца» (думает что уже отправил).
+            # Status guard в WHERE — защита от race: если параллельно sub
+            # стала refunded/active, не трогаем (но bank уже обнулён —
+            # caller получит «нет применения, дни сгорели». В норме это не
+            # случится: status может измениться только через явные
+            # mark_subscription_* или extend, которые в обычном flow юзер
+            # сам не триггерит между UI-стейтами).
+            await db.execute(
+                """UPDATE subscriptions
+                   SET status      = 'active',
+                       expires_at  = datetime('now', ?),
+                       grace_until = NULL,
+                       pending_plan = NULL,
+                       reminded_3d = 0,
+                       reminded_1d = 0,
+                       reminded_renewal_3d = 0,
+                       reminded_grace_3d   = 0,
+                       reminded_quota_throttled = 0
+                   WHERE id=? AND status='expired'""",
+                (f"+{bank} days", sub["id"]),
+            )
         # Ставим redeemed_at на все subs где этот юзер был реферрером и бонус
         # ещё не помечен redeemed. Для rollback логики — отличить bank vs sub.
         # Параллельно сохраняем КУДА именно ушли дни (sub["id"] реферрера) —
@@ -3576,8 +3648,10 @@ async def redeem_referral_bonus(user_id: int) -> dict | None:
             new_row = await cur.fetchone()
         await db.commit()
         return {
+            "action": action,
             "days": bank,
             "sub_id": sub["id"],
+            "plan": sub["plan"],
             "new_expires_at": new_row["expires_at"] if new_row else sub["expires_at"],
         }
 

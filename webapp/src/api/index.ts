@@ -579,8 +579,16 @@ export function getReferralStats(): Promise<ReferralStats> {
 
 export interface RedeemResult {
   ok:               boolean
-  days_applied:     number
-  new_expires_at:   string
+  /** "extended" — продлили active/grace sub.
+   *  "reactivated" — вернули последнюю expired (юзер копил бонусы пока
+   *                  подписка истекла; reactivate вместо сжигания bank'а).
+   *  "no_eligible_sub" — есть bank, но paid sub в истории нет (только
+   *                  trial / refunded). days_applied отсутствует. */
+  action:           'extended' | 'reactivated' | 'no_eligible_sub'
+  days_applied?:    number
+  new_expires_at?:  string
+  sub_id?:          number
+  plan?:            string
 }
 
 export function redeemReferralBonus(): Promise<RedeemResult> {
