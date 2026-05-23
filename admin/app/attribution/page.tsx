@@ -104,7 +104,7 @@ export default function AttributionPage() {
   const revRub = rows.reduce((a, r) => a + totalRub(r), 0)
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
       <AdminNav />
 
       <div>

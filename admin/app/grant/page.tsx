@@ -9,7 +9,7 @@ export default async function GrantPage() {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="max-w-5xl mx-auto px-6 py-6">
+      <div className="max-w-7xl mx-auto px-6 py-6">
         <AdminNav username={session.username} />
         <div className="mt-6">
           <h1 className="text-2xl font-bold">🎁 Выдать бесплатную подписку</h1>

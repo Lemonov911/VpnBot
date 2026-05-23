@@ -139,7 +139,7 @@ export default async function Payments({
   const planKeys = ['vpn_base', 'vpn_max', 'vpn_start', 'vpn_popular', 'vpn_pro', 'vpn_family', 'vpn_trial']
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-6">
       <AdminNav username={session.username} />
 
       <div>

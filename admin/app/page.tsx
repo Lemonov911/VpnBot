@@ -93,7 +93,7 @@ export default async function Dashboard() {
                               'default'
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
 
       {/* Header */}
       <AdminNav username={session.username} />

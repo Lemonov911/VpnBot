@@ -36,7 +36,7 @@ export default async function Monitoring() {
   const serverInfos = s.servers.map(sv => ({ id: sv.id, name: sv.name, flag: sv.flag }))
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
       <AdminNav />
 
       {/* KPI cards */}

@@ -175,7 +175,7 @@ export default function ServersPage() {
                     'bg-neutral-800 text-neutral-400 border border-neutral-700'
 
   return (
-    <div className="min-h-screen p-6 max-w-5xl mx-auto space-y-6">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-6">
       <AdminNav />
 
       {/* Add form */}

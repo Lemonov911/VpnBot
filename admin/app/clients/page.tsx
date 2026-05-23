@@ -68,7 +68,7 @@ export default async function Clients() {
   const top10Share = m.total_revenue_stars > 0 ? Math.round((top10Sum / m.total_revenue_stars) * 100) : 0
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
       <AdminNav />
 
       {/* KPIs. AD-F16: split LTV across Stars and RUB channels — the prior

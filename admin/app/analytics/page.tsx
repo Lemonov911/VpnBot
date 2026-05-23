@@ -47,7 +47,7 @@ export default async function Analytics() {
   const totalMixCount = mix.reduce((a, b) => a + b.count, 0) || 1
 
   return (
-    <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
+    <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-8">
       <AdminNav username={session.username} />
 
       <div>
