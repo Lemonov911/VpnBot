@@ -743,3 +743,340 @@ export function recentUtmCodes(limit = 20): Array<{ code: string; paying: number
     LIMIT ?
   `).all(limit) as Array<{ code: string; paying: number; starts: number }>
 }
+// ─── Track A: revenue & stuck payments ────────────────────────────────────────
+// Метрики выручки строятся по `subscriptions` (а не `payments`), потому что
+// именно там лежат `stars_paid` + `amount_rub` + `refunded_at` per-purchase.
+// `payments` table — log транзакций для idempotency (tx_id UNIQUE) и хранит
+// `method` (stars/crypto/oxapay/lavatop), но суммы выручки в RUB кешируются
+// именно в subscriptions.amount_rub. Поэтому revenue-метрики живут на subs,
+// а method-breakdown тащим через JOIN с payments (group by payments.method).
+
+const STARS_TO_RUB = 1.4
+
+/**
+ * Сводные revenue-метрики для верхнего блока главной dashboard.
+ *
+ * Все суммы — RUB-эквивалент (stars * 1.4 + amount_rub). Stars-курс
+ * прибит к 1.4₽ как в page.tsx — реальная выплата от Telegram идёт по
+ * их курсу, но для дашбордов унифицирован.
+ *
+ * `today`/`wtd`/`mtd` — относительно даты UTC: today = с 00:00 UTC;
+ * wtd = с понедельника 00:00 UTC; mtd = с 1-го числа 00:00 UTC.
+ * SQLite не имеет ISO week, но `strftime('%w')` даёт day-of-week
+ * (0=вс, 1=пн…6=сб) → используем `date('now','-' || ((6+%w)%7) || ' days')`
+ * для понедельника. Same-day прошлой недели/месяца — для delta.
+ *
+ * Refund-фильтр: refunded_at IS NULL — учитываем только не-возвращённые.
+ * Триал-фильтр: plan!='vpn_trial' — он не выручка.
+ * Админы: excludeAdminsClause.
+ */
+export function revenueWindows() {
+  const d = db()
+  const excl = excludeAdminsClause('user_id')
+
+  // Шаблон суммы RUB-эквивалента (для краткости).
+  // COALESCE на NULL'ы (бывает если sub без stars/rub — admin grant, free).
+  const RUB_EXPR = `COALESCE(SUM(stars_paid),0) * ${STARS_TO_RUB} + COALESCE(SUM(amount_rub),0)`
+
+  const sum = (where: string): number => {
+    const row = d.prepare(`
+      SELECT ${RUB_EXPR} as n
+      FROM subscriptions
+      WHERE plan != 'vpn_trial' AND refunded_at IS NULL AND ${where} ${excl}
+    `).get() as { n: number }
+    return Math.round(row.n || 0)
+  }
+
+  // ── Today (UTC) ──
+  const today      = sum(`date(created_at) = date('now')`)
+  // «Сегодня неделю назад» = ровно тот же день недели прошлой недели; для
+  // подневного сравнения берём промежуток того же часа на 7 дней назад.
+  // Упрощаем: «прошлая неделя на сейчас» = всё что между -7d и -7d+now;
+  // здесь делаем просто same-day-last-week = date('now','-7 days').
+  const todayPrev  = sum(`date(created_at) = date('now','-7 days')`)
+
+  // ── WTD: с понедельника 00:00 UTC ──
+  // `strftime('%w','now')` возвращает 0=вс..6=сб; для понедельника
+  // нужно (`%w` - 1 + 7) % 7 = days_back_to_monday.
+  // SQLite позволяет нам сделать date('now', 'weekday 0', '-7 days', '+1 day'),
+  // но проще через CASE: cast int, расчёт offset.
+  const monOffsetExpr = `((CAST(strftime('%w','now') AS INTEGER) + 6) % 7)`
+  const wtd = sum(`date(created_at) >= date('now','-' || ${monOffsetExpr} || ' days')`)
+  // То же окно «7 дней назад»: с прошлого понедельника по same-day-of-week.
+  // Сдвигаем оба конца на -7 days: start = понедельник прошлой недели,
+  // end = same-day-of-week прошлой недели (= date('now','-7 days')).
+  const wtdPrev = sum(`
+    date(created_at) >= date('now','-' || (${monOffsetExpr} + 7) || ' days')
+    AND date(created_at) <= date('now','-7 days')
+  `)
+
+  // ── MTD: с 1-го числа текущего месяца ──
+  const mtd = sum(`date(created_at) >= date('now','start of month')`)
+  // Прошлый месяц с 1-го до same-day-of-month. day-of-month — `strftime('%d')`.
+  // Тонкий момент: если сегодня 31-е, а в прошлом месяце 30 дней — окно будет
+  // полным прошлым месяцем (date(now,-1 month,start of month) - date(now,start of month,-1 day)).
+  // Для дельты OK — это даёт максимум возможной выручки прошлого месяца к этой дате.
+  const mtdPrev = sum(`
+    date(created_at) >= date('now','start of month','-1 month')
+    AND date(created_at) <= date('now','-1 month')
+  `)
+
+  // Stars-breakdown отдельно для бейджа «⭐ N» под суммой.
+  // (Stars-only — без RUB-эквивалента, чтоб увидеть «фактический» Telegram
+  // оборот в звёздах; видимая разница vs всего total = выручка через CryptoBot/Lava/OxaPay.)
+  const stars = (where: string): number => {
+    const row = d.prepare(`
+      SELECT COALESCE(SUM(stars_paid),0) as n
+      FROM subscriptions
+      WHERE plan != 'vpn_trial' AND refunded_at IS NULL AND ${where} ${excl}
+    `).get() as { n: number }
+    return row.n || 0
+  }
+
+  return {
+    today:        { rub: today, stars: stars(`date(created_at) = date('now')`) },
+    today_prev:   todayPrev,
+    wtd:          { rub: wtd },
+    wtd_prev:     wtdPrev,
+    mtd:          { rub: mtd },
+    mtd_prev:     mtdPrev,
+  }
+}
+
+/**
+ * Средний чек за 30 дней + 7-day conversion rate.
+ *
+ * avg_check: SUM(rub-эквивалент)/COUNT(paid subs за 30д). Триалы исключены.
+ * conversion_7d: % новых юзеров за 7 дней, у которых уже есть платная подписка
+ *   (любой статус кроме refunded). Прокси для onboarding-конверсии — высокое
+ *   значение = быстрый purchase в первую неделю.
+ */
+export function avgCheckAndConversion() {
+  const d = db()
+  const excl = excludeAdminsClause('user_id')
+
+  const row30 = d.prepare(`
+    SELECT
+      COUNT(*) as n,
+      COALESCE(SUM(stars_paid),0) * ${STARS_TO_RUB} + COALESCE(SUM(amount_rub),0) as rub
+    FROM subscriptions
+    WHERE plan != 'vpn_trial' AND refunded_at IS NULL
+      AND created_at > datetime('now','-30 days') ${excl}
+  `).get() as { n: number; rub: number }
+
+  const avg_check_rub = row30.n > 0 ? Math.round(row30.rub / row30.n) : 0
+
+  // 7d conversion: NEW users за 7d (users.created_at > -7d), сколько из них
+  // уже оплатили хотя бы один платный план (любая sub с stars_paid OR amount_rub > 0,
+  // не refunded). Админы исключены и из числителя, и из знаменателя.
+  const exclU = excludeAdminsClause('u.id')
+  const new7 = (d.prepare(`
+    SELECT COUNT(*) as n FROM users u
+    WHERE u.created_at > datetime('now','-7 days') ${exclU}
+  `).get() as { n: number }).n
+
+  const new7Paid = (d.prepare(`
+    SELECT COUNT(DISTINCT u.id) as n FROM users u
+    WHERE u.created_at > datetime('now','-7 days') ${exclU}
+      AND EXISTS (
+        SELECT 1 FROM subscriptions s
+        WHERE s.user_id = u.id
+          AND s.plan != 'vpn_trial'
+          AND s.refunded_at IS NULL
+          AND (s.stars_paid > 0 OR s.amount_rub > 0)
+      )
+  `).get() as { n: number }).n
+
+  return {
+    avg_check_rub,
+    paid_subs_30d: row30.n,
+    conversion_7d_pct: new7 > 0 ? Math.round((new7Paid / new7) * 1000) / 10 : 0,
+    new_users_7d: new7,
+    new_users_7d_paid: new7Paid,
+  }
+}
+
+/**
+ * Refund-rate за 30 дней.
+ *
+ * Числитель: SUM возвращённых RUB-эквивалент за 30 дней (refunded_at в окне).
+ * Знаменатель: SUM(всех paid за 30 дней — включая те, что потом вернули).
+ *
+ * Tone-rules в дашборде:
+ *   < 2%  → positive (норма)
+ *   > 5%  → negative (тревога — провёрка fraud/provision-fail-cascade)
+ *   else  → default
+ */
+export function refundRate30d() {
+  const d = db()
+  const excl = excludeAdminsClause('user_id')
+  const RUB_EXPR = `COALESCE(SUM(stars_paid),0) * ${STARS_TO_RUB} + COALESCE(SUM(amount_rub),0)`
+
+  // Всего платежей (включая refunded'ные — refunded_at IS NULL фильтр НЕ ставим)
+  // за 30 дней.
+  const total = (d.prepare(`
+    SELECT ${RUB_EXPR} as n
+    FROM subscriptions
+    WHERE plan != 'vpn_trial' AND created_at > datetime('now','-30 days') ${excl}
+  `).get() as { n: number }).n
+
+  // Возвращённые: refunded_at в окне 30 дней (а не created_at — иначе refund'ы
+  // старых платежей не попадут в текущий месяц).
+  const refunded = (d.prepare(`
+    SELECT ${RUB_EXPR} as n
+    FROM subscriptions
+    WHERE plan != 'vpn_trial' AND refunded_at IS NOT NULL
+      AND refunded_at > datetime('now','-30 days') ${excl}
+  `).get() as { n: number }).n
+
+  return {
+    refunded_rub: Math.round(refunded || 0),
+    total_rub: Math.round(total || 0),
+    rate_pct: total > 0 ? Math.round((refunded / total) * 1000) / 10 : 0,
+  }
+}
+
+/**
+ * Method breakdown за 30 дней (для stacked bar chart в analytics).
+ *
+ * Источник — `payments` (где есть колонка method), JOIN с subscriptions
+ * для RUB-эквивалента. На каждой дате — четыре числа: stars/crypto/oxapay/lavatop.
+ *
+ * Если payments записи нет (legacy subs без entry в payments — раннее
+ * legacy free/admin path), fallback: всё считается как 'stars'. Это
+ * graceful-degrade: одна-двухцветная стопка вместо пустоты.
+ *
+ * stars в payments хранятся в `payments.stars` (raw stars), а amount_rub
+ * нет — для RUB-чанков (crypto/oxapay/lavatop) надо тянуть amount_rub из
+ * subscriptions через JOIN. Поэтому возвращаем структуру { day, stars,
+ * crypto_rub, oxapay_rub, lavatop_rub } — front соберёт stacked bars.
+ */
+export function methodBreakdown30d() {
+  const d = db()
+  const excl = excludeAdminsClause('p.user_id')
+
+  // Защита от отсутствия payments-таблицы или колонки method (на всякий —
+  // если в future миграция переименует, return пустой массив → UI покажет
+  // «нет данных» и не упадёт).
+  try {
+    return d.prepare(`
+      SELECT date(p.created_at) as day,
+             SUM(CASE WHEN p.method='stars'   THEN p.stars                   ELSE 0 END) as stars,
+             SUM(CASE WHEN p.method='crypto'  THEN COALESCE(s.amount_rub,0) ELSE 0 END) as crypto_rub,
+             SUM(CASE WHEN p.method='oxapay'  THEN COALESCE(s.amount_rub,0) ELSE 0 END) as oxapay_rub,
+             SUM(CASE WHEN p.method='lavatop' THEN COALESCE(s.amount_rub,0) ELSE 0 END) as lavatop_rub
+      FROM payments p
+      LEFT JOIN subscriptions s ON s.id = p.subscription_id
+      WHERE p.created_at > datetime('now','-30 days')
+        AND p.refunded_at IS NULL
+        AND COALESCE(p.is_free_grant, 0) = 0     -- админ-гранты не выручка
+        ${excl}
+      GROUP BY day
+      ORDER BY day ASC
+    `).all() as Array<{
+      day: string
+      stars: number
+      crypto_rub: number
+      oxapay_rub: number
+      lavatop_rub: number
+    }>
+  } catch {
+    // Schema mismatch (e.g. tests без payments-таблицы) → fallback на
+    // subscriptions-only stars-серию. Front увидит «one-colour stack».
+    return d.prepare(`
+      SELECT date(s.created_at) as day,
+             COALESCE(SUM(s.stars_paid), 0) as stars,
+             0 as crypto_rub,
+             0 as oxapay_rub,
+             0 as lavatop_rub
+      FROM subscriptions s
+      WHERE s.plan != 'vpn_trial' AND s.refunded_at IS NULL
+        AND s.created_at > datetime('now','-30 days')
+        ${excludeAdminsClause('s.user_id')}
+      GROUP BY day
+      ORDER BY day ASC
+    `).all() as Array<{
+      day: string
+      stars: number
+      crypto_rub: number
+      oxapay_rub: number
+      lavatop_rub: number
+    }>
+  }
+}
+
+export type StuckPayment = {
+  payment_id: number
+  subscription_id: number | null
+  user_id: number
+  username: string | null
+  first_name: string | null
+  method: string
+  stars: number | null
+  amount_rub: number | null
+  created_at: string
+  sub_status: string | null  // null если нет sub'а вообще (sub_id was null)
+  reason: string             // 'no_sub' | 'expired' | 'refunded' — для UI-бейджа
+}
+
+/**
+ * Race-rejection платежи: payment записан как completed/paid, но
+ * subscription либо отсутствует (subscription_id IS NULL), либо
+ * в статусе expired/refunded.
+ *
+ * Это сигнал багов в provision-cascade (fcfe3ee, bfaab08): юзер
+ * заплатил, но из-за race condition его подписка не активировалась
+ * или была откатана. Нужен admin-triage (refund или manual grant).
+ *
+ * Фильтр:
+ *  - payments.status IN ('completed','paid') AND refunded_at IS NULL
+ *  - is_free_grant = 0 (грантовые/триальные не считаем — они не «оплаченные»)
+ *  - method != 'free' / 'admin_grant' / 'trial' (defense in depth)
+ *  - subscription отсутствует ИЛИ status в expired/refunded
+ *
+ * Сортировка: новые → старые.
+ */
+export function stuckPayments(limit = 50): StuckPayment[] {
+  const d = db()
+  const excl = excludeAdminsClause('p.user_id')
+
+  try {
+    return d.prepare(`
+      SELECT p.id                            as payment_id,
+             p.subscription_id               as subscription_id,
+             p.user_id                       as user_id,
+             u.username                      as username,
+             u.first_name                    as first_name,
+             p.method                        as method,
+             p.stars                         as stars,
+             s.amount_rub                    as amount_rub,
+             p.created_at                    as created_at,
+             s.status                        as sub_status,
+             CASE
+               WHEN p.subscription_id IS NULL                  THEN 'no_sub'
+               WHEN s.id IS NULL                               THEN 'no_sub'
+               WHEN s.status = 'refunded'                      THEN 'refunded'
+               WHEN s.status = 'expired'                       THEN 'expired'
+               ELSE 'unknown'
+             END                             as reason
+      FROM payments p
+      LEFT JOIN subscriptions s ON s.id = p.subscription_id
+      LEFT JOIN users u         ON u.id = p.user_id
+      WHERE p.status IN ('completed','paid')
+        AND p.refunded_at IS NULL
+        AND COALESCE(p.is_free_grant, 0) = 0
+        AND p.method NOT IN ('free','admin_grant','trial')
+        AND (
+              p.subscription_id IS NULL
+           OR s.id IS NULL
+           OR s.status IN ('expired','refunded')
+        )
+        ${excl}
+      ORDER BY p.created_at DESC
+      LIMIT ?
+    `).all(limit) as StuckPayment[]
+  } catch {
+    // Schema mismatch — возвращаем пустой массив, UI покажет «нет stuck».
+    return []
+  }
+}

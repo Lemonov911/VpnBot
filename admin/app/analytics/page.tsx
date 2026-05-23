@@ -7,10 +7,12 @@ import {
   topReferrers,
   payingUsersGrowth,
   activePayingCount,
+  methodBreakdown30d,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
 import { RevenueArea } from '../_components/RevenueChart'
+import { MethodBreakdownChart } from '../_components/MethodBreakdownChart'
 import { GoalChart } from '../_components/GoalChart'
 import { StatCard } from '../_components/ui'
 
@@ -38,6 +40,7 @@ export default async function Analytics() {
   const refs        = topReferrers(10)
   const growth      = payingUsersGrowth()
   const activePaying = activePayingCount()
+  const methodMix   = methodBreakdown30d()
 
   const totalMixCount = mix.reduce((a, b) => a + b.count, 0) || 1
 
@@ -81,6 +84,21 @@ export default async function Analytics() {
           <div className="text-[10px] text-neutral-600 mt-2">
             {daily.reduce((a, b) => a + b.paid_subs, 0)} за период
           </div>
+        </div>
+      </div>
+
+      {/* Method breakdown — выручка по методу оплаты, stacked bar (30 дней).
+          Stars видны как ⭐ count, остальные методы как RUB — оба измерения
+          складываются в одну стопку, что показывает «откуда деньги пришли». */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
+        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">
+          Выручка по методу оплаты
+        </div>
+        <MethodBreakdownChart data={methodMix} />
+        <div className="text-[10px] text-neutral-600 mt-2">
+          {methodMix.length > 0
+            ? `${methodMix[0].day} → ${methodMix[methodMix.length - 1].day}`
+            : 'нет данных за 30 дней'}
         </div>
       </div>
 

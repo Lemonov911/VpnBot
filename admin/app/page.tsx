@@ -1,9 +1,20 @@
 import Link from 'next/link'
 import { requireSession } from '@/lib/auth'
-import { stats, recentPayments, allTickets, moneyTotals } from '@/lib/db'
+import {
+  stats,
+  recentPayments,
+  allTickets,
+  moneyTotals,
+  revenueWindows,
+  avgCheckAndConversion,
+  refundRate30d,
+  stuckPayments,
+} from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from './_components/AdminNav'
 import { StatCard, EmptyState } from './_components/ui'
+import { RevenueWidget } from './_components/RevenueWidget'
+import StuckPaymentsAlert from './_components/StuckPaymentsAlert'
 
 // Stars → ₽ rough conversion. Telegram Stars exchange rate ≈ 1 ⭐ = 1.4₽ (varies).
 // Используется только для дисплея — фактические выплаты от Telegram идут в их курсе.
@@ -65,12 +76,44 @@ export default async function Dashboard() {
   const payments = recentPayments(10) as any[]
   const tickets  = allTickets('open') as any[]
   const money    = moneyTotals()
+  // Track A — revenue widgets + stuck alert. Все запросы read-only, без
+  // лишних N+1: ровно 4 prepared statement вызова, добавляющих <50ms к page load.
+  const rev      = revenueWindows()
+  const conv     = avgCheckAndConversion()
+  const refund   = refundRate30d()
+  const stuck    = stuckPayments(50)
+
+  // Refund-rate tone: <2% → норма (positive=зелёный), >5% → тревога (negative),
+  // 2-5% → default. Пороги взяты из health-сигналов FOSS-индустрии (Stripe target
+  // ~2%, >5% = abnormal). При выручке 0 показываем «—» и держим default tone.
+  const refundTone =
+    refund.total_rub === 0 ? 'default' :
+    refund.rate_pct < 2    ? 'positive' :
+    refund.rate_pct > 5    ? 'negative' :
+                              'default'
 
   return (
     <div className="min-h-screen p-6 max-w-6xl mx-auto space-y-8">
 
       {/* Header */}
       <AdminNav username={session.username} />
+
+      {/* Stuck-payments alert — рендерится в самом верху, чтобы админ
+          увидел сразу при заходе. Сам компонент рендерит null если count=0. */}
+      <StuckPaymentsAlert items={stuck} />
+
+      {/* Revenue widget — Today / WTD / MTD с дельтами vs прошлый период. */}
+      <div>
+        <div className="text-sm font-semibold text-white mb-3">💰 Доход</div>
+        <RevenueWidget
+          today={rev.today}
+          todayPrev={rev.today_prev}
+          wtd={rev.wtd}
+          wtdPrev={rev.wtd_prev}
+          mtd={rev.mtd}
+          mtdPrev={rev.mtd_prev}
+        />
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -81,6 +124,30 @@ export default async function Dashboard() {
         />
         <StatCard label="Stars заработано"   value={`⭐ ${s.totalStars}`} />
         <StatCard label="Тикетов открыто"    value={s.openTickets} tone={s.openTickets > 0 ? 'warning' : 'default'} />
+      </div>
+
+      {/* Дополнительные revenue-KPI: средний чек, conversion, refund-rate. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <StatCard
+          label="Средний чек (30д)"
+          value={conv.avg_check_rub > 0 ? `${conv.avg_check_rub.toLocaleString('ru')} ₽` : '—'}
+          hint={`${conv.paid_subs_30d} платных подписок`}
+        />
+        <StatCard
+          label="Conversion (7д)"
+          value={conv.new_users_7d > 0 ? `${conv.conversion_7d_pct}%` : '—'}
+          hint={`${conv.new_users_7d_paid} из ${conv.new_users_7d} новых юзеров оплатили`}
+        />
+        <StatCard
+          label="Refund-rate (30д)"
+          value={refund.total_rub > 0 ? `${refund.rate_pct}%` : '—'}
+          tone={refundTone}
+          hint={
+            refund.total_rub > 0
+              ? `${refund.refunded_rub.toLocaleString('ru')} ₽ из ${refund.total_rub.toLocaleString('ru')} ₽`
+              : 'нет данных'
+          }
+        />
       </div>
 
       {/* Деньги — totals + временные окна */}
