@@ -627,14 +627,11 @@ export default function Home() {
                   : `${stats!.rub_spent ?? 0} ₽`,
                 label: t('home_stars_spent_label'),
                 show: stats!.stars_spent > 0 || (stats!.rub_spent ?? 0) > 0 },
-              // Используем plural — даёт правильное «+12 дней» / «+1 день» / «+2 дня».
-              // Без пробела между числом и единицей выглядело как «+12дн.»
-              { value: `+${p(stats!.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] })}`,
-                label: t('home_bonus_label'),  show: stats!.bonus_days > 0 },
-              // Lifetime метрика — сколько привёл друзей. Видна даже на expired sub
-              // (юзер без подписки тоже хочет помнить что у него уже есть N
-              // приглашённых, копящих бонус — мотивирует продлить).
-              { value: String(stats!.invited),       label: t('home_invited_label'),      show: stats!.invited > 0     },
+              // Olej feedback 23.05: убрать referral-метрики (bonus_days +
+              // invited) с главной — они дублируют страницу «Друзья», где есть
+              // полная картина + кнопки. На главной хватает stars/rub-spent.
+              // Историческая повторка: f2382c2 уже убирал, 72ba56b вернул,
+              // теперь окончательно убираем по второй итерации.
             ].filter(x => x.show).map(({ value, label }) => (
               <div key={label} className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-[14px] px-2 py-3 text-center">
                 <div className="text-base font-extrabold text-[var(--tg-theme-text-color)]">{value}</div>
@@ -644,37 +641,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* Накоплены реф-бонусные дни → CTA «Активировать»
-            (redeem_referral_bonus добавляет дни к expires_at текущей sub).
-            Если sub нет — кнопка disabled с alert'ом «сначала продли». */}
-        {stats && stats.bonus_days > 0 && (
-          <button
-            type="button"
-            disabled={redeeming}
-            onClick={handleRedeemBonus}
-            className="w-full fade-in flex items-center justify-between gap-3 rounded-2xl py-3 px-4 cursor-pointer disabled:opacity-50 border-[1.5px] border-success/30 bg-success/10"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-[12px] shrink-0 bg-success flex items-center justify-center shadow-[0_4px_10px_rgba(39,174,96,0.3)]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 8v8M8 12h8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"/>
-                </svg>
-              </div>
-              <div className="text-left">
-                <div className="text-sm font-bold text-[var(--tg-theme-text-color)]">
-                  {(t('home_bonus_redeem_title' as never) as string)
-                    .replace('{days}', p(stats.bonus_days, { ru: [t('home_days_left_1'), t('home_days_left_2'), t('days')], en: ['day', 'days'] }))}
-                </div>
-                <div className="text-xs text-[var(--tg-theme-hint-color)] mt-0.5">
-                  {sub ? t('home_bonus_redeem_sub' as never) : t('home_bonus_redeem_no_sub_hint' as never)}
-                </div>
-              </div>
-            </div>
-            <span className="text-[13px] font-semibold text-success shrink-0">
-              {redeeming ? t('home_bonus_redeem_loading' as never) : t('home_bonus_redeem_btn' as never)}
-            </span>
-          </button>
-        )}
+        {/* Redeem-CTA для бонусных дней раньше жил здесь — Olej feedback
+            23.05: убран с главной, активация бонусов делается на странице
+            Друзья (там полная картина баланс / CTA / правила). */}
 
       </div>
 

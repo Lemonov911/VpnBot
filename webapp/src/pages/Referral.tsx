@@ -244,9 +244,12 @@ export default function Referral() {
           })()}
 
           {/* Статистика — invited + converted. Bonus_days НЕ показываем тут
-              отдельно (есть отдельный блок «Мои бонусы» выше с redeem-кнопкой). */}
-          {(stats.invited > 0 || stats.converted > 0) && (
-            <>
+              отдельно (есть отдельный блок «Мои бонусы» выше с redeem-кнопкой).
+              Olej feedback 23.05: показываем ВСЕГДА (даже когда 0/0) — юзер
+              должен видеть «приглашено: 0, купили: 0» как явный counter,
+              чтобы мотивация двигалась. Раньше блок скрывался — было ощущение
+              «фича сломалась, тут пусто». */}
+          <>
               <span className="section-title">{t('ref_stats')}</span>
               <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl overflow-hidden">
                 {[
@@ -273,7 +276,6 @@ export default function Referral() {
                 ))}
               </div>
             </>
-          )}
         </>
       ) : (
         <p className="text-[var(--tg-theme-destructive-text-color,#ff3b30)] text-center break-words">
