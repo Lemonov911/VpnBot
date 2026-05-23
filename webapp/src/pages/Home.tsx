@@ -536,9 +536,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* ── Expired → renew CTA — sub существует но истекла. Параллель trial-CTA. ── */}
+        {/* ── Expired → renew CTA — sub существует но истекла. Параллель trial-CTA. ──
+            Olej feedback 23.05: предыдущий вариант `bg-[var(--tg-theme-secondary-
+            bg-color)]` на dark Telegram давал тёмный fill, на нём danger-border
+            «дёргал глаз». Переключил на `bg-danger/10` — тот же мягкий red wash
+            который уже используется в VPN.tsx:642 и в expiry-bar. Visual язык
+            теперь консистентный: «истекает <=3 дня», «истёкло» — одинаковая палитра. */}
         {sub && sub.status === 'expired' && (
-          <div className="fade-in rounded-xl p-3 bg-[var(--tg-theme-secondary-bg-color)] border border-danger/30">
+          <div className="fade-in rounded-xl p-3 bg-danger/10 border border-danger/30">
             <div className="text-xs opacity-70 mb-2 text-[var(--tg-theme-text-color)]">{t('home_expired_card_note' as never)}</div>
             <button
               className="w-full py-2.5 rounded-[10px] border-none bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-sm font-semibold cursor-pointer"
