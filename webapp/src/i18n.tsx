@@ -607,10 +607,8 @@ const T = {
     // прогресса) показывает inline-индикатор «медленное соединение».
     bot_err_upload_timeout: 'Загрузка зависла. Проверь интернет и попробуй ещё раз.',
     bot_slow_connection:    '🐢 Медленное соединение…',
-    // W2 bonus — общий network-error alert для silent .catch() мест где
-    // раньше глоталась ошибка (Home → bonus redeem refresh / Referral redeem
-    // refresh stats).
-    bot_err_network:        'Не удалось загрузить. Проверь интернет.',
+    // bot_err_network объявлен выше (W1, api error layer) — общий для всех
+    // silent .catch() мест (Home → bonus redeem refresh / Referral stats).
   },
 
   en: {
@@ -1187,8 +1185,8 @@ const T = {
     // W2 #9 — Support upload feedback (timeout / slow connection).
     bot_err_upload_timeout: 'Upload stalled. Check your connection and try again.',
     bot_slow_connection:    '🐢 Slow connection…',
-    // W2 bonus — generic network error alert for silent .catch() sites.
-    bot_err_network:        'Network error. Check your connection.',
+    // bot_err_network is defined above (W1, api error layer) — covers all
+    // silent .catch() sites in W2 too.
   },
 } as const
 
