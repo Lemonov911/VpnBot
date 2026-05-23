@@ -12,16 +12,7 @@ import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
 import { RevenueArea } from '../_components/RevenueChart'
 import { GoalChart } from '../_components/GoalChart'
-
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {hint && <div className="text-xs text-neutral-500 mt-1">{hint}</div>}
-    </div>
-  )
-}
+import { StatCard } from '../_components/ui'
 
 function planName(key: string) {
   const map: Record<string, string> = {

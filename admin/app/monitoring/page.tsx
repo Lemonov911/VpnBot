@@ -9,16 +9,7 @@ import {
   SubsGrowthChart, LatencyChart, PlanDistChart,
   UptimeStrip, LatencySparkline,
 } from './Charts'
-
-function StatCard({ label, value, warn, hint }: { label: string; value: string | number; warn?: boolean; hint?: string }) {
-  return (
-    <div className={`bg-neutral-900 border rounded-2xl p-5 ${warn ? 'border-amber-500/40 border-l-2 border-l-amber-500' : 'border-neutral-800'}`}>
-      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className={`text-2xl font-bold ${warn ? 'text-amber-400' : 'text-white'}`}>{value}</div>
-      {hint && <div className="text-xs text-neutral-500 mt-1">{hint}</div>}
-    </div>
-  )
-}
+import { StatCard } from '../_components/ui'
 
 export default async function Monitoring() {
   const session = await requireSession()
@@ -48,8 +39,8 @@ export default async function Monitoring() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Active конфигов"   value={s.active_configs} />
         <StatCard label="Пустых слотов"      value={s.empty_slots}    hint="ждут активации" />
-        <StatCard label="Тикеты открыты"     value={s.open_tickets}   warn={s.open_tickets > 0} hint={`${s.closed_tickets} закрыто`} />
-        <StatCard label="Истекают за 3 дня"  value={s.expiring_3d}    warn={s.expiring_3d > 0} hint={`${s.expiring_1d} за 24ч`} />
+        <StatCard label="Тикеты открыты"     value={s.open_tickets}   tone={s.open_tickets > 0 ? 'warning' : 'default'} hint={`${s.closed_tickets} закрыто`} />
+        <StatCard label="Истекают за 3 дня"  value={s.expiring_3d}    tone={s.expiring_3d > 0 ? 'warning' : 'default'} hint={`${s.expiring_1d} за 24ч`} />
       </div>
 
       {/* Charts — subscriber growth + latency */}

@@ -4,6 +4,7 @@ import { userFull, type SubRow } from '@/lib/db'
 import { redirect, notFound } from 'next/navigation'
 import AdminNav from '../../_components/AdminNav'
 import { ExtendSubButton, RefundSubButton, BanUserButton } from '../../_components/AdminActions'
+import { StatCard } from '../../_components/ui'
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -244,12 +245,3 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
   )
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {hint && <div className="text-xs text-neutral-500 mt-1">{hint}</div>}
-    </div>
-  )
-}

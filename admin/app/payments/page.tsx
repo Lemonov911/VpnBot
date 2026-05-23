@@ -3,6 +3,7 @@ import { requireSession } from '@/lib/auth'
 import { allPayments, type PaymentRow } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
+import { StatCard, Table, type Column } from '../_components/ui'
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -176,7 +177,12 @@ export default async function Payments({
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table — пилотный <Table>. NB: refunded-строки нужно затенить
+          (opacity-60), но текущий Table не пробрасывает классы на <tr>.
+          Принятый trade-off на foundation: refund-визуал реализуем через
+          inline-стилизацию `text-neutral-500` внутри render — это close
+          enough, плюс уже есть refund-pill в колонке «Метод». Полноценный
+          row-className придёт с треком B (Платежи). */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-neutral-800 flex items-baseline justify-between">
           <div className="font-semibold text-sm">{rows.length} записей</div>
@@ -184,74 +190,89 @@ export default async function Payments({
             <div className="text-[10px] text-neutral-500">показаны последние 500</div>
           )}
         </div>
-        {rows.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-neutral-500">по выбранным фильтрам ничего нет</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-neutral-500 uppercase tracking-wide">
-                <tr className="border-b border-neutral-800">
-                  <th className="text-left  px-4 py-2 font-medium">Когда</th>
-                  <th className="text-left  px-4 py-2 font-medium">Юзер</th>
-                  <th className="text-left  px-4 py-2 font-medium">Тариф</th>
-                  <th className="text-left  px-4 py-2 font-medium">Метод</th>
-                  <th className="text-right px-4 py-2 font-medium">Сумма</th>
-                  <th className="text-left  px-4 py-2 font-medium">Payment ID</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {rows.map((r: PaymentRow) => (
-                  <tr key={r.id} className={`hover:bg-neutral-800/30 ${r.refunded_at ? 'opacity-60' : ''}`}>
-                    <td className="px-4 py-2 text-neutral-400 text-xs whitespace-nowrap">{fmtDate(r.created_at)}</td>
-                    <td className="px-4 py-2">
-                      <Link href={`/clients/${r.user_id}`} className="block hover:text-sky-400">
-                        <div className="font-medium truncate max-w-[200px]">
-                          {r.first_name || 'unknown'}
-                        </div>
-                        <div className="text-[10px] text-neutral-600 font-mono">id {r.user_id}</div>
-                      </Link>
-                      {r.username && (
-                        <a
-                          href={`https://t.me/${r.username}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
-                        >
-                          ↗ @{r.username}
-                        </a>
-                      )}
-                    </td>
-                    <td className="px-4 py-2">{PLAN_NAMES[r.plan] || r.plan}</td>
-                    <td className="px-4 py-2 text-xs"><MethodPill method={r.method} refunded={!!r.refunded_at} adminId={r.granted_by_admin_id} /></td>
-                    <td className="px-4 py-2 text-right">
-                      {r.amount_rub > 0 ? (
-                        <span className="text-emerald-400">💎 {r.amount_rub.toLocaleString('ru')} ₽</span>
-                      ) : r.stars_paid > 0 ? (
-                        <span className="text-yellow-400">⭐ {r.stars_paid}</span>
-                      ) : (
-                        <span className="text-neutral-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-[10px] text-neutral-600 font-mono truncate max-w-[180px]">
-                      {r.payment_id || '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <Table<PaymentRow>
+          rows={rows}
+          rowKey={r => r.id}
+          emptyText="по выбранным фильтрам ничего нет"
+          columns={paymentsColumns}
+        />
       </div>
     </div>
   )
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {hint && <div className="text-xs text-neutral-500 mt-1">{hint}</div>}
-    </div>
-  )
-}
+const paymentsColumns: Column<PaymentRow>[] = [
+  {
+    key: 'created_at',
+    label: 'Когда',
+    align: 'left',
+    className: 'text-neutral-400 text-xs whitespace-nowrap',
+    render: r => fmtDate(r.created_at),
+  },
+  {
+    key: 'user',
+    label: 'Юзер',
+    align: 'left',
+    render: r => (
+      <div className={r.refunded_at ? 'opacity-60' : ''}>
+        <Link href={`/clients/${r.user_id}`} className="block hover:text-sky-400">
+          <div className="font-medium truncate max-w-[200px]">
+            {r.first_name || 'unknown'}
+          </div>
+          <div className="text-[10px] text-neutral-600 font-mono">id {r.user_id}</div>
+        </Link>
+        {r.username && (
+          <a
+            href={`https://t.me/${r.username}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
+          >
+            ↗ @{r.username}
+          </a>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: 'plan',
+    label: 'Тариф',
+    align: 'left',
+    render: r => (
+      <span className={r.refunded_at ? 'opacity-60' : ''}>
+        {PLAN_NAMES[r.plan] || r.plan}
+      </span>
+    ),
+  },
+  {
+    key: 'method',
+    label: 'Метод',
+    align: 'left',
+    className: 'text-xs',
+    render: r => <MethodPill method={r.method} refunded={!!r.refunded_at} adminId={r.granted_by_admin_id} />,
+  },
+  {
+    key: 'amount',
+    label: 'Сумма',
+    align: 'right',
+    render: r => (
+      <span className={r.refunded_at ? 'opacity-60' : ''}>
+        {r.amount_rub > 0 ? (
+          <span className="text-emerald-400">💎 {r.amount_rub.toLocaleString('ru')} ₽</span>
+        ) : r.stars_paid > 0 ? (
+          <span className="text-yellow-400">⭐ {r.stars_paid}</span>
+        ) : (
+          <span className="text-neutral-600">—</span>
+        )}
+      </span>
+    ),
+  },
+  {
+    key: 'payment_id',
+    label: 'Payment ID',
+    align: 'left',
+    className: 'text-[10px] text-neutral-600 font-mono truncate max-w-[180px]',
+    render: r => r.payment_id || '—',
+  },
+]
+

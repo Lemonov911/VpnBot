@@ -3,21 +3,11 @@ import { requireSession } from '@/lib/auth'
 import { stats, recentPayments, allTickets, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from './_components/AdminNav'
+import { StatCard, EmptyState } from './_components/ui'
 
 // Stars → ₽ rough conversion. Telegram Stars exchange rate ≈ 1 ⭐ = 1.4₽ (varies).
 // Используется только для дисплея — фактические выплаты от Telegram идут в их курсе.
 const STARS_TO_RUB = 1.4
-
-function StatCard({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
-  return (
-    <div className={`bg-neutral-900 border rounded-2xl p-5 ${
-      warn ? 'border-yellow-500/30 border-l-2 border-l-yellow-500 pl-4' : 'border-neutral-800'
-    }`}>
-      <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className={`text-3xl font-bold ${warn ? 'text-yellow-400' : 'text-white'}`}>{value}</div>
-    </div>
-  )
-}
 
 function starsToRub(stars: number): number {
   return Math.round(stars * STARS_TO_RUB)
@@ -90,7 +80,7 @@ export default async function Dashboard() {
           value={s.graceSubs > 0 ? `${s.activeSubs} (${s.graceSubs} grace)` : s.activeSubs}
         />
         <StatCard label="Stars заработано"   value={`⭐ ${s.totalStars}`} />
-        <StatCard label="Тикетов открыто"    value={s.openTickets} warn={s.openTickets > 0} />
+        <StatCard label="Тикетов открыто"    value={s.openTickets} tone={s.openTickets > 0 ? 'warning' : 'default'} />
       </div>
 
       {/* Деньги — totals + временные окна */}
@@ -151,9 +141,7 @@ export default async function Dashboard() {
                 </div>
               </div>
             ))}
-            {payments.length === 0 && (
-              <div className="px-5 py-8 text-center text-sm text-neutral-600">Нет оплат</div>
-            )}
+            {payments.length === 0 && <EmptyState title="Нет оплат" />}
           </div>
         </div>
 
@@ -176,9 +164,7 @@ export default async function Dashboard() {
                 <div className="text-sm text-neutral-300 line-clamp-2">{t.message}</div>
               </div>
             ))}
-            {tickets.length === 0 && (
-              <div className="px-5 py-8 text-center text-sm text-neutral-600">Нет открытых тикетов 🎉</div>
-            )}
+            {tickets.length === 0 && <EmptyState title="Нет открытых тикетов 🎉" />}
           </div>
         </div>
 

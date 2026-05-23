@@ -3,6 +3,24 @@ import { requireSession } from '@/lib/auth'
 import { topClients, moneyTotals } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import AdminNav from '../_components/AdminNav'
+import { StatCard, Table, type Column } from '../_components/ui'
+
+// Тип строки из topClients(): дёргаем форму руками, чтобы Column<TopClientRow>
+// был строго типизирован. Поля должны совпадать с SELECT в lib/db.ts → topClients.
+type TopClientRow = {
+  id: number
+  first_name: string | null
+  username: string | null
+  joined_at: string
+  total_stars: number
+  total_rub: number
+  paid_subs: number
+  trial_subs: number
+  current_plan: string | null
+  current_plan_status: string | null
+  active_until: string | null
+  last_purchase: string | null
+}
 
 const PLAN_NAMES: Record<string, string> = {
   vpn_base: 'База', vpn_max: 'Макс', vpn_trial: '🎁 Триал',
@@ -14,16 +32,6 @@ function fmtDate(iso: string | null) {
   if (!iso) return '—'
   const d = new Date(iso.replace(' ', 'T'))
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })
-}
-
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-5">
-      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">{label}</div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      {hint && <div className="text-xs text-neutral-500 mt-1">{hint}</div>}
-    </div>
-  )
 }
 
 const AVATAR_COLORS = [
@@ -83,83 +91,111 @@ export default async function Clients() {
         <StatCard label="⭐ за 90 дней" value={m.revenue_90d} />
       </div>
 
-      {/* Ranking */}
+      {/* Ranking — пилотный <Table>. Индекс # нужен для нумерации,
+          поэтому держим map'ом снаружи, чтобы получить i. */}
       <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-neutral-800 flex items-baseline justify-between">
           <div className="font-semibold text-sm">Топ-50 клиентов</div>
           <div className="text-xs text-neutral-500">по сумме потраченных Stars (всё время)</div>
         </div>
-        {clients.length === 0 ? (
-          <div className="px-5 py-8 text-center text-sm text-neutral-500">пока никто не платил</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs text-neutral-500 uppercase tracking-wide">
-                <tr className="border-b border-neutral-800">
-                  <th className="text-left px-4 py-2 font-medium w-8">#</th>
-                  <th className="text-left px-4 py-2 font-medium">Юзер</th>
-                  <th className="text-right px-4 py-2 font-medium">⭐ LTV</th>
-                  <th className="text-right px-4 py-2 font-medium">Покупок</th>
-                  <th className="text-left px-4 py-2 font-medium">Сейчас на</th>
-                  <th className="text-left px-4 py-2 font-medium">Истекает</th>
-                  <th className="text-left px-4 py-2 font-medium">Last buy</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {clients.map((c, i) => (
-                  <tr key={c.id} className="hover:bg-neutral-800/30 transition-colors">
-                    <td className="px-4 py-3 text-neutral-600 font-mono text-xs">{i + 1}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-start gap-2.5">
-                        <Avatar name={c.first_name || '?'} id={c.id} />
-                        <div>
-                          <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
-                            <div className="font-medium truncate max-w-[180px]">
-                              {c.first_name || 'unknown'}
-                            </div>
-                            <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
-                          </Link>
-                          {c.username && (
-                            <a
-                              href={`https://t.me/${c.username}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
-                            >
-                              ↗ @{c.username}
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2 text-right font-semibold text-yellow-400">⭐ {c.total_stars}</td>
-                    <td className="px-4 py-2 text-right">
-                      {c.paid_subs}
-                      {c.trial_subs > 0 && (
-                        <span className="text-neutral-600 text-xs"> + {c.trial_subs} тр</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2">
-                      {c.current_plan ? (
-                        <span className={c.current_plan_status === 'grace' ? 'text-amber-400' : 'text-emerald-400'}>
-                          {PLAN_NAMES[c.current_plan] || c.current_plan}
-                          {c.current_plan_status === 'grace' && (
-                            <span className="ml-1 text-[10px] uppercase tracking-wider">grace</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-neutral-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 text-neutral-400 text-xs">{fmtDate(c.active_until)}</td>
-                    <td className="px-4 py-2 text-neutral-500 text-xs">{fmtDate(c.last_purchase)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <Table<TopClientRow & { _rank: number }>
+          rows={clients.map((c, i) => ({ ...(c as TopClientRow), _rank: i + 1 }))}
+          rowKey={c => c.id}
+          emptyText="пока никто не платил"
+          columns={clientsColumns}
+        />
       </div>
     </div>
   )
 }
+
+// Колонки таблицы — вынесены чтобы page-функция была компактнее.
+// Тип `TopClientRow & { _rank: number }` потому что номер строки (#)
+// мы вычисляем в map'е выше — Table сам не знает индекса.
+const clientsColumns: Column<TopClientRow & { _rank: number }>[] = [
+  {
+    key: 'rank',
+    label: '#',
+    align: 'left',
+    className: 'w-8 text-neutral-600 font-mono text-xs',
+    render: c => c._rank,
+  },
+  {
+    key: 'user',
+    label: 'Юзер',
+    align: 'left',
+    render: c => (
+      <div className="flex items-start gap-2.5">
+        <Avatar name={c.first_name || '?'} id={c.id} />
+        <div>
+          <Link href={`/clients/${c.id}`} className="block hover:text-sky-400">
+            <div className="font-medium truncate max-w-[180px]">
+              {c.first_name || 'unknown'}
+            </div>
+            <div className="text-[10px] text-neutral-600 font-mono">id {c.id}</div>
+          </Link>
+          {c.username && (
+            <a
+              href={`https://t.me/${c.username}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-0.5 mt-1 px-1.5 py-0.5 rounded text-[10px] bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 transition-colors"
+            >
+              ↗ @{c.username}
+            </a>
+          )}
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: 'ltv',
+    label: '⭐ LTV',
+    align: 'right',
+    className: 'font-semibold text-yellow-400',
+    render: c => <>⭐ {c.total_stars}</>,
+  },
+  {
+    key: 'paid_subs',
+    label: 'Покупок',
+    align: 'right',
+    render: c => (
+      <>
+        {c.paid_subs}
+        {c.trial_subs > 0 && (
+          <span className="text-neutral-600 text-xs"> + {c.trial_subs} тр</span>
+        )}
+      </>
+    ),
+  },
+  {
+    key: 'current_plan',
+    label: 'Сейчас на',
+    align: 'left',
+    render: c =>
+      c.current_plan ? (
+        <span className={c.current_plan_status === 'grace' ? 'text-amber-400' : 'text-emerald-400'}>
+          {PLAN_NAMES[c.current_plan] || c.current_plan}
+          {c.current_plan_status === 'grace' && (
+            <span className="ml-1 text-[10px] uppercase tracking-wider">grace</span>
+          )}
+        </span>
+      ) : (
+        <span className="text-neutral-600">—</span>
+      ),
+  },
+  {
+    key: 'active_until',
+    label: 'Истекает',
+    align: 'left',
+    className: 'text-neutral-400 text-xs',
+    render: c => fmtDate(c.active_until),
+  },
+  {
+    key: 'last_purchase',
+    label: 'Last buy',
+    align: 'left',
+    className: 'text-neutral-500 text-xs',
+    render: c => fmtDate(c.last_purchase),
+  },
+]
