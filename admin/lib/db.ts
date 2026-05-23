@@ -1267,3 +1267,247 @@ export function paymentDetail(subId: number): {
   return { row, charges }
 }
 
+// ─── Track C: tickets ────────────────────────────────────────────────────────
+// Inbox-style sorting, SLA badge и inline user-context для страницы /tickets.
+//
+// support_tickets.created_at — единственный таймштамп на тикете (нет
+// last_message_at / last_admin_reply_at колонок). Для SLA-логики опираемся на
+// audit_log: каждая отправка ответа админом пишет строку с
+//   action='ticket_reply', target='ticket:{id}'
+// (см. bot/services/webapp_api.py::handle_admin_ticket_reply).
+//
+// Из этого вычисляем last_admin_reply_at — MAX(audit_log.created_at) по
+// target='ticket:N'. Если NULL → админ ещё не отвечал (unread dot в UI).
+
+export type TicketInboxRow = {
+  id: number
+  user_id: number
+  category: string
+  message: string
+  status: string
+  created_at: string
+  admin_msg_id: number | null
+  username: string | null
+  first_name: string | null
+  last_admin_reply_at: string | null
+  // sort_at = COALESCE(last_admin_reply_at, created_at). last_message_at-style
+  // прокси — последняя «активность» по тикету.
+  sort_at: string
+  // 1 → последнее «событие» это user message и админ ещё не отвечал
+  // (показываем unread dot в списке).
+  unread: 0 | 1
+}
+
+export function ticketsInbox(opts: {
+  status?: 'open' | 'closed' | 'all'
+  category?: string
+  limit?: number
+} = {}): TicketInboxRow[] {
+  const { status = 'open', category, limit = 200 } = opts
+  const where: string[] = ['1=1']
+  const params: unknown[] = []
+
+  if (status === 'open' || status === 'closed') {
+    where.push('t.status = ?')
+    params.push(status)
+  }
+  if (category) {
+    where.push('t.category = ?')
+    params.push(category)
+  }
+
+  // LEFT JOIN на агрегированный audit_log по target='ticket:N'. Используем
+  // подзапрос — индекс idx_audit_action хорошо отсекает action='ticket_reply',
+  // а target-фильтр работает по строковому ключу. Альтернатива (GROUP BY на
+  // audit_log с JOIN) — медленнее на росте audit_log.
+  const sql = `
+    SELECT t.id, t.category, t.message, t.status, t.created_at, t.admin_msg_id,
+           u.username, u.first_name, u.id as user_id,
+           (SELECT MAX(a.created_at) FROM audit_log a
+             WHERE a.action='ticket_reply' AND a.target = 'ticket:' || t.id
+           ) as last_admin_reply_at
+    FROM support_tickets t
+    JOIN users u ON u.id = t.user_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY COALESCE(
+      (SELECT MAX(a.created_at) FROM audit_log a
+         WHERE a.action='ticket_reply' AND a.target = 'ticket:' || t.id),
+      t.created_at
+    ) DESC
+    LIMIT ?
+  `
+  params.push(limit)
+  const rows = db().prepare(sql).all(...params) as Array<{
+    id: number; category: string; message: string; status: string;
+    created_at: string; admin_msg_id: number | null;
+    username: string | null; first_name: string | null; user_id: number;
+    last_admin_reply_at: string | null;
+  }>
+
+  return rows.map(r => ({
+    ...r,
+    sort_at: r.last_admin_reply_at ?? r.created_at,
+    // unread = open + админ ещё не отвечал. Без ticket_messages таблицы
+    // более точного сигнала нет — пока админ молчит, последняя активность
+    // тикета это user-сообщение.
+    unread: (r.status === 'open' && !r.last_admin_reply_at) ? 1 : 0,
+  }))
+}
+
+/**
+ * Single-ticket fetch — для detail-view. Возвращает тикет + last_admin_reply_at,
+ * либо null если id невалиден / не найден.
+ */
+export function ticketById(id: number): TicketInboxRow | null {
+  if (!Number.isFinite(id)) return null
+  const row = db().prepare(`
+    SELECT t.id, t.category, t.message, t.status, t.created_at, t.admin_msg_id,
+           u.username, u.first_name, u.id as user_id,
+           (SELECT MAX(a.created_at) FROM audit_log a
+             WHERE a.action='ticket_reply' AND a.target = 'ticket:' || t.id
+           ) as last_admin_reply_at
+    FROM support_tickets t
+    JOIN users u ON u.id = t.user_id
+    WHERE t.id = ?
+    LIMIT 1
+  `).get(id) as {
+    id: number; category: string; message: string; status: string;
+    created_at: string; admin_msg_id: number | null;
+    username: string | null; first_name: string | null; user_id: number;
+    last_admin_reply_at: string | null;
+  } | undefined
+  if (!row) return null
+  return {
+    ...row,
+    sort_at: row.last_admin_reply_at ?? row.created_at,
+    unread: (row.status === 'open' && !row.last_admin_reply_at) ? 1 : 0,
+  }
+}
+
+/**
+ * SLA breach count для badge в навбаре. «Просроченный» тикет:
+ *   - status='open'
+ *   - админ ещё НЕ отвечал (audit_log пуст по этому ticket_id)
+ *   - с момента создания тикета прошло > 2 часов
+ *
+ * Если у тикета есть admin reply — он уже не breach (юзер мог снова написать,
+ * но без message-stream таблицы мы это не отследим; сознательно занижаем
+ * counter чтобы не паниковать без оснований).
+ */
+export function slaBreachCount(): number {
+  const row = db().prepare(`
+    SELECT COUNT(*) as n
+    FROM support_tickets t
+    WHERE t.status = 'open'
+      AND datetime(t.created_at) < datetime('now', '-2 hours')
+      AND NOT EXISTS (
+        SELECT 1 FROM audit_log a
+        WHERE a.action = 'ticket_reply' AND a.target = 'ticket:' || t.id
+      )
+  `).get() as { n: number }
+  return row.n
+}
+
+/**
+ * Список уникальных категорий из open-тикетов — для фильтра в /tickets UI.
+ */
+export function ticketCategoriesOpen(): Array<{ category: string; count: number }> {
+  return db().prepare(`
+    SELECT category, COUNT(*) as count
+    FROM support_tickets
+    WHERE status='open'
+    GROUP BY category
+    ORDER BY count DESC
+  `).all() as Array<{ category: string; count: number }>
+}
+
+export type UserContextPayload = {
+  profile: {
+    id: number
+    username: string | null
+    first_name: string | null
+    created_at: string
+    referred_by: number | null
+    traffic_source: string | null
+  } | null
+  subscription: {
+    plan: string
+    status: string
+    expires_at: string | null
+    grace_until: string | null
+  } | null
+  recentPayments: Array<{
+    id: number
+    plan: string
+    method: string
+    stars_paid: number
+    amount_rub: number
+    status: string
+    refunded_at: string | null
+    created_at: string
+  }>
+  ban: {
+    is_banned: number
+    banned_at: string | null
+    banned_reason: string | null
+  } | null
+}
+
+/**
+ * Данные для inline UserContextPanel в detail-view тикета. 4 запроса в одну
+ * функцию — sub, top-3 payments, ban-status, profile/referral. Чтобы админ
+ * не уходил на /clients/[id] ради «кто это».
+ */
+export function userContextForTicket(userId: number): UserContextPayload {
+  const d = db()
+  const profile = d.prepare(`
+    SELECT id, username, first_name, created_at, referred_by, traffic_source
+    FROM users WHERE id = ?
+  `).get(userId) as UserContextPayload['profile'] | undefined
+
+  // Подписка: текущая active/grace; если их нет — последняя по created_at,
+  // чтобы хотя бы понимать «когда юзер последний раз платил».
+  const subActive = d.prepare(`
+    SELECT plan, status, expires_at, grace_until
+    FROM subscriptions
+    WHERE user_id = ? AND status IN ('active','grace')
+    ORDER BY expires_at DESC LIMIT 1
+  `).get(userId) as UserContextPayload['subscription'] | undefined
+
+  const subFallback = subActive ? null : d.prepare(`
+    SELECT plan, status, expires_at, grace_until
+    FROM subscriptions
+    WHERE user_id = ?
+    ORDER BY created_at DESC LIMIT 1
+  `).get(userId) as UserContextPayload['subscription'] | undefined
+
+  const recentPayments = d.prepare(`
+    SELECT s.id, s.plan, s.stars_paid, s.amount_rub, s.status, s.refunded_at,
+           s.created_at,
+           COALESCE(s.payment_provider,
+                    CASE
+                      WHEN s.payment_id LIKE 'crypto_%'      THEN 'cryptobot'
+                      WHEN s.payment_id LIKE 'oxapay_%'      THEN 'oxapay'
+                      WHEN s.payment_id LIKE 'lavatop_%'     THEN 'lavatop'
+                      WHEN s.payment_id LIKE 'admin_grant_%' THEN 'gift'
+                      WHEN s.payment_id LIKE 'trial_%'       THEN 'trial'
+                      WHEN s.payment_id LIKE 'free_%'        THEN 'free'
+                      ELSE 'stars'
+                    END) as method
+    FROM subscriptions s
+    WHERE s.user_id = ?
+    ORDER BY s.created_at DESC LIMIT 3
+  `).all(userId) as UserContextPayload['recentPayments']
+
+  const ban = d.prepare(`
+    SELECT is_banned, banned_at, banned_reason
+    FROM users WHERE id = ?
+  `).get(userId) as UserContextPayload['ban'] | undefined
+
+  return {
+    profile: profile ?? null,
+    subscription: subActive ?? subFallback ?? null,
+    recentPayments,
+    ban: ban ?? null,
+  }
+}

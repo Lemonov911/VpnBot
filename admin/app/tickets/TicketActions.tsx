@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import TicketTemplates from '../_components/TicketTemplates'
 
 /**
  * Reply form для тикета. Шлёт текст в bot REST, бот отправляет юзеру в чат
@@ -101,7 +102,13 @@ export default function TicketActions({ ticketId, userId }: { ticketId: number; 
           <input type="checkbox" checked={close} onChange={e => setClose(e.target.checked)} />
           Закрыть после отправки
         </label>
-        <span className="text-neutral-600">{text.length} / 4000</span>
+        <div className="flex items-center gap-2">
+          <span className="text-neutral-600">{text.length} / 4000</span>
+          {/* Дропдаун шаблонов — подставляет в textarea, можно дописать
+              перед отправкой. Текст подменяется ПОЛНОСТЬЮ, не append'ится,
+              чтобы не плодить мешанину если админ кликнул случайно. */}
+          <TicketTemplates onPick={body => setText(body)} />
+        </div>
       </div>
       {err && <div className="text-xs text-rose-400">⚠ {err}</div>}
       <div className="flex gap-2">
