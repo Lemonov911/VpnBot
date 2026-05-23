@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Table, type Column } from '../_components/ui'
 
 const API = '/admin/api'
 
@@ -75,6 +76,11 @@ export default function GrantForm({ adminId }: { adminId: number }) {
     } catch {/* ignore */}
   }
 
+  // Mount-time fetch последних 50 grant'ов. React-19 compiler рекомендует
+  // Server Component / SWR вместо useEffect+setState, но GrantForm — client-side
+  // форма (нужен useState для полей + result), и список перезагружается из
+  // event handler после onSubmit. Рефактор out of scope для lint cleanup.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadGrants() }, [])
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -233,57 +239,84 @@ export default function GrantForm({ adminId }: { adminId: number }) {
       <div>
         <h2 className="text-sm font-semibold text-neutral-300 mb-3">Последние 50 выдач</h2>
         <div className="bg-neutral-900 border border-neutral-800 rounded-lg overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-neutral-950 text-neutral-500">
-              <tr>
-                <th className="text-left px-3 py-2 font-medium">Когда</th>
-                <th className="text-left px-3 py-2 font-medium">Кому</th>
-                <th className="text-left px-3 py-2 font-medium">Тариф</th>
-                <th className="text-left px-3 py-2 font-medium">До</th>
-                <th className="text-left px-3 py-2 font-medium">Статус</th>
-                <th className="text-left px-3 py-2 font-medium">Выдал admin</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grants.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-6 text-center text-neutral-600">Пока нет выдач</td></tr>
-              )}
-              {grants.map(g => (
-                <tr key={g.id} className="border-t border-neutral-800/60">
-                  <td className="px-3 py-2 text-neutral-400">{fmt(g.created_at)}</td>
-                  <td className="px-3 py-2">
-                    <div className="font-mono text-neutral-300">{g.user_id}</div>
-                    {g.user_username && (
-                      <a
-                        href={`https://t.me/${g.user_username}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sky-400 hover:underline"
-                      >
-                        @{g.user_username}
-                      </a>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-neutral-300">{g.sub_plan ?? '—'}</td>
-                  <td className="px-3 py-2 text-neutral-400">{fmt(g.sub_expires_at)}</td>
-                  <td className="px-3 py-2">
-                    {g.sub_status === 'active' ? (
-                      <span className="text-emerald-400">● active</span>
-                    ) : g.sub_status === 'grace' ? (
-                      <span className="text-amber-400">● grace</span>
-                    ) : g.sub_status === 'expired' ? (
-                      <span className="text-neutral-500">● expired</span>
-                    ) : (
-                      <span className="text-neutral-600">{g.sub_status ?? '—'}</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-neutral-400">{g.granted_by_admin_id ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <Table<Grant>
+            rows={grants}
+            rowKey={g => g.id}
+            emptyText="Пока нет выдач"
+            columns={grantsColumns}
+          />
         </div>
       </div>
     </div>
   )
 }
+
+// Колонки таблицы «Последние 50 выдач».
+// Перевод с ad-hoc <table> на shared <Table> (track G).  Колонки 1:1 с прежней
+// разметкой — изменилось только то что даёт сам Table: hover, divide-y, paddings
+// унифицированы с другими страницами админки (clients/payments/tickets).
+const grantsColumns: Column<Grant>[] = [
+  {
+    key: 'created_at',
+    label: 'Когда',
+    align: 'left',
+    className: 'text-neutral-400 text-xs whitespace-nowrap',
+    render: g => fmt(g.created_at),
+  },
+  {
+    key: 'user',
+    label: 'Кому',
+    align: 'left',
+    render: g => (
+      <>
+        <div className="font-mono text-neutral-300">{g.user_id}</div>
+        {g.user_username && (
+          <a
+            href={`https://t.me/${g.user_username}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sky-400 hover:underline"
+          >
+            @{g.user_username}
+          </a>
+        )}
+      </>
+    ),
+  },
+  {
+    key: 'plan',
+    label: 'Тариф',
+    align: 'left',
+    className: 'text-neutral-300',
+    render: g => g.sub_plan ?? '—',
+  },
+  {
+    key: 'expires_at',
+    label: 'До',
+    align: 'left',
+    className: 'text-neutral-400 text-xs whitespace-nowrap',
+    render: g => fmt(g.sub_expires_at),
+  },
+  {
+    key: 'status',
+    label: 'Статус',
+    align: 'left',
+    render: g =>
+      g.sub_status === 'active' ? (
+        <span className="text-emerald-400">● active</span>
+      ) : g.sub_status === 'grace' ? (
+        <span className="text-amber-400">● grace</span>
+      ) : g.sub_status === 'expired' ? (
+        <span className="text-neutral-500">● expired</span>
+      ) : (
+        <span className="text-neutral-600">{g.sub_status ?? '—'}</span>
+      ),
+  },
+  {
+    key: 'granted_by',
+    label: 'Выдал admin',
+    align: 'left',
+    className: 'font-mono text-neutral-400',
+    render: g => g.granted_by_admin_id ?? '—',
+  },
+]
