@@ -177,13 +177,12 @@ export default function PaymentSheet({
             {' · '}{plan.vless} VLESS
             {plan.wg ? ` · ${plan.wg} WireGuard` : ''}
           </div>
-          {/* Лимит трафика и throttle — показываем явно, иначе юзер ловит
-              throttle на 500 ГБ и винит сервис (UX agent finding #2). */}
-          <div className="text-[11px] text-[var(--tg-theme-hint-color,#707579)] mt-1.5">
-            {t('pay_fair_use')
-              .replace('{cap}', String(plan.softCapGb))
-              .replace('{throttle}', String(plan.throttleMbps))}
-          </div>
+          {/* Лимит трафика раньше показывался явно («Лимит 1000 ГБ/мес, после
+              снижение до 15 Мбит/с»). Олег feedback 23.05: убираем из PaymentSheet
+              — на этапе покупки это шум, цифра 1000 ГБ всё равно выше реального
+              потребления у 99% юзеров. Если нужно — деталь есть в Plans-странице
+              и в /vpn/instructions. i18n-ключ pay_fair_use оставлен на случай
+              возвращения. */}
           {/* Trial warning — у юзера активный триал, после покупки он
               закроется без переноса остатка дней. Чтобы юзер не остался в
               шоке «потерял 4 бесплатных дня». */}
