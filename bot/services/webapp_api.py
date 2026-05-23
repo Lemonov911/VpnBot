@@ -1222,6 +1222,19 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
     if invoice.get("status") != "paid":
         logger.info("CryptoBot webhook: invoice status not 'paid': %r", invoice.get("status"))
         return web.Response(status=200)
+
+    # Audit 2026-05-23 M3: validate invoice_id ДО формирования payment_id.
+    # Без guard'а malformed body без поля `invoice_id` (signature валидный →
+    # либо CryptoBot bug, либо signing-key compromise) даст payment_id =
+    # "crypto_None" — это валидный tx_id для UNIQUE-индекса, и handler
+    # пошёл бы дальше создавать sub с бессмысленным payment_id. Реальный
+    # CryptoBot всегда шлёт invoice_id, но защиты не было.
+    if not invoice.get("invoice_id"):
+        logger.warning(
+            "CryptoBot webhook: missing invoice_id in paid invoice body — refusing"
+        )
+        return web.Response(status=400)
+
     raw_payload = invoice.get("payload", "")
     payment_id  = f"crypto_{invoice.get('invoice_id')}"
     logger.debug("CryptoBot payment: invoice_id=%s payload=%r",

@@ -1187,6 +1187,25 @@ async def _apply_plan_upgrade(message: Message, payment):
         sub = await get_subscription_by_id(sub_id) or sub
         old_plan_key = sub["plan"]
 
+        # Audit 2026-05-23 M1: второй guard ПОД ЛОКОМ + sentinel-row перед
+        # side-effects. Без этого Telegram-retry с тем же charge_id мог пройти
+        # outer-guard (~line 1120, до лока) и **оба** event'а попадали в
+        # очередь к локу. Они сериализовались, но второй цикл всё равно делал
+        # user/admin send_message'и и attempted unthrottle. UNIQUE на tx_id
+        # в финальном record_payment catch'ал дубль-insert, но не side-effects.
+        # Зеркало паттерна fcfe3ee/bfaab08 (CryptoBot/Stars cross-method dedup).
+        if await _is_recorded(payment_id):
+            logger.warning(
+                "_apply_plan_upgrade: duplicate Stars charge %s under lock, skipping",
+                payment_id,
+            )
+            return
+        # Sentinel-row сразу — второй retry ждущий на локе увидит recorded и выйдет.
+        await record_payment(
+            user_id=user_id, subscription_id=sub_id,
+            method="stars", tx_id=payment_id, stars=payment.total_amount,
+        )
+
         if expected_from is not None and sub["plan"] != expected_from:
             # User уже двинулся с expected_from на другой план — этот платёж
             # относится к устаревшему состоянию. Алертим админа на ручной refund.
@@ -1382,17 +1401,10 @@ async def _apply_plan_upgrade(message: Message, payment):
         parts_desc.append(f"{plan['wg_slots']} WireGuard")
     slots_desc = " + ".join(parts_desc) or "0"
 
-    # PS1: gate-row для idempotency guard. UNIQUE на tx_id защитит от двойного
-    # запуска при Telegram retry. Если уже записан — record_payment вернёт False,
-    # но мы дошли до сюда только если was_recorded=False в начале, так что
-    # это безопасно.
-    await record_payment(
-        user_id=user_id,
-        subscription_id=sub_id,
-        method="stars",
-        stars=payment.total_amount,
-        tx_id=payment_id,
-    )
+    # Sentinel record_payment был записан под `_sub_lifecycle_lock` сразу
+    # после второго guard'а (Audit 2026-05-23 M1, ~30 строк выше). Здесь
+    # больше не нужно — UNIQUE на tx_id всё равно отбил бы повтор, но
+    # явный дубль-INSERT — code smell.
 
     from services.database import get_user_lang as _get_user_lang_up
     from services.i18n_bot import t as _i18n_t_up
