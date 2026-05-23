@@ -1,7 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
-import { NextRequest } from 'next/server'
 
 const BOT_TOKEN   = process.env.BOT_TOKEN!
 
@@ -71,7 +70,11 @@ export async function getSession(): Promise<{ userId: number; username: string }
   }
 }
 
-export async function requireSession(req?: NextRequest) {
+// Cookies читаются через next/headers, NextRequest как аргумент не нужен.
+// Раньше принимал `req?: NextRequest` для совместимости с Edge middleware, но
+// все вызывающие сайты делают `await requireSession()` без аргумента (grep по
+// репо подтверждает) — параметр удалён, no-unused-vars warning ушёл.
+export async function requireSession() {
   const session = await getSession()
   if (!session) return null
   if (!isAdmin(session.userId)) return null

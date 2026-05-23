@@ -63,6 +63,13 @@ export default function AttributionPage() {
     setLoading(false)
   }
 
+  // Refetch при смене period (7/30/90/всё). React-19 compiler ругается на
+  // setState внутри effect, но это легитимная external-data синхронизация
+  // (fetch к /admin/api/attribution). Рефактор на Server Component сломал бы
+  // client-side period switcher без round-trip навигации.
+  // exhaustive-deps: load замыкает router из useRouter() и не меняется между
+  // рендерами по существу — оборачивать в useCallback ради линтера = шум.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { load(period) }, [period])
 
   // Нормализуем имя кампании на лету: lowercase, только [a-z0-9_-], max 60

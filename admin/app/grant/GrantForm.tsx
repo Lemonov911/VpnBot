@@ -226,7 +226,7 @@ export default function GrantForm({ adminId }: { adminId: number }) {
                 ✅ <b>{result.action === 'extended' ? 'Подписка продлена' : 'Подписка создана'}</b>
                 {' '}— sub #{result.subscription_id}, до {fmt(result.expires_at)}
                 {result.notified === false && (
-                  <span className="text-neutral-500"> (юзер ещё не /start'нул — увидит при первом запуске)</span>
+                  <span className="text-neutral-500"> (юзер ещё не /start&apos;нул — увидит при первом запуске)</span>
                 )}
               </>
             ) : (

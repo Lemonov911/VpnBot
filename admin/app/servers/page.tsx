@@ -39,6 +39,14 @@ export default function ServersPage() {
     setLoading(false)
   }
 
+  // Mount-time fetch: load() — async, ставит servers/loading через setState.
+  // React-19 compiler ругается на set-state-in-effect (рекомендует Server
+  // Components / SWR), но эта страница — full client-side admin UI с polling
+  // через ручные load() в action handlers. Рефактор на Server Component требует
+  // переписать все мутации — out of scope для lint cleanup.
+  // exhaustive-deps: load зависит от router, оборачивать в useCallback и
+  // добавлять в deps = переsetup эффекта при каждом рендере → дубль-запрос.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
 
   async function addServer(e: React.FormEvent) {
@@ -109,7 +117,7 @@ export default function ServersPage() {
   const [confirmMigrate, setConfirmMigrate] = useState<number | null>(null)
   const [migrating, setMigrating] = useState<number | null>(null)
 
-  async function migrateConfigs(id: number, name: string) {
+  async function migrateConfigs(id: number) {
     if (confirmMigrate !== id) {
       setConfirmMigrate(id)
       setTimeout(() => setConfirmMigrate(c => c === id ? null : c), 5000)
@@ -334,7 +342,7 @@ export default function ServersPage() {
                         Включить
                       </button>
                       <button
-                        onClick={() => migrateConfigs(s.id, s.name)}
+                        onClick={() => migrateConfigs(s.id)}
                         disabled={migrating !== null}
                         className={`text-xs px-2 py-1 rounded-md transition-colors disabled:opacity-50 ${
                           confirmMigrate === s.id
