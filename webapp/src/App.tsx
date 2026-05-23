@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { LanguageProvider, useT } from './i18n'
+import { setNetworkAlertMessage } from './api'
 import BottomNav from './components/BottomNav'
 import LangSwitch from './components/LangSwitch'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -24,6 +25,12 @@ function GlobalHeader() {
   const t    = useT()
   const { pathname } = useLocation()
 
+  // W1 #3: подкидываем актуальный перевод network-alert в api/index.ts.
+  // Локаль может смениться в рантайме через LangSwitch — useEffect отлавливает.
+  useEffect(() => {
+    setNetworkAlertMessage(t('bot_err_network'))
+  }, [t])
+
   const info: Record<string, { title: string; sub: string }> = {
     '/':             { title: t('home_hero_title'),  sub: t('home_hero_sub').split('\n')[0] },
     '/vpn':          { title: t('nav_vpn'),          sub: t('vpn_sub') },
@@ -35,8 +42,8 @@ function GlobalHeader() {
     '/esim/faq':     { title: 'FAQ', sub: '' },
     '/support':      { title: t('support_title'),    sub: t('support_sub') },
     '/referral':     { title: t('ref_title'),        sub: t('ref_sub') },
-    '/status':             { title: 'Статус сервисов',     sub: '' },
-    '/status/incidents':   { title: 'История инцидентов',   sub: '' },
+    '/status':             { title: t('status_page_title'),     sub: '' },
+    '/status/incidents':   { title: t('status_incidents_title'), sub: '' },
   }
 
   const page = info[pathname] ?? info['/']
@@ -137,7 +144,12 @@ export default function App() {
 
           {/* eSIM — отключаемы через VITE_SHOW_ESIM=false. Без guard'а
               юзер мог вручную ввести /esim в URL и попасть на мёртвый
-              функционал (API endpoints тоже guarded на бэкенде). */}
+              функционал (API endpoints тоже guarded на бэкенде).
+              TODO (audit W1 #12): миграция на runtime-флаг через
+              getFeatures() из api/index.ts (`/api/health` уже отдаёт
+              `features.esim`, бэк-эндпоинт существует). Сейчас оставлено
+              import-time, т.к. при выключении надо пересобирать webapp,
+              и change-rate этого флага близкий к нулю. */}
           {import.meta.env.VITE_SHOW_ESIM !== 'false' && <>
             <Route path="/esim"         element={<ESim />} />
             <Route path="/esim/my"      element={<MyESims />} />

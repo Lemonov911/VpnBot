@@ -521,6 +521,12 @@ const T = {
     plans_gated_btn:      'Открыть бота →',
 
     // Status page
+    // W1 #1: hardcoded RU «Статус сервисов» / «История инцидентов» в App.tsx
+    // → useT(). EN-юзер видел русский в global header при заходе на /status.
+    status_page_title:    'Статус сервисов',
+    status_incidents_title:'История инцидентов',
+    // W1 #3: unified error для 5xx/timeout в api/index.ts (showAlert).
+    bot_err_network:      'Не удалось связаться с сервером. Проверь интернет и попробуй ещё раз.',
     status_all_ok:        'Все системы работают',
     status_partial:       'Частичный простой',
     status_up_count:      'сервисов в строю',
@@ -1089,6 +1095,9 @@ const T = {
     plans_gated_btn:      'Open the bot →',
 
     // Status page
+    status_page_title:    'Service Status',
+    status_incidents_title:'Incident History',
+    bot_err_network:      'Could not reach the server. Check your connection and try again.',
     status_all_ok:        'All systems operational',
     status_partial:       'Partial outage',
     status_up_count:      'services up',

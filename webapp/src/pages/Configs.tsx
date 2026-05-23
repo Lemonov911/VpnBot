@@ -78,7 +78,11 @@ function QrModal({ url, protocol, onClose }: { url: string; protocol?: string; o
   return (
     <>
       <div onClick={onClose} className="fixed inset-0 bg-black/65 z-[200]" />
-      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] px-6 pt-5 pb-10 z-[201] text-center">
+      {/* W1 #2: fallback был `#1c1c1e` (dark) — на light iOS-теме (когда
+          --tg-theme-bg-color не задан, FF не подставляется) QR-карточка
+          сливалась с белым фоном до невидимости. `secondary_bg_color`
+          адаптивен в обе стороны (light = #f1f1f1, dark = #1c1c1e). */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-secondary-bg-color,#f7f7f8)] rounded-t-[20px] px-6 pt-5 pb-10 z-[201] text-center">
         <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
         <div className="font-bold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">
           {t(titleKey as never)}
@@ -120,7 +124,9 @@ function ServerPicker({
     <>
       <div onClick={onClose} className="fixed inset-0 bg-black/50 z-[200]" />
 
-      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#1c1c1e)] rounded-t-[20px] pt-5 px-4 pb-9 z-[201]">
+      {/* W1 #2b: тот же fix что и в QrModal — `#1c1c1e` dark fallback
+          ломал light iOS-тему. Используем `secondary_bg_color` (адаптивен). */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-secondary-bg-color,#f7f7f8)] rounded-t-[20px] pt-5 px-4 pb-9 z-[201]">
         <div className="w-9 h-1 rounded-sm bg-[var(--tg-theme-hint-color,#888)] opacity-40 mx-auto mb-5" />
 
         <h3 className="m-0 mb-1.5 text-[17px] font-semibold text-[var(--tg-theme-text-color)]">

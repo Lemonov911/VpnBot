@@ -51,8 +51,87 @@ function handle401(): void {
   }
 }
 
+// W1 #3: unified network-error alert. Дебаунсим повторные алерты в течение
+// 5s — без этого визитный шторм (3 параллельных GET при заходе на /vpn) даёт
+// 3 одинаковых popup'а подряд, юзер залипает кликая «OK».
+// i18n-строка читается лениво через закладку (нельзя дёргать useT() вне React),
+// дефолт — RU чтобы не падать если не успели прокинуть.
+let lastNetworkAlertAt = 0
+let networkAlertMessage = 'Не удалось связаться с сервером. Проверь интернет и попробуй ещё раз.'
+
+export function setNetworkAlertMessage(msg: string): void {
+  // Вызывается из App.tsx после mount LanguageProvider — даёт правильную
+  // локаль. Не критично если не вызвано: дефолт-RU работает на 95% юзеров.
+  networkAlertMessage = msg
+}
+
+function showNetworkAlert(): void {
+  const now = Date.now()
+  if (now - lastNetworkAlertAt < 5000) return
+  lastNetworkAlertAt = now
+  try {
+    WebApp.showAlert(networkAlertMessage)
+  } catch {
+    // Outside TG context (dev/preview) — fall back to console so dev сразу видит.
+    // eslint-disable-next-line no-console
+    console.warn('[api] network error alert:', networkAlertMessage)
+  }
+}
+
+/**
+ * W1 #3: универсальный wrapper над fetch. Делает:
+ *  • 429 backoff (1s/2s/4s, 3 попытки) — раньше работало только в
+ *    getActiveSubscription(), остальные эндпоинты получали голый throw.
+ *  • 5xx + network/timeout — surfacing через WebApp.showAlert (raise visibility
+ *    что что-то сломалось, иначе UI просто застывает в loading).
+ *  • 401 → handle401() (без изменений).
+ *  • 404 → silent throw (legit «не найдено», caller сам решает что делать).
+ *  • Caller всегда получает throw'нутое исключение — никаких silent null.
+ */
+async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  const backoffs = [1000, 2000, 4000]
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= backoffs.length; attempt++) {
+    try {
+      const res = await fetch(url, init)
+      // 429 — backoff и retry. Если все 3 попытки исчерпаны, бросаем
+      // sentinel чтобы caller (например getActiveSubscription) мог сохранить
+      // последний-known state вместо «нет подписки» flicker.
+      if (res.status === 429) {
+        if (attempt < backoffs.length) {
+          await new Promise(r => setTimeout(r, backoffs[attempt]))
+          continue
+        }
+        throw new Error('rate_limit')
+      }
+      // 5xx — backend упал. Surface alert + бросаем чтобы caller не дёргал
+      // .json() в null-state.
+      if (res.status >= 500) {
+        showNetworkAlert()
+        throw new Error(`HTTP ${res.status}`)
+      }
+      return res
+    } catch (e) {
+      // fetch отбросил (network error, AbortError, CORS, timeout). Браузер
+      // не даёт status — мы видим только TypeError 'Failed to fetch'.
+      // Не ретраем — повторные тайм-ауты только удлиняют ожидание; surface
+      // alert и пробрасываем чтобы спиннеры пропали.
+      lastErr = e
+      // rate_limit / HTTP 5xx из throws выше — не маскируем, перебрасываем как есть.
+      if (e instanceof Error && (e.message === 'rate_limit' || e.message.startsWith('HTTP 5'))) {
+        throw e
+      }
+      // Реальная network ошибка — alert юзеру.
+      showNetworkAlert()
+      throw e instanceof Error ? e : new Error('network')
+    }
+  }
+  // Недостижимо (loop либо return'ит либо throw'ит), но TS требует.
+  throw lastErr instanceof Error ? lastErr : new Error('rate_limit')
+}
+
 async function post<T>(path: string, body: object): Promise<T> {
-  const res = await fetch(API_BASE + path, {
+  const res = await fetchWithRetry(API_BASE + path, {
     method: 'POST',
     headers: authHeaders(),
     // init_data в теле — для backward compatibility
@@ -74,16 +153,10 @@ async function post<T>(path: string, body: object): Promise<T> {
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin)
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
-  const res = await fetch(url.toString(), { headers: authHeaders() })
+  const res = await fetchWithRetry(url.toString(), { headers: authHeaders() })
   if (res.status === 401) {
     handle401()
     throw new Error('session_expired')
-  }
-  // MD-F-r2: 429 = transient backend rate-limit (visibility refresh storm,
-  // admin panel parallel load). Throw a stable sentinel so callers can
-  // preserve cached UI state instead of flipping to a "no sub" view.
-  if (res.status === 429) {
-    throw new Error('rate_limit')
   }
   let data: Record<string, unknown>
   try { data = await res.json() } catch { throw new Error(`HTTP ${res.status}`) }
@@ -262,19 +335,12 @@ export function cancelLavatopRenewal(): Promise<{
 }
 
 export async function getActiveSubscription(): Promise<Subscription | null> {
-  // Auto-retry once on 429. BottomNav tab-switch (Home → VPN → Home within
-  // <1s) triggers backend per-user rate-limit. visibilitychange doesn't
-  // fire on in-app SPA nav, so the skeleton state would otherwise stick.
-  // 400ms covers the 250ms backend window with margin.
-  try {
-    return await get('/api/vpn/subscription')
-  } catch (e) {
-    if (e instanceof Error && e.message === 'rate_limit') {
-      await new Promise(r => setTimeout(r, 400))
-      return await get('/api/vpn/subscription')
-    }
-    throw e
-  }
+  // W1 #3: 429 retry теперь в общем fetchWithRetry (3 попытки: 1s/2s/4s).
+  // Раньше тут был локальный retry с 400ms — слишком короткий для реальных
+  // rate-limit окон (бэк держит 250ms-1s в зависимости от endpoint'а).
+  // Если все попытки исчерпаны и пришёл `rate_limit` sentinel — caller
+  // (Configs/VPN page) ловит throw и сохраняет последний-known state.
+  return get('/api/vpn/subscription')
 }
 
 export function changeSubscriptionPlan(planKey: string): Promise<{
