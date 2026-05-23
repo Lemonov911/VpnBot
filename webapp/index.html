@@ -18,6 +18,31 @@
 
     <link rel="icon" type="image/png" href="/logo.png" />
 
+    <script>
+      // SPA-restore (контрагент webapp/public/404.html): GH Pages 404 →
+      // 404.html переписывает путь в `?/<path>`, мы тут разворачиваем
+      // его обратно через history.replaceState ДО загрузки React, чтобы
+      // BrowserRouter увидел правильный pathname на mount. Без этого
+      // любой deep-link на GH Pages ломал маршрутизацию.
+      // Снимок алгоритма из rafgraph/spa-github-pages (MIT).
+      (function () {
+        var l = window.location;
+        if (l.search && l.search.indexOf("?/") === 0) {
+          var decoded = l.search.slice(2).split("&").map(function (s) {
+            return s.replace(/~and~/g, "&");
+          });
+          var newPath = decoded[0];
+          var remainingQuery = decoded.slice(1).join("&");
+          history.replaceState(
+            null, null,
+            l.pathname.slice(0, -1) + "/" + newPath +
+            (remainingQuery ? "?" + remainingQuery : "") +
+            l.hash
+          );
+        }
+      })();
+    </script>
+
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
