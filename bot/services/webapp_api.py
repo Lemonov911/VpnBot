@@ -4013,6 +4013,8 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
     # и вызываем provision_vpn_slots_async — он создаст свежие slots по
     # плану и сразу провизионит пиров на best-server. Если agent down —
     # sub остаётся active, ошибки в логах, юзер может руками retry в Mini App.
+    reactivate_delivered = 0
+    reactivate_total = 0
     if action == "reactivated":
         try:
             from services.database import delete_empty_configs_for_sub
@@ -4031,12 +4033,12 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
                         sub_id_re, ce, exc_info=True,
                     )
                 bot_re: Bot = request.app["bot"]
-                delivered_re, total_re = await provision_vpn_slots_async(
+                reactivate_delivered, reactivate_total = await provision_vpn_slots_async(
                     bot_re, user["id"], sub_id_re, plan_re, plan_key_re,
                 )
                 logger.info(
                     "referral reactivate sub #%d: provisioned %d/%d peers",
-                    sub_id_re, delivered_re, total_re,
+                    sub_id_re, reactivate_delivered, reactivate_total,
                 )
             else:
                 logger.warning(
@@ -4050,24 +4052,56 @@ async def handle_referral_redeem(request: web.Request) -> web.Response:
                 user["id"], result.get("sub_id"), e, exc_info=True,
             )
 
-    # Notify юзеру в чат бота
+    # Notify юзеру в чат бота. Для reactivated — полное сообщение с sub_url
+    # и Happ-кнопкой (как при обычной покупке), чтобы юзер сразу увидел
+    # как подключиться. Audit 2026-05-23 (Олег): «TG-уведомление с ссылкой
+    # Happ» — используем shared send_purchase_success_message с alt title_key,
+    # чтобы wording был «бонусные дни активированы», а не «спасибо за покупку».
     try:
         bot: Bot = request.app["bot"]
-        new_date = result["new_expires_at"][:10]
-        from services.database import get_user_lang as _gul_rb
-        from services.i18n_bot import t as _i18n_t_rb, day_word as _dw_rb
-        _lang_rb = await _gul_rb(user["id"]) or "ru"
-        _days_rb = result["days"]
-        await bot.send_message(
-            user["id"],
-            _i18n_t_rb(
-                _lang_rb, "bot_referral_bonus_activated",
-                days=_days_rb,
-                day_word=_dw_rb(_lang_rb, _days_rb),
-                until=new_date,
-            ),
-            parse_mode="HTML",
-        )
+        if action == "reactivated":
+            from handlers.vpn import send_purchase_success_message
+            from services.plans import VPN_PLANS as _vp_re
+            from datetime import datetime as _dt_re
+            _plan_re2 = _vp_re.get(result["plan"])
+            try:
+                _exp_re = _dt_re.fromisoformat(result["new_expires_at"].replace(" ", "T"))
+            except Exception:
+                _exp_re = None
+            if _plan_re2 and _exp_re:
+                await send_purchase_success_message(
+                    bot, user["id"], result["sub_id"], _plan_re2, result["plan"],
+                    _exp_re, reactivate_delivered, reactivate_total,
+                    title_key="bot_referral_reactivate_title",
+                )
+            else:
+                # Fallback на короткий месседж если plan/expires не парсятся
+                from services.database import get_user_lang as _gul_rb2
+                from services.i18n_bot import t as _i18n_t_rb2, day_word as _dw_rb2
+                _lang_rb2 = await _gul_rb2(user["id"]) or "ru"
+                await bot.send_message(
+                    user["id"],
+                    _i18n_t_rb2(_lang_rb2, "bot_referral_bonus_activated",
+                                days=result["days"],
+                                day_word=_dw_rb2(_lang_rb2, result["days"]),
+                                until=result["new_expires_at"][:10]),
+                    parse_mode="HTML",
+                )
+        else:
+            # extended: подписка уже была, sub_url не меняется → короткий notify
+            new_date = result["new_expires_at"][:10]
+            from services.database import get_user_lang as _gul_rb
+            from services.i18n_bot import t as _i18n_t_rb, day_word as _dw_rb
+            _lang_rb = await _gul_rb(user["id"]) or "ru"
+            _days_rb = result["days"]
+            await bot.send_message(
+                user["id"],
+                _i18n_t_rb(_lang_rb, "bot_referral_bonus_activated",
+                           days=_days_rb,
+                           day_word=_dw_rb(_lang_rb, _days_rb),
+                           until=new_date),
+                parse_mode="HTML",
+            )
     except Exception as e:
         logger.warning("referral redeem notify failed user=%d: %s", user["id"], e, exc_info=True)
 

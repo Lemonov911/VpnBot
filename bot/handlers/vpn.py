@@ -884,6 +884,7 @@ async def send_purchase_success_message(
     expires_at,
     delivered: int,
     total: int,
+    title_key: str | None = None,
 ) -> None:
     """Полный UX после оплаты: AWG-конфиги документами, Subscription URL +
     inline-кнопки. Shared между Stars `_deliver_vpn` и webhook-driven
@@ -891,6 +892,12 @@ async def send_purchase_success_message(
     использует `message.answer_document` через свой path — мы не трогаем
     его, чтобы не регрессить. Эта функция — для webhook путей, где у нас
     есть только Bot-объект, без `message`.
+
+    `title_key` (optional): альтернативный i18n-ключ для заголовка. Если
+    None → дефолтный `bot_purchase_success_title` («Спасибо за покупку…»).
+    Audit 2026-05-23: referral reactivate flow передаёт
+    `bot_referral_reactivate_title` чтобы wording не врал
+    («бонус активирован», а не «куплено»).
     """
     from services.database import (
         get_configs_for_subscription,
@@ -939,8 +946,9 @@ async def send_purchase_success_message(
             logger.warning("sub_token for user %d: %s", user_id, e)
 
     expiry_str = expires_at.strftime("%d.%m.%Y") if expires_at else ""
+    _resolved_title_key = title_key or "bot_purchase_success_title"
     msg_parts = [
-        _i18n_t(user_lang, "bot_purchase_success_title", plan=plan_display_name(plan, user_lang or "ru")),
+        _i18n_t(user_lang, _resolved_title_key, plan=plan_display_name(plan, user_lang or "ru")),
         "",
         _i18n_t(user_lang, "bot_purchase_success_until", until=expiry_str),
     ]
