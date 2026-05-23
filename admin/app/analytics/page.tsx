@@ -59,6 +59,7 @@ export default async function Analytics() {
       <GoalChart
         points={growth.points}
         goal={growth.goal}
+        subGoal={growth.subGoal}
         currentActive={activePaying}
         avgNew={growth.avgNewPerMonth}
       />

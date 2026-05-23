@@ -481,6 +481,10 @@ export function monitoringSnapshot() {
 // ── Goal progress ─────────────────────────────────────────────────────────────
 
 const GOAL = 1000
+// Промежуточная цель — точка устойчивых ~150к ₽/мес чистыми по базовой
+// модели (ARPU 350 × 0.9 net − 22 ₽ сервер − 60 ₽ CAC×churn = 233 ₽/user).
+// 500 = ~115к profit; 700 = ~160к. См. obsidian «Прикидки 150k/мес».
+const SUB_GOAL = 500
 
 export function payingUsersGrowth() {
   const d = db()
@@ -515,7 +519,7 @@ export function payingUsersGrowth() {
     lastMonth = next
   }
 
-  return { points: [...actual, ...projMonths], goal: GOAL, currentCum: cum, avgNewPerMonth: Math.round(avgNew) }
+  return { points: [...actual, ...projMonths], goal: GOAL, subGoal: SUB_GOAL, currentCum: cum, avgNewPerMonth: Math.round(avgNew) }
 }
 
 export function activePayingCount() {
