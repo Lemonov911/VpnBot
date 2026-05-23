@@ -2,8 +2,10 @@ import { requireSession } from '@/lib/auth'
 import {
   monitoringSnapshot, newSubsPerDay, latencyHistory24h,
   uptimeStrip24h, activeSubsByPlan,
+  slaBreachCount, ticketCategoriesOpen,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import AdminNav from '../_components/AdminNav'
 import {
   SubsGrowthChart, LatencyChart, PlanDistChart,
@@ -15,11 +17,13 @@ export default async function Monitoring() {
   const session = await requireSession()
   if (!session) redirect('/login')
 
-  const s       = monitoringSnapshot()
-  const subs14d = newSubsPerDay(14)
-  const latency = latencyHistory24h()
-  const strip   = uptimeStrip24h()
-  const plans   = activeSubsByPlan()
+  const s         = monitoringSnapshot()
+  const subs14d   = newSubsPerDay(14)
+  const latency   = latencyHistory24h()
+  const strip     = uptimeStrip24h()
+  const plans     = activeSubsByPlan()
+  const slaBreach = slaBreachCount()
+  const ticketCats = ticketCategoriesOpen()
 
   const loadBucket = (peers: number, capacity: number) => {
     if (capacity === 0) return { pct: 0, cls: 'bg-neutral-700' }
@@ -148,6 +152,57 @@ export default async function Monitoring() {
                 </div>
               )
             })}
+          </div>
+        )}
+      </div>
+
+      {/* ─── Обращения ──────────────────────────────────────────────────── */}
+      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-neutral-800 flex items-baseline justify-between">
+          <div className="font-semibold text-sm">Обращения</div>
+          <Link href="/tickets" className="text-xs text-sky-400 hover:underline">
+            Открыть инбокс →
+          </Link>
+        </div>
+        <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard
+            label="Открыто"
+            value={s.open_tickets}
+            tone={s.open_tickets > 0 ? 'warning' : 'default'}
+            hint={`${s.closed_tickets} закрыто всего`}
+          />
+          <StatCard
+            label="SLA breach"
+            value={slaBreach}
+            tone={slaBreach > 0 ? 'negative' : 'positive'}
+            hint=">2ч без ответа админа"
+          />
+          <StatCard
+            label="Категорий открытых"
+            value={ticketCats.length}
+            hint={ticketCats.slice(0, 2).map(c => `${c.category}:${c.count}`).join(' · ') || '—'}
+          />
+          <StatCard
+            label="Топ категория"
+            value={ticketCats[0]?.category ?? '—'}
+            hint={ticketCats[0] ? `${ticketCats[0].count} тикетов` : 'нет открытых'}
+          />
+        </div>
+        {ticketCats.length > 0 && (
+          <div className="px-5 pb-5">
+            <div className="text-[10px] text-neutral-600 uppercase tracking-wide mb-2">Разбивка по категориям</div>
+            <div className="flex flex-wrap gap-2">
+              {ticketCats.map(c => (
+                <Link
+                  key={c.category}
+                  href={`/tickets?status=open&category=${encodeURIComponent(c.category)}`}
+                  className="px-2.5 py-1 rounded-full bg-neutral-800 border border-neutral-700 text-xs hover:border-neutral-600 transition"
+                >
+                  {c.category}
+                  <span className="ml-1.5 text-neutral-500">{c.count}</span>
+                </Link>
+              ))}
+            </div>
           </div>
         )}
       </div>
