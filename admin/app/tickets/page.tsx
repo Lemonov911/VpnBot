@@ -5,7 +5,9 @@ import {
   ticketById,
   ticketCategoriesOpen,
   slaBreachCount,
+  ticketThread,
   type TicketInboxRow,
+  type TicketThreadMessage,
 } from '@/lib/db'
 import { redirect } from 'next/navigation'
 import TicketActions from './TicketActions'
@@ -208,7 +210,68 @@ function CategoryFilter({
   )
 }
 
-function TicketDetail({ ticket, status, category }: { ticket: TicketInboxRow; status: string; category?: string }) {
+/**
+ * HH:MM — для bubble-метки. День определяется по группировке (всегда показываем
+ * полную дату в title-tooltip'е если нужно). created_at SQLite формата
+ * "YYYY-MM-DD HH:MM:SS" → нормализуем replace(' ', 'T').
+ */
+function fmtBubbleTime(iso: string): string {
+  const d = new Date(iso.replace(' ', 'T'))
+  if (!Number.isFinite(d.getTime())) return iso
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * Chat-style timeline. User bubbles слева (neutral), admin справа (sky tinted).
+ * Дизайн mimic'ает Telegram/iMessage: непрерывный flow, метки маленькие
+ * сверху каждой bubble (sender + время).
+ */
+function TicketThread({ messages }: { messages: TicketThreadMessage[] }) {
+  if (messages.length === 0) {
+    return <div className="text-xs text-neutral-500 italic">нет сообщений</div>
+  }
+  return (
+    <div className="space-y-2">
+      {messages.map((m, i) => {
+        const isAdmin = m.sender === 'admin'
+        return (
+          <div key={i} className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[80%] rounded-2xl px-3.5 py-2 ${
+                isAdmin
+                  ? 'bg-sky-500/15 border border-sky-500/30 rounded-tr-md'
+                  : 'bg-neutral-800 border border-neutral-700 rounded-tl-md'
+              }`}
+            >
+              <div className="text-[10px] text-neutral-500 mb-0.5">
+                {isAdmin
+                  ? `Админ${m.admin_id ? ' ' + m.admin_id : ''}`
+                  : 'Юзер'}
+                {' · '}
+                <span title={fmtDateTime(m.created_at)}>{fmtBubbleTime(m.created_at)}</span>
+              </div>
+              <div className="text-sm whitespace-pre-wrap leading-relaxed text-neutral-100">
+                {m.text || <span className="text-neutral-500 italic">пустое сообщение</span>}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function TicketDetail({
+  ticket,
+  thread,
+  status,
+  category,
+}: {
+  ticket: TicketInboxRow
+  thread: TicketThreadMessage[]
+  status: string
+  category?: string
+}) {
   return (
     <div className="space-y-4">
       {/* Mobile-only back link */}
@@ -237,19 +300,16 @@ function TicketDetail({ ticket, status, category }: { ticket: TicketInboxRow; st
           <span className="text-[10px] text-neutral-600 font-mono ml-2">id {ticket.user_id}</span>
         </div>
 
-        <div className="text-sm text-neutral-200 whitespace-pre-wrap leading-relaxed bg-neutral-950 rounded-lg p-3 border border-neutral-800">
-          {ticket.message || <span className="text-neutral-600 italic">пустое сообщение</span>}
-        </div>
+        {/* Thread: initial user message + admin replies из audit_log (см.
+            ticketThread в lib/db.ts). Без отдельной ticket_messages-таблицы —
+            пока follow-up юзер-сообщения создают новые тикеты, в thread'е они
+            не появятся. Это OK для MVP, когда подключим follow-up handler в
+            боте — здесь поменяем источник, UI останется тот же. */}
+        <TicketThread messages={thread} />
 
         {ticket.admin_msg_id && (
           <div className="text-[10px] text-neutral-600">
             forwarded to admin chat (msg #{ticket.admin_msg_id})
-          </div>
-        )}
-
-        {ticket.last_admin_reply_at && (
-          <div className="text-[11px] text-emerald-500/70">
-            ✓ админ отвечал · {fmtDateTime(ticket.last_admin_reply_at)}
           </div>
         )}
 
@@ -292,6 +352,10 @@ export default async function Tickets({
     selected = tickets.find(t => t.id === selectedId)
             ?? ticketById(selectedId)
   }
+
+  // Thread грузим только для выбранного тикета — две дешёвые query (PK lookup
+  // + audit_log по target). Если ничего не выбрано — пустой массив.
+  const thread: TicketThreadMessage[] = selected ? ticketThread(selected.id) : []
 
   return (
     <div className="min-h-screen p-6 max-w-7xl mx-auto space-y-4">
@@ -346,7 +410,7 @@ export default async function Tickets({
         {/* Detail — скрыт на mobile если ticket не выбран */}
         <div className={`${selected ? 'block' : 'hidden md:block'}`}>
           {selected ? (
-            <TicketDetail ticket={selected} status={status} category={category} />
+            <TicketDetail ticket={selected} thread={thread} status={status} category={category} />
           ) : (
             <div className="bg-neutral-900 border border-neutral-800 rounded-2xl px-5 py-12 text-center text-sm text-neutral-500">
               {tickets.length > 0

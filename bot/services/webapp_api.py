@@ -4565,12 +4565,25 @@ async def handle_admin_ticket_reply(request: web.Request) -> web.Response:
 
     # AD-F12: audit-log for compliance/forensics. close-or-reply path was
     # the only admin ticket op that didn't audit — close (without reply) does.
+    #
+    # 2026-05-23: details теперь хранит JSON {text, close_after, chars} —
+    # админка использует это поле, чтобы рендерить chat-style thread в
+    # /tickets detail-view (initial user message + admin replies из audit_log).
+    # Без отдельной ticket_messages-таблицы (deferred): overload existing
+    # audit_log field. Старые rows формата `reply_chars=N close_after=true`
+    # admin-side читает try/JSON.parse; fallback показывает «(текст не сохранён —
+    # старый формат)».
     from services.database import audit_log_record as _alr_reply
+    details_payload = json.dumps({
+        "text": text,
+        "close_after": close,
+        "chars": len(text),
+    }, ensure_ascii=False)
     await _alr_reply(
         admin_id=int(body.get("admin_id") or 0),
         action="ticket_reply",
         target=f"ticket:{ticket_id}",
-        details=f"reply_chars={len(text)} close_after={close}",
+        details=details_payload,
     )
 
     return web.json_response({"ok": True, "closed": close})

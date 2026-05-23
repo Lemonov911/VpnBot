@@ -1409,6 +1409,85 @@ export function ticketById(id: number): TicketInboxRow | null {
   }
 }
 
+// ── Ticket chat-style thread ──────────────────────────────────────────────────
+// Detail-view рендерит timeline сообщений (user initial + admin replies),
+// а не одну bubble + reply form. Без миграции БД: initial message живёт в
+// support_tickets, admin reply text хранится в audit_log.details как JSON
+// (см. bot/services/webapp_api.py::handle_admin_ticket_reply).
+//
+// Старый формат details был `reply_chars=N close_after=bool` — без текста.
+// Для backward-compat: try/catch JSON.parse, если не парсится — fallback
+// bubble «(текст ответа не сохранён — старый формат)». После 2026-05-23 новые
+// записи будут содержать text.
+//
+// Note: follow-up юзер-сообщения пока deferred — бот при повторном обращении
+// создаёт новый ticket, а не append'ит в существующий. Когда сделаем
+// follow-up handler, нужно будет завести ticket_messages-таблицу и
+// заменить эту функцию на её query.
+
+export type TicketThreadMessage = {
+  sender: 'user' | 'admin'
+  text: string
+  created_at: string
+  admin_id?: number | null
+}
+
+export function ticketThread(ticketId: number): TicketThreadMessage[] {
+  if (!Number.isFinite(ticketId)) return []
+  const d = db()
+
+  const initial = d.prepare(
+    'SELECT message, created_at FROM support_tickets WHERE id = ?',
+  ).get(ticketId) as { message: string; created_at: string } | undefined
+
+  if (!initial) return []
+
+  const messages: TicketThreadMessage[] = [{
+    sender: 'user',
+    text: initial.message || '',
+    created_at: initial.created_at,
+  }]
+
+  // Admin replies из audit_log. action=ticket_reply, target=ticket:N.
+  // ORDER BY created_at ASC чтобы старые ответы шли первыми (chat-flow).
+  // id tiebreaker — если два reply в одну секунду (миллисекундная точность
+  // SQLite CURRENT_TIMESTAMP — посекундная), сохраняем порядок вставки.
+  const replies = d.prepare(`
+    SELECT admin_id, details, created_at
+    FROM audit_log
+    WHERE action = 'ticket_reply' AND target = ?
+    ORDER BY created_at ASC, id ASC
+  `).all(`ticket:${ticketId}`) as Array<{
+    admin_id: number
+    details: string | null
+    created_at: string
+  }>
+
+  for (const r of replies) {
+    let text = ''
+    try {
+      // Новый формат: JSON {text, close_after, chars}. Если details NULL
+      // или не JSON (legacy «reply_chars=N…») — поймаем в catch.
+      const parsed = JSON.parse(r.details ?? '') as { text?: unknown }
+      if (parsed && typeof parsed.text === 'string') {
+        text = parsed.text
+      } else {
+        text = '(текст ответа не сохранён — старый формат)'
+      }
+    } catch {
+      text = '(текст ответа не сохранён — старый формат)'
+    }
+    messages.push({
+      sender: 'admin',
+      text,
+      created_at: r.created_at,
+      admin_id: r.admin_id || null,
+    })
+  }
+
+  return messages
+}
+
 /**
  * SLA breach count для badge в навбаре. «Просроченный» тикет:
  *   - status='open'

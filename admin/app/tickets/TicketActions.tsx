@@ -6,13 +6,17 @@ import TicketTemplates from '../_components/TicketTemplates'
 
 /**
  * Reply form для тикета. Шлёт текст в bot REST, бот отправляет юзеру в чат
- * от имени @maxvpnesim_bot. По умолчанию после ответа тикет закрывается —
- * если нужно оставить открытым (продолжить диалог), снять чекбокс.
+ * от имени @maxvpnesim_bot.
+ *
+ * 2026-05-23: default close=false. Раньше после ответа тикет автоматически
+ * закрывался — но теперь detail-view рендерит chat-style thread (см.
+ * TicketThread в page.tsx), и Олег ожидает что переписка естественно
+ * продолжится. Кому нужно закрыть — checkbox остаётся видимым.
  */
 export default function TicketActions({ ticketId, userId }: { ticketId: number; userId: number }) {
   const router = useRouter()
   const [text,    setText]    = useState('')
-  const [close,   setClose]   = useState(true)
+  const [close,   setClose]   = useState(false)
   const [sending, setSending] = useState(false)
   const [err,     setErr]     = useState('')
   const [done,    setDone]    = useState(false)
