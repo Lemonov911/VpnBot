@@ -171,6 +171,16 @@ def main() -> int:
 
     print()
     print(f"=== done: {ok} provisioned, {fail} failed ===")
+
+    # Mark server as backfilled so /sub/{token} starts emitting its URLs.
+    # Без этого новый сервер уже в БД и юзеры пиры на нём имеют, но
+    # endpoint /sub фильтрует servers WHERE backfilled=1 — и сервер не
+    # появляется в подписке. С Frankfurt это пришлось делать вручную.
+    if not args.dry_run and fail == 0:
+        cur.execute("UPDATE servers SET backfilled=1 WHERE id=?", (args.server_id,))
+        con.commit()
+        print(f"server_id={args.server_id} marked backfilled=1")
+
     return 0 if fail == 0 else 2
 
 

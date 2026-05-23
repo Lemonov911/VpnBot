@@ -1805,6 +1805,14 @@ async def _run_health_loop(bot: Bot | None = None):
     from services.health import probe_all_servers, cleanup_old_logs
     cleanup_counter = 0
     logger.info("Health-probe запущен (интервал: %d сек)", HEALTH_PROBE_INTERVAL_SEC)
+    # One-shot cleanup at boot — counter resets each restart, so without this
+    # the daily cleanup-tick never fires when the bot restarts more often than
+    # HEALTH_CLEANUP_INTERVAL_SEC (CI deploys hit ~daily). Prod log grew to
+    # 54k+ rows over 9 days because of this.
+    try:
+        await cleanup_old_logs(keep_days=31)
+    except Exception as e:
+        logger.warning("health cleanup at boot failed: %s", e, exc_info=True)
     while True:
         try:
             await probe_all_servers(bot)
