@@ -98,8 +98,29 @@ export default function TicketActions({ ticketId, userId }: { ticketId: number; 
         autoFocus
       />
       <div className="flex items-center justify-between gap-2 text-xs">
-        <label className="flex items-center gap-1.5 text-neutral-400 cursor-pointer">
-          <input type="checkbox" checked={close} onChange={e => setClose(e.target.checked)} />
+        {/* Olej feedback 23.05: native browser checkbox в Safari иногда визуально
+            «грязный» — checked-state неочевидный, особенно на dark-theme. Заменил
+            на custom box с явной галочкой когда true. autoComplete=off — Safari
+            иногда reset'ит native checkboxes при возврате на страницу. */}
+        <label className="flex items-center gap-1.5 text-neutral-300 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={close}
+            onChange={e => setClose(e.target.checked)}
+            autoComplete="off"
+            className="sr-only peer"
+          />
+          <span className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+            close
+              ? 'bg-sky-500 border-sky-500 text-white'
+              : 'bg-neutral-900 border-neutral-700'
+          }`}>
+            {close && (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2 5L4 7L8 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </span>
           Закрыть после отправки
         </label>
         <div className="flex items-center gap-2">
