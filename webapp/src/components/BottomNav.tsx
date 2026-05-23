@@ -114,14 +114,21 @@ export default function BottomNav() {
                     nav(path)
                   }
                 }}
-                className="flex-1 border-none bg-transparent flex flex-col items-center justify-center gap-1 cursor-pointer py-1.5 relative"
+                // W3 #11: `min-w-0` на flex-child обязательно чтобы дочерний
+                // <span class="truncate"> мог сжаться ниже своего intrinsic
+                // width. Без min-w-0 длинные RU-лейблы («Поддержка», «Реферал»)
+                // на iPhone SE (320px) пересекали границы соседних табов.
+                className="flex-1 min-w-0 border-none bg-transparent flex flex-col items-center justify-center gap-1 cursor-pointer py-1.5 relative"
               >
                 {/* Active icon bubble */}
                 <div className={`w-[42px] h-[30px] rounded-[10px] flex items-center justify-center transition-all duration-200 ${isActive ? 'bg-black/[0.07] dark:bg-white/[0.14] border-[0.5px] border-black/[0.12] dark:border-white/[0.28] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),_0_2px_6px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.2),_0_2px_6px_rgba(0,0,0,0.12)]' : 'bg-transparent border-[0.5px] border-transparent shadow-none'}`}>
                   <Icon active={isActive} dark={dark} />
                 </div>
 
-                <span className={`text-[10px] leading-none transition-colors duration-200 ${isActive ? 'font-semibold text-[#1c1c1e] dark:text-white' : 'font-normal text-black/35 dark:text-white/45'}`}>
+                {/* W3 #11: truncate + max-w-full даёт ellipsis на узких экранах.
+                    `block` нужен чтобы text-overflow:ellipsis сработал на inline
+                    span'е — без block по дефолту span inline и truncate no-op. */}
+                <span className={`block max-w-full truncate text-[10px] leading-none transition-colors duration-200 px-0.5 ${isActive ? 'font-semibold text-[#1c1c1e] dark:text-white' : 'font-normal text-black/35 dark:text-white/45'}`}>
                   {t(key)}
                 </span>
               </button>

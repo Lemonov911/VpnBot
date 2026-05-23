@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -12,28 +12,9 @@ import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMe
 import PostPayOnboarding from '../components/PostPayOnboarding'
 import CancelRenewalModal from '../components/CancelRenewalModal'
 import { SubscriptionUrlCard } from '../components/SubscriptionUrlCard'
-
-const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
-  // v2 — по скорости
-  vpn_base: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_max:  { bg: '#af52de', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h7v8l10-12h-7V2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  // legacy
-  vpn_start:   { bg: '#5ac8fa', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_popular: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_pro:     { bg: '#5856d6', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" fill="#ffffff33" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_family:  { bg: '#ff2d55', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="7" r="3" stroke="#fff" strokeWidth="2"/><path d="M3 19c0-3 2.686-5 6-5s6 2 6 5" stroke="#fff" strokeWidth="2" strokeLinecap="round"/><circle cx="17" cy="7" r="2.5" stroke="#fff" strokeWidth="1.8"/><path d="M21 19c0-2.5-1.8-4-4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
-}
-
-const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
-  vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  /* glow-pulse — дышащая тень на Max-иконке.  См. index.css. */
-  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'glow-pulse' },
-  // legacy
-  vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
-  vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  vpn_pro:     { bg: 'bg-[#5856d6]',   shadow: 'shadow-[0_4px_12px_rgba(88,86,214,0.55)]' },
-  vpn_family:  { bg: 'bg-[#ff2d55]',   shadow: 'shadow-[0_4px_12px_rgba(255,45,85,0.55)]' },
-}
+// W3 #7: общие plan-карты переехали в src/lib/plans (раньше копия здесь
+// и в Plans.tsx — был риск drift'а).
+import { PLAN_ICONS, PLAN_TW, PLAN_NAME_KEY } from '../lib/plans'
 
 function formatDate(iso: string, lang: 'ru' | 'en'): string {
   try {
@@ -101,20 +82,13 @@ export default function VPN() {
   // token has moved on.
   const buyTokenRef = useRef(0)
 
-  const PLAN_NAMES: Record<string, string> = {
-    vpn_base:       t('vpn_plan_base'),
-    vpn_base_3m:    t('vpn_plan_base_3m' as never),
-    vpn_base_6m:    t('vpn_plan_base_6m' as never),
-    vpn_base_12m:   t('vpn_plan_base_12m' as never),
-    vpn_max:        t('vpn_plan_max'),
-    vpn_max_3m:     t('vpn_plan_max_3m' as never),
-    vpn_max_6m:     t('vpn_plan_max_6m' as never),
-    vpn_max_12m:    t('vpn_plan_max_12m' as never),
-    vpn_trial:      t('vpn_plan_trial'),
-    vpn_start:      t('vpn_plan_start'),
-    vpn_popular:    t('vpn_plan_popular'),
-    vpn_pro:        t('vpn_plan_pro'),
-    vpn_family:     t('vpn_plan_family'),
+  // W3 #7: имя плана резолвится через общий PLAN_NAME_KEY + t(). Раньше
+  // здесь была локальная копия PLAN_NAMES record — выпиливаем дубль.
+  // Если plan.key не в карте (legacy / экзотика) — fallback на raw key,
+  // тот же контракт что раньше.
+  const resolvePlanName = (key: string): string => {
+    const tkey = PLAN_NAME_KEY[key]
+    return tkey ? t(tkey) : key
   }
 
   const [sub,        setSub]        = useState<Subscription | null | undefined>(undefined)
@@ -412,7 +386,7 @@ export default function VPN() {
   }
 
   if (sub?.status === 'expired') {
-    const planName = PLAN_NAMES[sub.plan] ?? sub.plan
+    const planName = resolvePlanName(sub.plan)
     return (
       <>
         <div className="page pb-[calc(env(safe-area-inset-bottom)+96px)] gap-2.5">
@@ -449,7 +423,7 @@ export default function VPN() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
-                    <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{PLAN_NAMES[plan.key] ?? t(plan.nameKey as never)}</span>
+                    <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{resolvePlanName(plan.key)}</span>
                     {isHit && (
                       <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
                     )}
@@ -546,7 +520,7 @@ export default function VPN() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-[7px] mb-[3px] flex-wrap">
-                    <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{PLAN_NAMES[plan.key] ?? t(plan.nameKey as never)}</span>
+                    <span className="font-bold text-base text-[var(--tg-theme-text-color,#000)]">{resolvePlanName(plan.key)}</span>
                     {isHit && (
                       <span className="bg-[var(--tg-theme-button-color,#2481cc)] text-[var(--tg-theme-button-text-color,#fff)] text-[10px] font-bold px-[7px] py-[2px] rounded-[20px]">{t('plans_hit')}</span>
                     )}
@@ -637,8 +611,8 @@ export default function VPN() {
     )
   }
 
-  const planName    = PLAN_NAMES[sub.plan] ?? sub.plan
-  const pendingName = sub.pending_plan ? (PLAN_NAMES[sub.pending_plan] ?? sub.pending_plan) : null
+  const planName    = resolvePlanName(sub.plan)
+  const pendingName = sub.pending_plan ? resolvePlanName(sub.pending_plan) : null
   const isGrace     = sub.status === 'grace'
   const isExpiring  = !isGrace && sub.days_remaining <= 7
 

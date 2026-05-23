@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import {
@@ -9,42 +9,13 @@ import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMe
 import PostPayOnboarding from '../components/PostPayOnboarding'
 import { useT } from '../i18n'
 import type { TKey } from '../i18n'
+// W3 #7: PLAN_ICONS / PLAN_TW / PLAN_NAME_KEY переехали в общий модуль,
+// раньше дублировались между Plans.tsx и VPN.tsx (drift почти случился 22.05).
+import { PLAN_ICONS, PLAN_TW, PLAN_NAME_KEY } from '../lib/plans'
 
 function calcUpgradePrice(curRub: number, newRub: number, daysLeft: number): number {
   if (daysLeft <= 0) return newRub
   return Math.max(1, Math.round((newRub - curRub) * daysLeft / 30))
-}
-
-const PLAN_ICONS: Record<string, { bg: string; icon: JSX.Element }> = {
-  // v2 — по скорости
-  vpn_base: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_max:  { bg: '#af52de', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h7v8l10-12h-7V2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  // legacy
-  vpn_start:   { bg: '#5ac8fa', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_popular: { bg: '#2481cc', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_pro:     { bg: '#5856d6', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 6v6c0 5.25 3.5 10.15 8 11.35C16.5 22.15 20 17.25 20 12V6L12 2z" fill="#ffffff33" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  vpn_family:  { bg: '#ff2d55', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="9" cy="7" r="3" stroke="#fff" strokeWidth="2"/><path d="M3 19c0-3 2.686-5 6-5s6 2 6 5" stroke="#fff" strokeWidth="2" strokeLinecap="round"/><circle cx="17" cy="7" r="2.5" stroke="#fff" strokeWidth="1.8"/><path d="M21 19c0-2.5-1.8-4-4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"/></svg> },
-}
-
-const PLAN_TW: Record<string, { bg: string; shadow: string }> = {
-  vpn_base: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  /* glow-pulse — дышащая тень на Max-плитке, рекомендованный план.
-     Не моргает, едва заметно (см. @keyframes glow-pulse в index.css). */
-  vpn_max:  { bg: 'bg-[#af52de]',  shadow: 'glow-pulse' },
-  // legacy
-  vpn_start:   { bg: 'bg-info',       shadow: 'shadow-[0_4px_12px_rgba(90,200,250,0.55)]' },
-  vpn_popular: { bg: 'bg-primary',    shadow: 'shadow-[0_4px_12px_rgba(36,129,204,0.55)]' },
-  vpn_pro:     { bg: 'bg-[#5856d6]',   shadow: 'shadow-[0_4px_12px_rgba(88,86,214,0.55)]' },
-  vpn_family:  { bg: 'bg-[#ff2d55]',   shadow: 'shadow-[0_4px_12px_rgba(255,45,85,0.55)]' },
-}
-
-const PLAN_NAME_KEY: Record<string, TKey> = {
-  vpn_base:    'vpn_plan_base',
-  vpn_max:     'vpn_plan_max',
-  vpn_start:   'vpn_plan_start',
-  vpn_popular: 'vpn_plan_popular',
-  vpn_pro:     'vpn_plan_pro',
-  vpn_family:  'vpn_plan_family',
 }
 
 // Stars and rub prices for legacy plans — mirrors plans.py VPN_PLANS.
@@ -60,7 +31,12 @@ const LEGACY_PLAN_PRICES: Record<string, { stars: number; rub: number }> = {
   vpn_1y:      { stars: 1990, rub: 1990 },
 }
 
-function PlanCard({
+// W3: React.memo обёртка ниже (`memo(PlanCardImpl)`).  Карточки рендерятся
+// в .map() по VISIBLE_PLANS — родитель пересчитывается каждый раз когда
+// меняется sub/loading/sheetPlan, без memo все 2 карточки переренди-вало
+// каждый тик. Большинство prop'ов стабильны (plan по reference из const PLANS,
+// mode/upgradePrice/animDelay меняются редко) — memo выгоден.
+function PlanCardImpl({
   plan, mode, upgradePrice, loading, isPending, onClick, animDelay,
 }: {
   plan: Plan; mode: 'buy' | 'current' | 'renew' | 'upgrade' | 'downgrade' | 'pending'
@@ -185,6 +161,17 @@ function PlanCard({
     </div>
   )
 }
+
+// memo()-обёртка PlanCard. Дефолтный shallow check — primitives
+// (mode/upgradePrice/loading/isPending/animDelay) и стабильный `plan` ref
+// из const PLANS будут совпадать; единственный нестабильный prop = `onClick`
+// (inline arrow в .map() родителя), его новизна форсит re-render для той
+// конкретной карточки которая получила свежую closure. Тем не менее memo
+// окупается: при изменении только sub.days_remaining карточки чьи
+// up-stream данные не зависят от sub (например vpn_base.rub в mode='buy')
+// не должны пересоздавать DOM-узлы.  TODO(perf): обернуть onClick'и в
+// useCallback с зависимостью только от plan.key для полного wins.
+const PlanCard = memo(PlanCardImpl)
 
 function SkeletonPage() {
   return (
