@@ -5,9 +5,35 @@
 течение дня.
 
 **Где тестить:** Telegram → `@maxvpn_robot` (или dev-бот) → `/start` →
-Открыть VPN-приложение. Обязательно проверить минимум на двух устройствах:
-**iOS** (Telegram iOS) + **Android** (Telegram Android). Desktop Telegram
-использует другой WebView — отдельный прогон.
+Открыть VPN-приложение.
+
+## 🖥 Если есть только Mac (нет Android)
+
+**90% чеклиста гонится в Chrome на Mac за 15 мин** через Telegram Web:
+
+1. `https://web.telegram.org/k/` → логин по номеру
+2. Найти бота → `/start` → кнопка «Open VPN» — Mini App открывается прямо во вкладке
+3. `Cmd+Opt+I` (DevTools) → `Cmd+Shift+M` (Device Mode) → выбрать iPhone SE / Pixel 7 / Galaxy S20
+4. Тестировать как обычный сайт: Console / Network / Sources с breakpoints
+
+**Что Web НЕ покажет** (придётся открыть на iPhone после Web-прогона, ~5 мин):
+- `WebApp.HapticFeedback` (silent no-op)
+- Платежи Stars (нативный Telegram payment UI)
+- Скачивание / открытие AWG / VLESS конфигов в Happ
+- Subtle theme color differences
+
+**Что Web ПОКАЖЕТ корректно** (это 90% чеклиста):
+- Все layouts, навигация, формы
+- API-запросы, JS-ошибки
+- i18n RU/EN
+- Light/dark theme
+- Long names, маленькие экраны (через viewport switch)
+
+**Когда нужен реальный Android:**
+- Layout-баги специфичные для Android WebView (старые версии)
+- Quirks с input-полями (eSIM-форма с email)
+- Только перед крупным релизом, ~раз в месяц
+- Через BrowserStack App Live ($5/час, real Pixel/Samsung) — без покупки устройства
 
 **Тестовые аккаунты:**
 - Главный: твой Telegram (`@Lemonov911`, admin)
