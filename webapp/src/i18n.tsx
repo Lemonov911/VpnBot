@@ -19,7 +19,7 @@ const T = {
     // в hero — 149-ФЗ (запрет рекламы средств обхода блокировок), такой
     // буквальный список = улика для подачи на блокировку Mini App.
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'Свободный интернет на телефоне и ноутбуке\nБез оплаты, без карты'
+      ? 'Свободный интернет даже на парковке!'
       : 'Надёжный VPN с шифрованием\nдля телефона и ноутбука',
     home_card_pitch_no_sub: 'Безопасный интернет от 200 ₽ в месяц',
     home_sub_active: '● Подписка активна',
@@ -628,7 +628,7 @@ const T = {
        Раньше «from $3» дрейфовал и противоречил `home_sub_from`. */
     home_card_pitch_no_sub: 'Secure internet from $2.20 per month',
     home_hero_sub:   import.meta.env.VITE_SHOW_ESIM === 'false'
-      ? 'Free internet on phone and laptop\nNo payment, no card'
+      ? 'Free internet even in the parking lot!'
       : 'Free internet access\nwithout censorship',
     home_sub_active: '● Subscription active',
     home_sub_none:   'No active subscription',
