@@ -10,6 +10,7 @@ import {
 import { useT, usePlural, useLang } from '../i18n'
 import TrialSuccessSheet from '../components/TrialSuccessSheet'
 import { SkeletonPage } from '../components/Skeleton'
+import { AppFooter } from '../components/AppFooter'
 
 // "2026-05-30 21:00:58" / "2026-05-30T21:00:58.123" → "30 мая" / "May 30"
 function formatNiceDate(iso: string, lang: 'ru' | 'en'): string {
@@ -653,6 +654,8 @@ export default function Home() {
         {/* Redeem-CTA для бонусных дней раньше жил здесь — Olej feedback
             23.05: убран с главной, активация бонусов делается на странице
             Друзья (там полная картина баланс / CTA / правила). */}
+
+        <AppFooter />
 
       </div>
 

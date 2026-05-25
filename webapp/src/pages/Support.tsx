@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, uploadTicketWithPhotos, type SupportCategory } from '../api'
 import { useT, useLang } from '../i18n'
+import { AppFooter } from '../components/AppFooter'
 
 // Screenshot/video upload limits — must match backend (handle_support_ticket).
 // If you change these, also update bot/services/webapp_api.py.
@@ -724,6 +725,8 @@ export default function Support() {
       >
         {state === 'sending' ? t('support_sending') : t('support_send')}
       </button>
+
+      <AppFooter />
 
     </div>
   )
