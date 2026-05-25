@@ -14,6 +14,7 @@ const T = {
     // Trust-footer (Trust audit 2026-05-25)
     footer_status:  '📊 Статус серверов',
     footer_privacy: '🔒 Конфиденциальность',
+    footer_oferta:  '📄 Оферта',
     footer_contact: '💬 Написать в бот',
 
     // Home — бренд зависит от feature flag VITE_SHOW_ESIM. Mini App не должно
@@ -631,6 +632,7 @@ const T = {
     // Trust-footer (Trust audit 2026-05-25)
     footer_status:  '📊 Server status',
     footer_privacy: '🔒 Privacy',
+    footer_oferta:  '📄 Terms',
     footer_contact: '💬 Contact bot',
 
     home_hero_title: import.meta.env.VITE_SHOW_ESIM === 'false' ? 'MAX VPN' : 'VPN & eSIM',

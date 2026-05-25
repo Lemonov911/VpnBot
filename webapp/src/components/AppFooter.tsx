@@ -32,6 +32,14 @@ export function AppFooter() {
       >
         {t('footer_privacy' as TKey)}
       </a>
+      {/* Оферта — публичный договор, требуется для платёжных систем (CryptoBot/Stars/Lava)
+       * и для скептичной аудитории, которая ищет «что я подписываю». Тоже статика в public/. */}
+      <a
+        href={`${import.meta.env.BASE_URL}oferta.html`}
+        className="hover:underline text-[var(--tg-theme-link-color,var(--tg-theme-hint-color))]"
+      >
+        {t('footer_oferta' as TKey)}
+      </a>
       <a
         href="https://t.me/maxvpnesim_bot"
         target="_blank"
