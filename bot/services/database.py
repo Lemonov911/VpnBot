@@ -140,6 +140,12 @@ async def init_db():
         # стрелять в 5 сек. 30 сек хватает для самых тяжёлых backfill'ов
         # (traffic_source, null_expires). Regular _connect() остаётся на 5 сек.
         await db.execute("PRAGMA busy_timeout=30000")
+        # Audit fix 2026-05-24: FK enforcement on migration. Без этого `_migrate`
+        # выполняет ALTER TABLE + INSERT'ы без FK-валидации → если migration
+        # оставит orphan FK row (по любому багу), SQLite не словит. Тёплая
+        # включка: SQLite принимает PRAGMA foreign_keys=ON только перед началом
+        # любых не-DDL операций — здесь как раз перед миграцией.
+        await db.execute("PRAGMA foreign_keys=ON")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INTEGER PRIMARY KEY,
@@ -2645,7 +2651,8 @@ async def get_subscriptions_expiring_soon(days: int) -> list[dict]:
                 AND s.{col}=0
                 AND u.bot_blocked_at IS NULL
                 AND datetime(s.expires_at) > datetime('now', '{lower_modifier}')
-                AND datetime(s.expires_at) < datetime('now', '+{int(upper_hours)} hours')""",
+                AND datetime(s.expires_at) < datetime('now', '+{int(upper_hours)} hours')
+                ORDER BY s.expires_at ASC""",
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
 
@@ -2837,10 +2844,16 @@ async def get_best_server(protocol: str) -> dict | None:
         return None
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
+        # Audit fix 2026-05-24: `active_peers < capacity` ceiling — без него
+        # перегруженный сервер (active_peers=500, capacity=300) продолжал
+        # выигрывать load-balance если другие ещё хуже → silent degradation
+        # (юзер получает peer на overloaded kernel, скорость 1-2 Mbps).
+        # Лучше вернуть None → caller log error/alert + админ узнаёт что пора
+        # поднимать ещё сервер.
         async with db.execute("""
             SELECT * FROM servers
             WHERE protocol=? AND is_active=1 AND agent_url IS NOT NULL
-              AND capacity > 0
+              AND capacity > 0 AND active_peers < capacity
             ORDER BY (CAST(active_peers AS REAL) / capacity) ASC
             LIMIT 1
         """, (proto_field,)) as cur:

@@ -1360,6 +1360,36 @@ async def _apply_plan_upgrade(message: Message, payment):
             except Exception as e:
                 logger.error("upgrade shrink revoke sub=%d: %s", sub_id, e, exc_info=True)
 
+        # Audit fix 2026-05-24: если апгрейд увеличил число слотов — провижим
+        # их сразу, иначе юзер видит пустые slots в Mini App и должен их
+        # клацать вручную (или вообще не понимать что нужно).
+        # change_subscription_plan создал empty rows (broken для VLESS
+        # multi-location), provision_added_slots_on_upgrade их подчистит +
+        # provision'ит правильно.
+        if awg_delta > 0 or vless_delta > 0 or wg_delta > 0:
+            try:
+                delivered_add, total_add = await provision_added_slots_on_upgrade(
+                    message.bot, user_id, sub_id, plan, plan_key,
+                )
+                logger.info(
+                    "upgrade with more slots sub=%d: provisioned %d/%d new slots",
+                    sub_id, delivered_add, total_add,
+                )
+                if delivered_add < total_add:
+                    from config import ADMIN_ID
+                    if ADMIN_ID:
+                        try:
+                            await message.bot.send_message(
+                                ADMIN_ID,
+                                f"⚠️ Partial upgrade-provision: sub={sub_id} "
+                                f"user={user_id} delivered={delivered_add}/{total_add} "
+                                f"plan {old_plan_key}→{plan_key}",
+                            )
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.error("upgrade grow provision sub=%d: %s", sub_id, e, exc_info=True)
+
         # Если апгрейд из grace — снять throttle на агенте. Без этого юзер платит,
         # видит «Plan: Max» в UI, а реально пакет всё ещё 256 кбит/с (потому что
         # change_subscription_plan только меняет БД, не трогает агента).
@@ -1809,3 +1839,162 @@ async def provision_vpn_slots_async(
             logger.warning("crypto-flow: plain-WG peer error: %s", e, exc_info=True)
 
     return delivered, total
+
+
+async def provision_added_slots_on_upgrade(
+    bot: Bot,
+    user_id: int,
+    sub_id: int,
+    plan: dict,
+    plan_key: str,
+) -> tuple[int, int]:
+    """Audit fix 2026-05-24: после upgrade-with-more-slots провижинит новые слоты.
+
+    `change_subscription_plan` (database.py) создаёт empty rows = `target -
+    existing_rows`, но это **broken для multi-location VLESS** (counts ROWS,
+    не unique slot UUIDs). Юзер платил +400₽ за upgrade vpn_base→vpn_max,
+    видел пустые slots в Mini App, требовалось вручную их активировать через
+    handle_vpn_config_activate (если он вообще знал что нужно).
+
+    Стратегия:
+    1. Удалить empty rows которые change_subscription_plan налепил
+       (их protocol-naive accounting сломан для VLESS multi-location)
+    2. Посчитать delta per protocol (target plan vs existing ACTIVE)
+       - AWG/WG: each slot = 1 row → count rows
+       - VLESS: each slot = 1 UUID × N servers → count UNIQUE vless_uuid
+    3. Provision delta используя те же patterns что `provision_vpn_slots_async`
+
+    Returns (delivered_added, total_added). Если delivered < total — caller
+    должен alert админу для manual cleanup.
+    """
+    from services.database import (
+        delete_config_record,
+        get_configs_for_subscription_by_protocol,
+    )
+
+    # Step 1: cleanup empty rows from change_subscription_plan
+    for proto in ("awg", "vless", "wg"):
+        cfgs = await get_configs_for_subscription_by_protocol(sub_id, proto)
+        for cfg in cfgs:
+            if cfg.get("status") == "empty":
+                try:
+                    await delete_config_record(cfg["id"])
+                except Exception as e:
+                    logger.warning(
+                        "upgrade cleanup: failed to delete empty cfg #%d: %s",
+                        cfg["id"], e,
+                    )
+
+    # Step 2: count what's already there (post-cleanup)
+    awg_active = [
+        c for c in await get_configs_for_subscription_by_protocol(sub_id, "awg")
+        if c.get("status") == "active"
+    ]
+    vless_all = await get_configs_for_subscription_by_protocol(sub_id, "vless")
+    vless_active = [c for c in vless_all if c.get("status") == "active"]
+    vless_uuids = {c.get("vless_uuid") for c in vless_active if c.get("vless_uuid")}
+    wg_active = [
+        c for c in await get_configs_for_subscription_by_protocol(sub_id, "wg")
+        if c.get("status") == "active"
+    ]
+
+    awg_to_add   = max(0, plan.get("awg_slots", 0)   - len(awg_active))
+    vless_to_add = max(0, plan.get("vless_slots", 0) - len(vless_uuids))
+    wg_to_add    = max(0, plan.get("wg_slots", 0)    - len(wg_active))
+
+    total_added = awg_to_add + vless_to_add + wg_to_add
+    delivered_added = 0
+
+    if total_added == 0:
+        return 0, 0
+
+    logger.info(
+        "upgrade provision sub=%d plan=%s deltas: awg=+%d vless=+%d wg=+%d",
+        sub_id, plan_key, awg_to_add, vless_to_add, wg_to_add,
+    )
+
+    # Step 3a: AWG additions (1 slot = 1 row × 1 server)
+    for i in range(awg_to_add):
+        config_id = await create_config_record(sub_id, user_id, protocol="awg")
+        server = await get_best_server("awg")
+        if not server:
+            logger.warning("upgrade provision AWG: no available server (capacity full?)")
+            continue
+        try:
+            label = f"user_{user_id}_wg_upgrade_{i+1}"
+            peer = await provision_peer(server, label, "awg")
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                config_id, server["id"], peer.id, peer_ip, peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            delivered_added += 1
+        except VpnctlError as e:
+            logger.warning("upgrade provision AWG slot=%d: %s", i, e, exc_info=True)
+
+    # Step 3b: VLESS additions (each slot = 1 UUID × N active VLESS-servers)
+    if vless_to_add > 0:
+        vless_service = vless_service_for_plan(plan_key)
+        vless_servers = await get_all_active_servers("vless")
+        for i in range(vless_to_add):
+            if not vless_servers:
+                logger.warning("upgrade provision VLESS slot=%d: no active VLESS servers", i)
+                continue
+            slot_uuid = str(uuid.uuid4())
+            slot_delivered = False
+            for server in vless_servers:
+                config_id = await create_config_record(
+                    sub_id, user_id, protocol="vless", server_id=server["id"],
+                )
+                try:
+                    flag = (server.get("flag") or "").replace(" ", "")
+                    label = f"user_{user_id}_vless_upgrade_{i+1}_{flag or server['id']}"
+                    peer = await provision_peer(server, label, vless_service, peer_id=slot_uuid)
+                    from urllib.parse import quote as _q
+                    loc = " ".join(filter(None, [
+                        (server.get("flag") or "").strip(),
+                        (server.get("city") or server.get("name") or "").strip(),
+                    ])).strip() or f"Server {server['id']}"
+                    cfg_data = peer.config or ""
+                    if cfg_data.startswith("vless://"):
+                        base = cfg_data.split("#", 1)[0]
+                        cfg_data = f"{base}#{_q(loc, safe='')}"
+                    await save_peer_to_config(
+                        config_id, server["id"], peer.id, "", cfg_data, label,
+                        vless_uuid=slot_uuid,
+                    )
+                    await update_server_peer_count(server["id"], +1)
+                    slot_delivered = True
+                except VpnctlError as e:
+                    logger.warning(
+                        "upgrade provision VLESS slot=%d srv=%s: %s",
+                        i, server.get("id"), e, exc_info=True,
+                    )
+                    try:
+                        from services.database import delete_config_record as _del
+                        await _del(config_id)
+                    except Exception:
+                        pass
+            if slot_delivered:
+                delivered_added += 1
+
+    # Step 3c: WG additions (plain WG, like AWG)
+    for i in range(wg_to_add):
+        config_id = await create_config_record(sub_id, user_id, protocol="wg")
+        server = await get_best_server("wg")
+        if not server:
+            logger.warning("upgrade provision WG: no available server")
+            continue
+        try:
+            label = f"user_{user_id}_plainwg_upgrade_{i+1}"
+            peer = await provision_peer(server, label, "wg")
+            peer_ip = (peer.extra or {}).get("assigned_ip", "")
+            await save_peer_to_config(
+                config_id, server["id"], peer.id, peer_ip, peer.config, label,
+            )
+            await update_server_peer_count(server["id"], +1)
+            delivered_added += 1
+        except VpnctlError as e:
+            logger.warning("upgrade provision WG slot=%d: %s", i, e, exc_info=True)
+
+    return delivered_added, total_added

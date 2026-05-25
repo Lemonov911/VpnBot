@@ -1013,37 +1013,51 @@ async def _sync_vless_stats():
     for server in servers:
         if not server.get("agent_url") or not server.get("agent_token"):
             continue
-        try:
-            client = client_for_server(server)
-            # Per-server timeout: один зависший агент не должен залипать tick
-            # на полные 300 секунд `_safe(..., timeout=300)` (а потом ещё и
-            # пропустить остальные серверы из списка).
-            peers = await asyncio.wait_for(client.list_peers("vless"), timeout=30)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "_sync_vless_stats: timeout for server=%s, skipping",
-                server.get("name"),
-            )
-            continue
-        except VpnctlError as e:
-            logger.warning("vless stats sync skipped server=%s: %s", server.get("name"), e, exc_info=True)
-            continue
-        except Exception as e:
-            logger.warning("vless stats sync error server=%s: %s", server.get("name"), e, exc_info=True)
+        client = client_for_server(server)
+        # Audit fix 2026-05-24 (C1, RUNTIME CRITICAL): раньше дёргали bare
+        # `list_peers("vless")` — но такого service на агенте нет (с tier-split:
+        # vless-base/max/slow/grace). 404 → counter навсегда 0 → quota_throttle
+        # никогда не enforces → soft_cap_gb эффективно бесконечен. Теперь
+        # итерируем _VLESS_SYNC_SERVICES и аггрегируем (same UUID в разных
+        # inbound'ах = peer в transit; max() даёт правильное last-known value).
+        per_uuid_stats: dict[str, dict] = {}
+        timed_out = False
+        for svc in _VLESS_SYNC_SERVICES:
+            try:
+                peers = await asyncio.wait_for(client.list_peers(svc), timeout=30)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "_sync_vless_stats: timeout server=%s svc=%s, skipping rest",
+                    server.get("name"), svc,
+                )
+                timed_out = True
+                break
+            except VpnctlError:
+                # 404 = service not on this server (legacy or tier-split mismatch)
+                continue
+            except Exception as e:
+                logger.warning("vless stats sync error server=%s svc=%s: %s",
+                               server.get("name"), svc, e, exc_info=True)
+                continue
+            for peer in peers or []:
+                uuid = peer.get("id")
+                if not uuid:
+                    continue
+                rx = int(peer.get("rx_bytes") or 0)
+                tx = int(peer.get("tx_bytes") or 0)
+                last_seen = peer.get("last_seen")
+                if last_seen and last_seen.startswith("0001"):
+                    last_seen = None
+                prev = per_uuid_stats.get(uuid)
+                if not prev or (rx + tx) > (prev["rx"] + prev["tx"]):
+                    per_uuid_stats[uuid] = {"rx": rx, "tx": tx, "last_seen": last_seen}
+        if timed_out and not per_uuid_stats:
             continue
 
-        for peer in peers or []:
-            uuid = peer.get("id")
-            if not uuid:
-                continue
-            rx = int(peer.get("rx_bytes") or 0)
-            tx = int(peer.get("tx_bytes") or 0)
-            last_seen = peer.get("last_seen")
-            if last_seen and last_seen.startswith("0001"):
-                last_seen = None
+        for uuid, st in per_uuid_stats.items():
             cfg_id = await get_config_id_by_vless_uuid_and_server(uuid, server["id"])
             if cfg_id:
-                await update_config_traffic(cfg_id, rx, tx, last_seen)
+                await update_config_traffic(cfg_id, st["rx"], st["tx"], st["last_seen"])
 
 
 async def _apply_quota_throttle(bot: Bot):
@@ -1459,6 +1473,13 @@ async def _send_expiry_reminders(bot: Bot):
     т.к. триал = 3 дня)."""
     for days in (3, 1):
         subs = await get_subscriptions_expiring_soon(days)
+        # Audit fix 2026-05-24 (H1): dedup по user_id внутри одного "days"-окна.
+        # Если у юзера 2 active sub'a (rare overlap: trial + paid в окне между
+        # successful_payment и _close_trial_on_paid_purchase) — раньше получал
+        # 2 одинаковых "expires in N days" сообщения с разрывом 40ms = spam.
+        # Берём первую sub (соonest по expires_at), остальные silent-mark'аем.
+        # SQL уже ORDER BY expires_at ASC (database.py get_subscriptions_expiring_soon).
+        seen_users: set[int] = set()
         for sub in subs:
             user_id = sub["user_id"]
             is_trial = sub.get("plan") == "vpn_trial"
@@ -1468,6 +1489,13 @@ async def _send_expiry_reminders(bot: Bot):
             if is_trial and days == 3:
                 await mark_reminded(sub["id"], days)
                 continue
+
+            # Multi-sub dedup: silent-mark если уже отправили этому юзеру в
+            # этом tick'е. Без этого 2 sub'а одного юзера → 2 сообщения.
+            if user_id in seen_users:
+                await mark_reminded(sub["id"], days)
+                continue
+            seen_users.add(user_id)
 
             _lang = await get_user_lang(user_id)
             if is_trial:

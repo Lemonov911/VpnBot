@@ -1457,6 +1457,33 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
                     logger.error("CryptoBot upgrade shrink revoke sub=%d: %s",
                                  up_sub_id, e, exc_info=True)
 
+            # Audit fix 2026-05-24: если апгрейд увеличил число слотов —
+            # провижим их (та же логика что Stars upgrade-path выше).
+            if up_awg > 0 or up_vless > 0 or up_wg > 0:
+                try:
+                    from handlers.vpn import provision_added_slots_on_upgrade
+                    bot_grow: Bot = request.app["bot"]
+                    delivered_add, total_add = await provision_added_slots_on_upgrade(
+                        bot_grow, up_user_id, up_sub_id, up_plan, up_plan_key,
+                    )
+                    logger.info(
+                        "CryptoBot upgrade more slots sub=%d: provisioned %d/%d",
+                        up_sub_id, delivered_add, total_add,
+                    )
+                    if delivered_add < total_add and ADMIN_ID:
+                        try:
+                            await bot_grow.send_message(
+                                ADMIN_ID,
+                                f"⚠️ Partial CryptoBot upgrade-provision: sub={up_sub_id} "
+                                f"user={up_user_id} delivered={delivered_add}/{total_add} "
+                                f"plan {old_plan_key}→{up_plan_key}",
+                            )
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.error("CryptoBot upgrade grow provision sub=%d: %s",
+                                 up_sub_id, e, exc_info=True)
+
             if was_grace_up:
                 try:
                     from services.vpnctl_client import client_for_server
@@ -1686,6 +1713,19 @@ async def handle_cryptobot_webhook(request: web.Request) -> web.Response:
         expires_at=expires_at,
     )
     await complete_order(order_id, payment_id=payment_id)
+
+    # Audit fix 2026-05-24: record_payment в payments-таблицу. Раньше CryptoBot
+    # happy-path этого не делал — выручка не отражалась в admin/analytics,
+    # refund-cascade (`handle_admin_sub_refund`) не находил charge для возврата
+    # (iterates `payments WHERE method='lavatop|stars|...'` — для crypto был
+    # silent empty). Stars-flow делает record_payment с дня 1 (vpn.py:659-665).
+    # Local import — `_rp` определён выше только в upgrade-branch (line 1298).
+    from services.database import record_payment as _rp_purchase_cb
+    await _rp_purchase_cb(
+        user_id=user_id, subscription_id=sub_id,
+        method="crypto", tx_id=payment_id,
+        amount_usd=float(invoice.get("paid_amount", 0) or 0),
+    )
 
     # Provisioning peers через vpnctl. Раньше CryptoBot-flow создавал пустые
     # config_record-ы без peer'ов → юзер платил USDT, видел "оплачен", но в
