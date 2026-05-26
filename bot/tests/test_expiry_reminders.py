@@ -183,12 +183,11 @@ async def test_scheduler_does_not_resend_on_replay(fresh_db):
 
 
 @pytest.mark.asyncio
-async def test_scheduler_trial_3day_reminder_silently_marked(fresh_db):
-    """Триал в 3-day window: bot.send_message НЕ вызывается, но reminded_3d=1
-    проставляется чтобы потом не пытаться снова. Подавление plan-based (для
-    vpn_trial), не duration-based — поэтому работает и после апгрейда триала
-    3→7д. NB: при 7д триале 3-day reminder падал бы на день 4 (конверсионный
-    момент) — потенциальный day-N upsell, см. бэклог (отдельный scope)."""
+async def test_scheduler_trial_3day_reminder_sent(fresh_db):
+    """Триал в 3-day window: reminder ОТПРАВЛЯЕТСЯ (day-N upsell, включён 27.05
+    после апгрейда триала 3→7д — 3-day падает на день 4, конверсионный момент).
+    Текст триальный (bot_trial_expiry_3d «выбери тариф»), НЕ платный «продли».
+    reminded_3d=1 проставляется чтобы при следующем тике не дублировать."""
     from services.scheduler import _send_expiry_reminders
     from unittest.mock import MagicMock, patch
 
@@ -201,8 +200,12 @@ async def test_scheduler_trial_3day_reminder_silently_marked(fresh_db):
     with patch("services.scheduler._send_throttled", new=AsyncMock()) as send_t:
         await _send_expiry_reminders(bot)
 
-    send_t.assert_not_awaited()
-    # Но reminded_3d=1, чтобы при следующем тике не пытаться снова
+    send_t.assert_awaited_once()
+    text = send_t.await_args.args[2]  # (bot, user_id, text, ...)
+    # Триальный текст, не платский «продли»
+    assert "пробного периода" in text.lower() or "3 дня" in text.lower()
+    assert "продли" not in text.lower()
+    # reminded_3d=1 → больше не в очереди
     subs = await get_subscriptions_expiring_soon(3)
     assert not any(s["id"] == sub_id for s in subs)
 

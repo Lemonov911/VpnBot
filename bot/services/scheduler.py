@@ -1468,15 +1468,13 @@ async def _daily_backup(bot: Bot):
 
 async def _send_expiry_reminders(bot: Bot):
     """Напоминания за 3д и за 1д до истечения. Триалы используют свой текст —
-    «Успей купить подписку», а не «продли», т.к. триал ещё не платный.
-    Для триала 3-дневный reminder пропускается — шлём только 1-day (см. ниже).
+    «выбери тариф», а не «продли», т.к. триал ещё не платный.
 
-    ⚠️ TODO (бизнес-аудит 25.05): после апгрейда триала 3→7д 3-day reminder
-    падает на день 4 (НЕ activation day) — это легитимный конверсионный момент
-    «осталось 3 дня, выбери тариф -20%». Сейчас подавляется по инерции старой
-    3-дневной логики. Чтобы включить — нужен отдельный текст bot_trial_expiry_3d
-    (не bot_expiry_3d — тот про «продли», у триала нечего продлевать) + опц.
-    discount-план. Отдельный scope (day-N upsell)."""
+    День-N upsell (включён 27.05 после апгрейда триала 3→7д): 3-day reminder
+    у триала падает на день 4 (НЕ activation day как было при 3д триале) —
+    это второй конверсионный момент «осталось 3 дня, выбери тариф». Текст
+    bot_trial_expiry_3d отдельный от bot_expiry_3d (тот про «продли», у триала
+    нечего продлевать). 1-day reminder — главный момент в день-6."""
     for days in (3, 1):
         subs = await get_subscriptions_expiring_soon(days)
         # Audit fix 2026-05-24 (H1): dedup по user_id внутри одного "days"-окна.
@@ -1490,14 +1488,6 @@ async def _send_expiry_reminders(bot: Bot):
             user_id = sub["user_id"]
             is_trial = sub.get("plan") == "vpn_trial"
 
-            # Подавляем 3-day reminder для триалов (см. docstring выше — при
-            # 7д триале это конверсионный момент дня-4, но включение требует
-            # отдельного текста + discount-плана; пока оставляем как было).
-            # Шлём только 1-day reminder для триалов.
-            if is_trial and days == 3:
-                await mark_reminded(sub["id"], days)
-                continue
-
             # Multi-sub dedup: silent-mark если уже отправили этому юзеру в
             # этом tick'е. Без этого 2 sub'а одного юзера → 2 сообщения.
             if user_id in seen_users:
@@ -1506,16 +1496,22 @@ async def _send_expiry_reminders(bot: Bot):
             seen_users.add(user_id)
 
             _lang = await get_user_lang(user_id)
+            # Триал получает оба reminder'а: день-4 «осталось 3 дня» + день-6
+            # «последний день». Тексты отдельные от платных (у триала «выбери
+            # тариф», не «продли»). Клавиатура is_trial=True → CTA «Выбрать
+            # тариф». (Раньше 3-day для триала подавлялся — при 3д триале он
+            # падал в день активации; после апгрейда 3→7д это конверсионный
+            # момент, см. docstring.)
             if is_trial:
-                # 1 день до конца триала — главный конверсионный момент.
-                text = _i18n_t(_lang, "bot_trial_expiry_1d")
+                text = _i18n_t(_lang, "bot_trial_expiry_3d" if days == 3
+                               else "bot_trial_expiry_1d")
             elif days == 3:
                 text = _i18n_t(_lang, "bot_expiry_3d")
             else:
                 text = _i18n_t(_lang, "bot_expiry_1d")
             sent = await _send_throttled(
                 bot, user_id, text, parse_mode="HTML",
-                reply_markup=_renew_kb(_lang),
+                reply_markup=_renew_kb(_lang, is_trial=is_trial),
             )
             if sent:
                 await mark_reminded(sub["id"], days)

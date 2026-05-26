@@ -84,6 +84,10 @@ T: dict[str, dict[str, str]] = {
         "bot_lava_err_email_rejected":  "Email отклонён платёжной системой — попробуй другой.",
         "bot_lava_err_payment_rejected":"Платёжная система отклонила запрос. Попробуй другой email или метод оплаты.",
         # Scheduler reminders
+        "bot_trial_expiry_3d":
+            "🎁 <b>Осталось 3 дня пробного периода</b>\n\n"
+            "Уже распробовал? Выбери постоянный тариф пока триал активен — "
+            "от 200 ₽/мес, та же скорость, без перерыва в подключении.",
         "bot_trial_expiry_1d":
             "⏳ <b>Пробный период заканчивается через 24 часа</b>\n\n"
             "Понравилось? Выбери постоянный тариф — "
@@ -370,6 +374,10 @@ T: dict[str, dict[str, str]] = {
         "bot_lava_err_email_rejected":  "Email rejected by the payment system — try another one.",
         "bot_lava_err_payment_rejected":"Payment system rejected the request. Try a different email or payment method.",
         # Scheduler reminders
+        "bot_trial_expiry_3d":
+            "🎁 <b>3 days of trial left</b>\n\n"
+            "Tried it out? Pick a permanent plan while the trial is active — "
+            "from 200 ₽/mo, same speed, no interruption to your connection.",
         "bot_trial_expiry_1d":
             "⏳ <b>Trial ends in 24 hours</b>\n\n"
             "Liked it? Pick a permanent plan — "
