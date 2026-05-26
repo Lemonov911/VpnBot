@@ -181,8 +181,8 @@ async def test_expired_subs_excluded(fresh_db):
 
 @pytest.mark.asyncio
 async def test_trial_subs_excluded(fresh_db):
-    """Trial-подписки (vpn_trial) исключены: длятся 3 дня, выдают 1 VLESS,
-    backfill на них = трата capacity (скоро истекут сами)."""
+    """Trial-подписки (vpn_trial) исключены: короткоживущие (7 дней), выдают
+    1 VLESS, backfill на них = трата capacity (скоро истекут сами)."""
     s1 = await _insert_server(fresh_db, name="amsterdam")
     s2 = await _insert_server(fresh_db, name="frankfurt")
 

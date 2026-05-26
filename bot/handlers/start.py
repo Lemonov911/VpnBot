@@ -75,7 +75,7 @@ def _main_menu(
     # Триал — самый верх меню для тех кому он доступен. Это first-screen
     # call-to-action, выводит юзера в активацию за один клик без захода в
     # Mini App.
-    # trial_days передаётся снаружи (3 для обычного юзера, 7 для referred) —
+    # trial_days передаётся снаружи (7 для обычного юзера, 10 для referred) —
     # должно совпасть с тем что юзер увидит в greeting'е и реально получит.
     if trial_eligible:
         buttons.append([
@@ -151,7 +151,7 @@ async def cmd_start(message: Message):
     #    «ты уже зарегистрирован» (поздний ref нечестен — потенциальный абуз)
     # 3. Реферрер не paid юзер — silently игнорируем (его ссылка не работает,
     #    требование #3: реферальная программа только с платной подпиской)
-    # 4. Иначе — set_referred_by, юзер получит 7-day trial вместо 3-day
+    # 4. Иначе — set_referred_by, юзер получит 10-day trial вместо 7-day
     ref_link_late = False  # для warning внизу
     if start_param.startswith("ref_"):
         try:
@@ -175,9 +175,9 @@ async def cmd_start(message: Message):
 
     from services.i18n_bot import day_word as _day_word
     from services.trial import trial_days_for
-    # trial_days_for(user_id): для referred-юзеров возвращает 7, для остальных — 3.
-    # Hard-coded TRIAL_DAYS=3 ниже игнорировал реферал-бонус, и юзер пришедший
-    # по ссылке видел «3 дня бесплатно» вместо обещанных 7. Используется и в
+    # trial_days_for(user_id): для referred-юзеров возвращает 10, для остальных — 7.
+    # Hard-coded TRIAL_DAYS ниже игнорировал бы реферал-бонус, и юзер пришедший
+    # по ссылке видел бы «7 дней бесплатно» вместо обещанных 10. Используется и в
     # greeting'е, и в кнопке «Попробуй бесплатно» через _main_menu(trial_days=...).
     td = await trial_days_for(user_id) if trial_eligible else TRIAL_DAYS
     if trial_eligible:

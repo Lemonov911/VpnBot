@@ -38,9 +38,12 @@ def _patch_trial_db_path(fresh_db, monkeypatch):
 # ── trial_cooldown_days_for: hook returns right value ───────────────────────
 
 @pytest.mark.asyncio
-async def test_regular_user_gets_30d_cooldown(fresh_db):
+async def test_regular_user_gets_60d_cooldown(fresh_db):
+    # Cooldown поднят 30→60 при апгрейде триала 3→7 дней (бизнес-аудит 25.05):
+    # cooldown считается от created_at, поэтому при 7д триале и 30д cooldown
+    # abuse был бы 84 free дня/год. 60д держит его в 42.
     await upsert_user(801, "regular", "Regular User")
-    assert await trial_cooldown_days_for(801) == TRIAL_COOLDOWN_DAYS == 30
+    assert await trial_cooldown_days_for(801) == TRIAL_COOLDOWN_DAYS == 60
 
 
 @pytest.mark.asyncio
@@ -74,18 +77,18 @@ async def _seed_expired_trial(user_id: int, days_ago: int):
 
 
 @pytest.mark.asyncio
-async def test_regular_user_can_reclaim_after_31_days(fresh_db):
-    """Regular: trial был 31 день назад → cooldown 30d прошёл → can_claim=True."""
+async def test_regular_user_can_reclaim_after_61_days(fresh_db):
+    """Regular: trial был 61 день назад → cooldown 60d прошёл → can_claim=True."""
     await upsert_user(811, "regular", "Regular")
-    await _seed_expired_trial(811, days_ago=31)
+    await _seed_expired_trial(811, days_ago=61)
     assert await can_claim_trial(811) is True
 
 
 @pytest.mark.asyncio
-async def test_regular_user_blocked_at_29_days(fresh_db):
-    """Regular: trial был 29 дней назад → cooldown ещё не прошёл → False."""
+async def test_regular_user_blocked_at_59_days(fresh_db):
+    """Regular: trial был 59 дней назад → cooldown 60d ещё не прошёл → False."""
     await upsert_user(812, "regular2", "Regular2")
-    await _seed_expired_trial(812, days_ago=29)
+    await _seed_expired_trial(812, days_ago=59)
     assert await can_claim_trial(812) is False
 
 

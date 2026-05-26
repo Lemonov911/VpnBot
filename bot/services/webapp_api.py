@@ -3391,7 +3391,7 @@ async def handle_cancel_renewal(request: web.Request) -> web.Response:
 
 async def handle_vpn_trial_status(request: web.Request) -> web.Response:
     """GET /api/vpn/trial — eligible: можно ли юзеру взять триал.
-    duration_days — 3 или 7 (для referred-юзеров). UI должен показать
+    duration_days — 7 или 10 (для referred-юзеров). UI должен показать
     правильное число в CTA «получить триал» (отдельная мотивация для тех
     кто пришёл по реферальной ссылке)."""
     from services.trial import can_claim_trial, trial_days_for

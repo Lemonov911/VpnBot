@@ -184,9 +184,11 @@ async def test_scheduler_does_not_resend_on_replay(fresh_db):
 
 @pytest.mark.asyncio
 async def test_scheduler_trial_3day_reminder_silently_marked(fresh_db):
-    """Триал в 3-day window: bot.send_message НЕ вызывается (бесполезный спам:
-    триал=3 дня, 3-day напоминание попало бы сразу после активации),
-    но reminded_3d=1 проставляется чтобы потом не пытаться снова."""
+    """Триал в 3-day window: bot.send_message НЕ вызывается, но reminded_3d=1
+    проставляется чтобы потом не пытаться снова. Подавление plan-based (для
+    vpn_trial), не duration-based — поэтому работает и после апгрейда триала
+    3→7д. NB: при 7д триале 3-day reminder падал бы на день 4 (конверсионный
+    момент) — потенциальный day-N upsell, см. бэклог (отдельный scope)."""
     from services.scheduler import _send_expiry_reminders
     from unittest.mock import MagicMock, patch
 

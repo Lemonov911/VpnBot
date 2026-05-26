@@ -210,11 +210,11 @@ const T = {
     ref_title:   'Приведи друга — вам обоим бонус',
     ref_how_title: 'Как это работает',
     ref_sub:     'За каждого друга, который купит VPN — тебе',
-    ref_sub2:    'Другу — 7 дней пробного периода (вместо обычных 3). Тебе — 7 дней при его первой оплате',
+    ref_sub2:    'Другу — 10 дней пробного периода (вместо обычных 7). Тебе — 7 дней при его первой оплате',
     ref_how1_title: 'Поделись ссылкой',
     ref_how1_sub:   'Скопируй и отправь другу',
     ref_how2_title: 'Друг активирует пробный период',
-    ref_how2_sub:   'Получает 7 дней бесплатно (вместо обычных 3) по твоей ссылке',
+    ref_how2_sub:   'Получает 10 дней бесплатно (вместо обычных 7) по твоей ссылке',
     ref_how3_title: 'Получи +7 дней',
     ref_how3_sub:   'Когда друг оформит первую платную подписку — копится в «Мои бонусы»',
     ref_copy:    'Копировать',
@@ -528,7 +528,7 @@ const T = {
     // Trial CTA
     // Plans gated when opened outside Telegram
     plans_gated_title:    'Тарифы доступны в боте',
-    plans_gated_sub:      'Открой @maxvpnesim_bot — он подберёт тариф по твоей задаче и даст 3-дневный пробный период бесплатно.',
+    plans_gated_sub:      'Открой @maxvpnesim_bot — он подберёт тариф по твоей задаче и даст 7-дневный пробный период бесплатно.',
     plans_gated_btn:      'Открыть бота →',
 
     // Status page
@@ -559,7 +559,7 @@ const T = {
     status_prev:          'Назад',
     status_next:          'Дальше',
 
-    trial_banner_title:   '🎁 Попробуй бесплатно — 3 дня',
+    trial_banner_title:   '🎁 Попробуй бесплатно — 7 дней',
     trial_banner_sub:     'VPN для России. Без оплаты, без карты.',
     trial_banner_btn:     'Попробовать бесплатно',
     trial_claiming:       'Активируем…',
@@ -814,11 +814,11 @@ const T = {
     ref_title:   'Refer a friend — both get a bonus',
     ref_how_title: 'How it works',
     ref_sub:     'For every friend who buys VPN — you get',
-    ref_sub2:    'Friend gets 7-day trial (instead of the usual 3). You get +7 days on their first paid plan',
+    ref_sub2:    'Friend gets 10-day trial (instead of the usual 7). You get +7 days on their first paid plan',
     ref_how1_title: 'Share your link',
     ref_how1_sub:   'Copy and send to a friend',
     ref_how2_title: 'Friend activates trial',
-    ref_how2_sub:   'They get 7 days free (instead of the usual 3) through your link',
+    ref_how2_sub:   'They get 10 days free (instead of the usual 7) through your link',
     ref_how3_title: 'You get +7 days',
     ref_how3_sub:   'When they purchase their first paid plan — banked in «My Bonuses»',
     ref_copy:    'Copy',
@@ -1121,7 +1121,7 @@ const T = {
     // Trial CTA
     // Plans gated when opened outside Telegram
     plans_gated_title:    'Plans available in the bot',
-    plans_gated_sub:      'Open @maxvpnesim_bot — it will suggest a plan and give you a free 3-day trial.',
+    plans_gated_sub:      'Open @maxvpnesim_bot — it will suggest a plan and give you a free 7-day trial.',
     plans_gated_btn:      'Open the bot →',
 
     // Status page
@@ -1149,7 +1149,7 @@ const T = {
     status_prev:          'Prev',
     status_next:          'Next',
 
-    trial_banner_title:   '🎁 Try free — 3 days',
+    trial_banner_title:   '🎁 Try free — 7 days',
     trial_banner_sub:     "VPN that works in Russia. No card, no subscription.",
     trial_banner_btn:     'Activate trial',
     trial_claiming:       'Activating…',
