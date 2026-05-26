@@ -1469,8 +1469,14 @@ async def _daily_backup(bot: Bot):
 async def _send_expiry_reminders(bot: Bot):
     """Напоминания за 3д и за 1д до истечения. Триалы используют свой текст —
     «Успей купить подписку», а не «продли», т.к. триал ещё не платный.
-    Для триала 3-дневный reminder пропускается (попал бы сразу после активации
-    т.к. триал = 3 дня)."""
+    Для триала 3-дневный reminder пропускается — шлём только 1-day (см. ниже).
+
+    ⚠️ TODO (бизнес-аудит 25.05): после апгрейда триала 3→7д 3-day reminder
+    падает на день 4 (НЕ activation day) — это легитимный конверсионный момент
+    «осталось 3 дня, выбери тариф -20%». Сейчас подавляется по инерции старой
+    3-дневной логики. Чтобы включить — нужен отдельный текст bot_trial_expiry_3d
+    (не bot_expiry_3d — тот про «продли», у триала нечего продлевать) + опц.
+    discount-план. Отдельный scope (day-N upsell)."""
     for days in (3, 1):
         subs = await get_subscriptions_expiring_soon(days)
         # Audit fix 2026-05-24 (H1): dedup по user_id внутри одного "days"-окна.
@@ -1484,8 +1490,10 @@ async def _send_expiry_reminders(bot: Bot):
             user_id = sub["user_id"]
             is_trial = sub.get("plan") == "vpn_trial"
 
-            # Триал = 3 дня. Reminder за 3 дня попадает сразу после активации —
-            # бесполезный спам. Шлём только 1-day reminder для триалов.
+            # Подавляем 3-day reminder для триалов (см. docstring выше — при
+            # 7д триале это конверсионный момент дня-4, но включение требует
+            # отдельного текста + discount-плана; пока оставляем как было).
+            # Шлём только 1-day reminder для триалов.
             if is_trial and days == 3:
                 await mark_reminded(sub["id"], days)
                 continue

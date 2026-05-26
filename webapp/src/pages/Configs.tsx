@@ -666,9 +666,10 @@ export default function Configs() {
           <div className="w-16 h-16 rounded-[20px] mx-auto mb-4 bg-[var(--tg-theme-section-bg-color)] flex items-center justify-center text-[30px]">🔒</div>
           <div className="font-semibold text-[17px] text-[var(--tg-theme-text-color)] mb-1.5">{t('configs_no_sub')}</div>
           <p className="text-[var(--tg-theme-hint-color)] text-[13px] mb-6">{t('configs_no_sub_sub')}</p>
-          {/* Если триал доступен — главный CTA это «бесплатно 3 дня», иначе «купить».
-              Раньше юзер landing'ом на /configs (deep-link, payment fail) не видел
-              триал-опцию вообще, шёл «Купить» или уходил. */}
+          {/* Если триал доступен — главный CTA это «попробовать бесплатно» (текст
+              из i18n, число дней не хардкодим), иначе «купить». Раньше юзер
+              landing'ом на /configs (deep-link, payment fail) не видел триал-опцию
+              вообще, шёл «Купить» или уходил. */}
           {trial?.eligible ? (
             <>
               <button className="btn py-[11px] px-8 mb-3" disabled={claiming} onClick={handleClaimTrial}>

@@ -3071,8 +3071,8 @@ async def get_vless_slots_missing_from_server(server_id: int) -> list[dict]:
     (subscription_id, user_id, vless_uuid, plan, sub_status) — этого хватает
     провижить пир с тем же UUID на новом сервере.
 
-    Trial-подписки (`plan='vpn_trial'`) исключены: длятся 3 дня, выдают 1 VLESS,
-    bаckfill на них = трата capacity (через ~2 дня сами истечут).
+    Trial-подписки (`plan='vpn_trial'`) исключены: короткоживущие (7 дней),
+    выдают 1 VLESS, backfill на них = трата capacity (скоро сами истекут).
     Платные тарифы — backfill'им.
 
     Идемпотентна: если слот уже на сервере — не возвращается. Используется
