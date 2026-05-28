@@ -154,24 +154,19 @@ VLESS_FLOW_BY_SERVICE: dict[str, str] = {
 def vless_service_for_plan(plan_key: str) -> str:
     """Возвращает имя `vpnctl`-сервиса для VLESS-провижининга.
 
-    EU-F-r2: legacy plans (vpn_pro/family/popular/start/1m/3m/1y) used to fall
-    back to bare "vless", but the agent doesn't register that service —
-    provision_peer would fail. Route them to vless-base, which the prod agent
-    serves on port 8443 with plain Reality flow.
+    443-консолидация (28.05.2026): ВСЕ планы (base/max/legacy/trial) роутятся
+    в `vless-max` — единственный инбаунд на порту 443. Причина: нестандартные
+    порты (8443/8448/…) режутся РФ-мобильным DPI, VLESS на них мёртв на сотовом
+    (см. CLAUDE.md / obsidian Технический долг 🔴🔴). На одном IP 443 = только
+    1 инбаунд, поэтому base и max физически делят его → VLESS-тир по скорости
+    схлопнут (base получает full-speed VLESS; per-tier скорость — позже через
+    tc-by-peer). vless-base/8443 остаётся в агенте, но новые провижины туда не
+    идут; существующие пиры смержены в vless-max/443.
     """
-    if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
-        return "vless-base"
-    if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
-        return "vless-max"
-    return "vless-base"
+    return "vless-max"
 
 
 def vless_slow_service_for_plan(plan_key: str) -> str | None:
-    """Throttled-сервис для плана. EU-F-r2: legacy fallback → vless-base-slow
-    (same reasoning as vless_service_for_plan — bare "vless-slow" isn't a real
-    service on the agent)."""
-    if plan_key in ("vpn_base", "vpn_base_3m", "vpn_base_6m", "vpn_base_12m"):
-        return "vless-base-slow"
-    if plan_key in ("vpn_max", "vpn_max_3m", "vpn_max_6m", "vpn_max_12m"):
-        return "vless-max-slow"
-    return "vless-base-slow"
+    """Throttled-сервис. После 443-консолидации (см. vless_service_for_plan) —
+    единый `vless-max-slow` для всех планов (base тоже)."""
+    return "vless-max-slow"

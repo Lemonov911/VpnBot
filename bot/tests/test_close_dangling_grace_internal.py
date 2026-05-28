@@ -231,8 +231,9 @@ async def test_vless_in_grace_inbound_detected_by_port_marker(fresh_db, db_with_
 
 @pytest.mark.asyncio
 async def test_vless_plan_dependent_inbound_when_no_marker(fresh_db, db_with_server):
-    """VLESS-конфиг без маркерных портов (живёт в normal inbound) → revoke
-    идёт в vless-base (или vless-max в зависимости от plan_key).
+    """VLESS-конфиг без маркерных портов (normal inbound) → revoke идёт в
+    normal-сервис. После 443-консолидации (28.05) normal = vless-max для ВСЕХ
+    планов (единый 443-инбаунд), независимо от стейл-маркера :8443.
 
     Это путь cross-plan upgrade ПО ХОДУ active sub (без перехода в grace):
     юзер платит другой план не-в-grace, и старая sub ушла в grace одновременно
@@ -240,7 +241,7 @@ async def test_vless_plan_dependent_inbound_when_no_marker(fresh_db, db_with_ser
     from services.grace import _close_dangling_grace
 
     sub_id = await _make_grace_sub("vpn_base")
-    cfg_data = "vless://uuid@host:8443/?security=reality"  # vless-base порт
+    cfg_data = "vless://uuid@host:8443/?security=reality"  # стейл :8443 маркер
     await _make_active_cfg(
         sub_id, db_with_server, protocol="vless",
         peer_name="u_v", vless_uuid="uuid-normal",
@@ -251,8 +252,8 @@ async def test_vless_plan_dependent_inbound_when_no_marker(fresh_db, db_with_ser
     with patch("services.grace.client_for_server", return_value=client):
         await _close_dangling_grace(_fake_bot(), sub_id, "vpn_base")
 
-    # Для vpn_base normal inbound = vless-base
-    client.remove_peer.assert_awaited_once_with("vless-base", "uuid-normal")
+    # 443-консолидация: normal-тир → vless-max (пир смержен в vless-max инбаунд)
+    client.remove_peer.assert_awaited_once_with("vless-max", "uuid-normal")
 
 
 # ── edge: no server / no configs ──────────────────────────────────────────────

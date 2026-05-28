@@ -262,8 +262,10 @@ async def _capture_fresh_db_path(fresh_db):
 
 @pytest.mark.asyncio
 async def test_orphan_reaper_vless_happy_path(fresh_db, db_with_server):
-    """VLESS orphan: reaper routes через `_current_vless_service` по
-    port-marker в config_data → правильный inbound (vless-base для :8443)."""
+    """VLESS orphan: reaper routes через `current_vless_service`. После
+    443-консолидации (28.05) normal-тир всегда → vless-max (единый 443-инбаунд),
+    независимо от стейл-маркера :8443 в config_data. Slow/grace-маркеры
+    (:9443/:9448/:9453) детектятся отдельно — см. test ниже."""
     from services.scheduler import _process_orphan_active_configs
 
     sub_id = await _make_expired_sub(user_id=910)
@@ -276,8 +278,8 @@ async def test_orphan_reaper_vless_happy_path(fresh_db, db_with_server):
     with patch("services.scheduler.client_for_server", return_value=client):
         await _process_orphan_active_configs()
 
-    # Должен попасть в vless-base inbound (порт 8443 → base)
-    client.remove_peer.assert_awaited_once_with("vless-base", "vless-uuid-base")
+    # Normal-тир → vless-max (443-консолидация; пир смержен в vless-max инбаунд)
+    client.remove_peer.assert_awaited_once_with("vless-max", "vless-uuid-base")
 
     cfg = await get_config_by_id(cfg_id)
     assert cfg["status"] == "empty"

@@ -38,28 +38,26 @@ def test_E1_v2_plan_core_fields_match():
             )
 
 
+# 443-консолидация (28.05.2026): ВСЕ планы → vless-max (единый инбаунд на 443),
+# т.к. не-443 порты режет РФ-мобильный DPI. См. services/plans.py.
 @pytest.mark.parametrize("plan_key,expected", [
-    ("vpn_base", "vless-base"),
+    ("vpn_base", "vless-max"),
     ("vpn_max",  "vless-max"),
-    # EU-F-r2: legacy plans + unknown keys fall back to vless-base (the agent
-    # doesn't register a bare "vless" service, so bare fallback would 404
-    # provision_peer). See services/plans.py:vless_service_for_plan.
-    ("vpn_pro",  "vless-base"),
-    ("vpn_family", "vless-base"),
-    ("unknown_xyz", "vless-base"),
+    ("vpn_pro",  "vless-max"),
+    ("vpn_family", "vless-max"),
+    ("vpn_trial", "vless-max"),
+    ("unknown_xyz", "vless-max"),
 ])
 def test_E2_vless_service_for_plan(plan_key, expected):
     assert vless_service_for_plan(plan_key) == expected
 
 
 @pytest.mark.parametrize("plan_key,expected", [
-    ("vpn_base", "vless-base-slow"),
+    ("vpn_base", "vless-max-slow"),
     ("vpn_max",  "vless-max-slow"),
-    # Same EU-F-r2 reasoning: legacy/unknown also fall back to vless-base-slow
-    # (bare "vless-slow" isn't a real agent service).
-    ("vpn_pro",  "vless-base-slow"),
-    ("vpn_family", "vless-base-slow"),
-    ("anything", "vless-base-slow"),
+    ("vpn_pro",  "vless-max-slow"),
+    ("vpn_family", "vless-max-slow"),
+    ("anything", "vless-max-slow"),
 ])
 def test_E3_vless_slow_service_for_plan(plan_key, expected):
     assert vless_slow_service_for_plan(plan_key) == expected
