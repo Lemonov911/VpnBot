@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> 🆕 **2026-05-28**: см. `docs/sessions/2026-05-28-night.md` — сводка ночной сессии с Sonnet + Opus. Saga про SNI swap, VLESS 443-консолидация (root cause «VPN не работает на мобильном»), запуск нового продукта «Anti-shutdown VPN» 400₽ на Yandex Cloud. **Прочитай прежде чем советовать что-либо по архитектуре VPN/SNI/портов.**
+
 ---
 
 ## Project Overview

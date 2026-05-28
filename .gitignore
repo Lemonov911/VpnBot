@@ -25,6 +25,7 @@ webapp/node_modules/
 
 # Server credentials
 .servers/
+.secret-keys/
 server-*
 *.server.json
 .claude/
