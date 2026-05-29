@@ -34,11 +34,13 @@ def current_vless_service(config_data: str, plan_key: str) -> str:
     inbound (важно: после grace-tier-move пир сидит в vless-grace, revoke по
     vless-base его не достанет).
 
-    vpn_trial: триал-пиры всегда живут на vless-base (см. trial.py:194 —
-    хардкод "vless-base" для триал-provisioning). Раньше falled-through в
-    vless_service_for_plan("vpn_trial") → возвращало литерал "vless" (legacy
-    имя сервиса), агент знал только vless-base/max/grace и т.п. → 404 при
-    revoke, пиры висели на сервере после mark_expired.
+    vpn_trial: после 443-консолидации (28.05) триал провижинится в тот же
+    сервис что и обычные планы (trial.py → vless_service_for_plan → vless-max).
+    Раньше тут был спец-кейс `return "vless-base"` под хардкод в trial.py — но
+    trial.py тоже переведён на vless_service_for_plan, спец-кейс убран, чтобы
+    provision и revoke не разъезжались (mismatch → 404 → orphan peer + counter
+    drift). Port-маркеры (slow/grace) проверяются ПЕРЕД планом — throttled/grace
+    триал-пиры всё равно найдутся в своём инбаунде.
     """
     if ":9448" in config_data:
         return "vless-max-slow"
@@ -46,8 +48,6 @@ def current_vless_service(config_data: str, plan_key: str) -> str:
         return "vless-base-slow"
     if ":9453" in config_data:
         return "vless-grace"
-    if plan_key == "vpn_trial":
-        return "vless-base"
     return vless_service_for_plan(plan_key)
 
 

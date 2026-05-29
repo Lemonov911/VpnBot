@@ -234,6 +234,15 @@ async def _provision_trial_locked(user_id: int) -> dict:
         # ensure_user_vless_uuid — паритет нарушался, sub_url ломался.
         from services.database import ensure_user_vless_uuid
         slot_uuid = await ensure_user_vless_uuid(user_id)
+        # 443-консолидация (28.05): провижиним триал в ТОТ ЖЕ сервис, что
+        # отдаёт подписке `_resolve_vless_urls` (= vless_service_for_plan).
+        # Раньше тут был хардкод "vless-base" (порт 8443) — после консолидации
+        # подписка для триала указывает на vless-max (443), а пир провижинился
+        # в 8443 → UUID не в 443-инбаунде → Reality auth fail → EOF в Happ у
+        # КАЖДОГО нового триал-юзера. vless_service_for_plan — единый источник
+        # истины, триал следует за ним автоматически.
+        from services.plans import vless_service_for_plan
+        trial_tier = vless_service_for_plan(TRIAL_PLAN)
         vless_provisioned = 0
         for server in vless_servers:
             cfg_id = await create_config_record(sub_id, user_id, protocol="vless",
@@ -242,7 +251,7 @@ async def _provision_trial_locked(user_id: int) -> dict:
             label = f"trial_{user_id}_{flag or server['id']}"
             peer = None
             try:
-                peer = await provision_peer(server, label, "vless-base", peer_id=slot_uuid)
+                peer = await provision_peer(server, label, trial_tier, peer_id=slot_uuid)
             except VpnctlError as e:
                 logger.warning("trial vless provision server=%s slot=%d: %s",
                                 server.get("id"), cfg_id, e, exc_info=True)
@@ -279,7 +288,9 @@ async def _provision_trial_locked(user_id: int) -> dict:
                 # Compensating: убираем ghost peer + cleanup config row
                 try:
                     from services.vpnctl_client import client_for_server
-                    await client_for_server(server).remove_peer("vless-base", slot_uuid)
+                    # Тот же tier, что и при provision выше — иначе remove бьёт
+                    # не в тот инбаунд → ghost peer остаётся.
+                    await client_for_server(server).remove_peer(trial_tier, slot_uuid)
                     logger.info("trial vless: compensating remove ghost peer srv=%s OK",
                                 server.get("id"))
                 except Exception as cleanup_err:
