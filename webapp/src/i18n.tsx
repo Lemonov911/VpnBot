@@ -295,6 +295,9 @@ const T = {
     vpn_sub_url_open_happ: 'Открыть в Happ',
     vpn_sub_url_copy:      'Копировать',
     vpn_sub_url_copied:    'Скопировано',
+    vpn_sub_url_manual_title: 'Скопируй ссылку вручную',
+    vpn_sub_url_manual_hint:  'Telegram не дал доступ к буферу обмена. Выдели ссылку ниже, скопируй её и вставь в Happ.',
+    vpn_sub_url_select:       'Выделить',
 
     // Plans extras
     plans_error_payment:    'Платёж не прошёл.',
@@ -897,6 +900,9 @@ const T = {
     vpn_sub_url_open_happ: 'Open in Happ',
     vpn_sub_url_copy:      'Copy',
     vpn_sub_url_copied:    'Copied',
+    vpn_sub_url_manual_title: 'Copy the link manually',
+    vpn_sub_url_manual_hint:  'Telegram did not allow clipboard access. Select the link below, copy it, then paste it into Happ.',
+    vpn_sub_url_select:       'Select',
 
     // Plans extras
     plans_error_payment:    'Payment failed.',
