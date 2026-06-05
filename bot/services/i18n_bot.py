@@ -241,7 +241,7 @@ T: dict[str, dict[str, str]] = {
         "bot_howto_text":
             "📖 <b>Как настроить VPN — 3 шага</b>\n\n"
             "<b>1. Скачай приложение</b>:\n"
-            "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
+            "   • iOS / Android / Mac — <a href=\"https://happ.su\">Happ</a> "
             "(или <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
             "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
             "(не WireGuard.exe — тот даёт 1-2 Мбит/с вместо 120)\n\n"
@@ -525,7 +525,7 @@ T: dict[str, dict[str, str]] = {
         "bot_howto_text":
             "📖 <b>How to set up VPN — 3 steps</b>\n\n"
             "<b>1. Install the app</b>:\n"
-            "   • iOS / Android / Mac — <a href=\"https://apps.apple.com/app/happ-proxy-utility/id6504287215\">Happ</a> "
+            "   • iOS / Android / Mac — <a href=\"https://happ.su\">Happ</a> "
             "(or <a href=\"https://play.google.com/store/apps/details?id=com.happproxy\">Google Play</a>)\n"
             "   • <b>Windows</b> — <a href=\"https://amnezia.org/downloads\">Amnezia VPN</a> "
             "(not WireGuard.exe — that one gives 1-2 Mbps instead of 120)\n\n"
