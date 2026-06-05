@@ -19,6 +19,10 @@
 /* ── Telegram theme tokens ────────────────────────── */
 :root {
   --card-border: rgba(128,128,128,0.12);
+  /* Mini App свёрстан под телефон. На Telegram Desktop / планшете окно
+     широкое — без этого кэпа контент растягивался на всю ширину. Держим
+     телефонную колонку по центру. Хедер и BottomNav используют ту же var. */
+  --app-max-width: 480px;
 }
 /* В тёмной теме граница карточек чуть ярче — иначе границы между sections
    на dark-фоне (#1c1c1e) не видны вообще. */
@@ -58,6 +62,9 @@ body::before {
   @apply relative z-1 flex flex-col gap-2 min-h-dvh px-3;
   padding-top: 64px;
   padding-bottom: calc(env(safe-area-inset-bottom) + 96px);
+  max-width: var(--app-max-width);
+  margin-inline: auto;
+  width: 100%;
 }
 
 /* ── Section title ─────────────────────────────────── */

@@ -50,9 +50,10 @@ function GlobalHeader() {
 
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-[100] flex items-start gap-3 px-3 h-[52px] pt-3"
+      className="fixed top-0 left-0 right-0 z-[100] h-[52px] pt-3"
       style={{ background: 'var(--tg-theme-bg-color, #fff)' }}
     >
+      <div className="max-w-[var(--app-max-width)] mx-auto flex items-start gap-3 px-3">
       <img
         src={import.meta.env.BASE_URL + 'logo.png'}
         alt="MAX"
@@ -78,6 +79,7 @@ function GlobalHeader() {
         )}
       </div>
       <LangSwitch />
+      </div>
     </div>
   )
 }

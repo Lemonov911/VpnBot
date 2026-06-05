@@ -97,6 +97,7 @@ export default function BottomNav() {
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[100] pb-[env(safe-area-inset-bottom)] bg-transparent">
+      <div className="max-w-[var(--app-max-width)] mx-auto">
       {/* Glass pill */}
       <div className="mx-3 mb-2.5 rounded-[28px] bg-white/[0.72] dark:bg-[rgba(40,40,46,0.72)] backdrop-blur-[40px] saturate-[180%] border-[0.5px] border-black/[0.08] dark:border-white/[0.14] shadow-[inset_0_1px_0_rgba(255,255,255,0.90),_inset_0_-1px_0_rgba(0,0,0,0.04),_0_8px_32px_rgba(0,0,0,0.10),_0_2px_8px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.10),_inset_0_-1px_0_rgba(0,0,0,0.12),_0_8px_32px_rgba(0,0,0,0.35),_0_2px_8px_rgba(0,0,0,0.18)] overflow-hidden">
         {/* Top sheen */}
@@ -135,6 +136,7 @@ export default function BottomNav() {
             )
           })}
         </div>
+      </div>
       </div>
     </div>
   )
