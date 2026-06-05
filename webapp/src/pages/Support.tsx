@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { createSupportTicket, uploadTicketWithPhotos, type SupportCategory } from '../api'
 import { useT, useLang } from '../i18n'
+import { HAPP_LINKS } from '../data/happ'
 import { AppFooter } from '../components/AppFooter'
 
 // Screenshot/video upload limits — must match backend (handle_support_ticket).
@@ -151,8 +152,8 @@ function AppChoiceAnswer() {
             <br />→ install <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Copy the URL, in the app: «+» → «From subscription» → paste.
           </p>
           <div className="flex flex-wrap gap-1.5 mt-1.5">
-            <DownloadChip href="https://apps.apple.com/app/happ-proxy-utility/id6504287215" label="iOS" />
-            <DownloadChip href="https://play.google.com/store/apps/details?id=com.happproxy" label="Android" />
+            <DownloadChip href={HAPP_LINKS.site} label="iOS" />
+            <DownloadChip href={HAPP_LINKS.android} label="Android" />
             <DownloadChip href="https://happ.su" label="Win / macOS" />
           </div>
         </div>
@@ -186,8 +187,8 @@ function AppChoiceAnswer() {
           <br />→ ставь <strong className="text-[var(--tg-theme-text-color)]">Happ</strong>. Скопируй ссылку, в приложении: «+» → «Из подписки» → вставь.
         </p>
         <div className="flex flex-wrap gap-1.5 mt-1.5">
-          <DownloadChip href="https://apps.apple.com/app/happ-proxy-utility/id6504287215" label="iOS" />
-          <DownloadChip href="https://play.google.com/store/apps/details?id=com.happproxy" label="Android" />
+          <DownloadChip href={HAPP_LINKS.site} label="iOS" />
+          <DownloadChip href={HAPP_LINKS.android} label="Android" />
           <DownloadChip href="https://happ.su" label="Win / macOS" />
         </div>
       </div>

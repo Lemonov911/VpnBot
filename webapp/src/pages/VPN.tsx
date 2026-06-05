@@ -7,6 +7,7 @@ import {
   type Subscription, type VpnConfig,
 } from '../api'
 import { useT, usePlural, useLang } from '../i18n'
+import { HAPP_LINKS } from '../data/happ'
 import { InitDataGate } from '../components/InitDataGate'
 import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMethod, type StarsPeriod } from '../components/PaymentSheet'
 import PostPayOnboarding from '../components/PostPayOnboarding'
@@ -362,14 +363,14 @@ export default function VPN() {
               Добавляем Happ install chips чтобы они знали какую программу ставить. */}
           <div className="grid grid-cols-2 gap-2 w-full mb-2.5">
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(HAPP_LINKS.site) }}
               className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
               style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
             >
               🍎 {t('trial_install_ios')}
             </button>
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(HAPP_LINKS.android) }}
               className="py-1.5 rounded-[10px] bg-[var(--tg-theme-bg-color,#fff)] text-[var(--tg-theme-text-color)] text-[11px] font-medium cursor-pointer"
               style={{ borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--card-border)' }}
             >

@@ -1,10 +1,13 @@
 import WebApp from '@twa-dev/sdk'
 import { useNavigate } from 'react-router-dom'
 import { useT } from '../i18n'
+import { HAPP_LINKS } from '../data/happ'
 
 const APP_LINKS = [
-  { label: '🍎 Happ — iOS',     url: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215' },
-  { label: '🤖 Happ — Android', url: 'https://play.google.com/store/apps/details?id=com.happproxy' },
+  // Happ iOS → happ.su: в РФ App Store это ДРУГОЕ приложение, happ.su сам
+  // отдаёт нужный стор по региону (см. data/happ.ts).
+  { label: '🍎 Happ — iOS',     url: HAPP_LINKS.site },
+  { label: '🤖 Happ — Android', url: HAPP_LINKS.android },
   { label: '🛡 AmneziaWG — iOS', url: 'https://apps.apple.com/app/amneziawg/id6478942365' },
   { label: '🤖 AmneziaWG — Android', url: 'https://play.google.com/store/apps/details?id=org.amnezia.awg' },
 ]

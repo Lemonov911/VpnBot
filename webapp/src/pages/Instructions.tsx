@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import WebApp from '@twa-dev/sdk'
 import { useT, type TKey } from '../i18n'
+import { HAPP_LINKS } from '../data/happ'
 
 /* ── Apps ────────────────────────────────────────────────────────────────── */
 
-interface AppLink { label: string; url: string }
+interface AppLink { labelKey: TKey; url: string; icon: string }
 interface AppDef {
   id:       'happ' | 'amnezia-vpn' | 'amnezia-wg'
   name:     string
   blurb:    TKey
-  links:    Record<'ios' | 'android' | 'desktop', AppLink | null>
+  links:    AppLink[]      // ordered download chips
   steps:    TKey[]         // platform-agnostic, 4 steps
   color:    string         // bg-class
   iconKey:  'link' | 'shield' | 'bolt'
@@ -23,11 +24,15 @@ const APPS: AppDef[] = [
     blurb: 'instr_app_happ_blurb',
     color: 'bg-purple',
     iconKey: 'link',
-    links: {
-      ios:     { label: 'App Store',   url: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215' },
-      android: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=com.happproxy' },
-      desktop: { label: 'happ.su',     url: 'https://happ.su' },
-    },
+    // ⚠️ iOS разнесён на РФ/Global — в РФ App Store это ДРУГОЕ приложение
+    // («Happ Proxy Utility Plus»). Глобальное в РФ недоступно. См. data/happ.ts.
+    links: [
+      { labelKey: 'instr_dl_iphone_ru',     url: HAPP_LINKS.iosRu,      icon: '🍎' },
+      { labelKey: 'instr_dl_iphone_global', url: HAPP_LINKS.iosGlobal,  icon: '🍎' },
+      { labelKey: 'instr_dl_android',       url: HAPP_LINKS.android,    icon: '🤖' },
+      { labelKey: 'instr_dl_android_apk',   url: HAPP_LINKS.androidApk, icon: '📦' },
+      { labelKey: 'instr_dl_computer',      url: HAPP_LINKS.site,       icon: '🖥' },
+    ],
     steps: ['instr_happ_s1', 'instr_happ_s2', 'instr_happ_s3', 'instr_happ_s4'],
   },
   {
@@ -36,11 +41,11 @@ const APPS: AppDef[] = [
     blurb: 'instr_app_amnezia_blurb',
     color: 'bg-cyan-500',
     iconKey: 'shield',
-    links: {
-      ios:     { label: 'App Store',   url: 'https://apps.apple.com/app/amneziavpn/id1600529900' },
-      android: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=org.amnezia.vpn' },
-      desktop: { label: 'amnezia.org', url: 'https://amnezia.org/downloads' },
-    },
+    links: [
+      { labelKey: 'instr_dl_iphone',   url: 'https://apps.apple.com/app/amneziavpn/id1600529900', icon: '🍎' },
+      { labelKey: 'instr_dl_android',  url: 'https://play.google.com/store/apps/details?id=org.amnezia.vpn', icon: '🤖' },
+      { labelKey: 'instr_dl_computer', url: 'https://amnezia.org/downloads', icon: '🖥' },
+    ],
     steps: ['instr_amnezia_s1', 'instr_amnezia_s2', 'instr_amnezia_s3', 'instr_amnezia_s4'],
   },
   {
@@ -49,11 +54,10 @@ const APPS: AppDef[] = [
     blurb: 'instr_app_awg_blurb',
     color: 'bg-emerald-500',
     iconKey: 'bolt',
-    links: {
-      ios:     { label: 'App Store',   url: 'https://apps.apple.com/app/amneziawg/id6478942365' },
-      android: { label: 'Google Play', url: 'https://play.google.com/store/apps/details?id=org.amnezia.awg' },
-      desktop: null,  // нет desktop-сборки
-    },
+    links: [
+      { labelKey: 'instr_dl_iphone',  url: 'https://apps.apple.com/app/amneziawg/id6478942365', icon: '🍎' },
+      { labelKey: 'instr_dl_android', url: 'https://play.google.com/store/apps/details?id=org.amnezia.awg', icon: '🤖' },
+    ],
     steps: ['instr_amnezia_s1', 'instr_amnezia_s2', 'instr_amnezia_s3', 'instr_amnezia_s4'],
   },
 ]
@@ -80,13 +84,13 @@ function AppIcon({ k }: { k: AppDef['iconKey'] }) {
   )
 }
 
-function DownloadChip({ link, icon }: { link: AppLink; icon: '🍎' | '▶' | '🖥' }) {
+function DownloadChip({ link, t }: { link: AppLink; t: ReturnType<typeof useT> }) {
   return (
     <button
       onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(link.url) }}
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] font-medium bg-[var(--tg-theme-button-color,#2481cc)]/12 text-[var(--tg-theme-button-color,#2481cc)] border-none cursor-pointer"
     >
-      <span>{icon}</span>{link.label}
+      <span>{link.icon}</span>{t(link.labelKey)}
     </button>
   )
 }
@@ -124,9 +128,7 @@ function AppCard({ app, open, onToggle, t }: {
               {t('instr_download_label' as TKey)}
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {app.links.ios     && <DownloadChip link={app.links.ios}     icon="🍎" />}
-              {app.links.android && <DownloadChip link={app.links.android} icon="▶" />}
-              {app.links.desktop && <DownloadChip link={app.links.desktop} icon="🖥" />}
+              {app.links.map(l => <DownloadChip key={l.url} link={l} t={t} />)}
             </div>
           </div>
           <div>
@@ -186,9 +188,7 @@ export default function Instructions() {
                     скроллил до accordion'а ниже. На step 2/3 — text-only. */}
                 {n === '1' && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
-                    <DownloadChip link={APPS[0].links.ios!}     icon="🍎" />
-                    <DownloadChip link={APPS[0].links.android!} icon="▶" />
-                    <DownloadChip link={APPS[0].links.desktop!} icon="🖥" />
+                    {APPS[0].links.map(l => <DownloadChip key={l.url} link={l} t={t} />)}
                   </div>
                 )}
               </div>
@@ -200,12 +200,23 @@ export default function Instructions() {
         </div>
       </div>
 
+      {/* Region callout — #1 источник «не могу установить» у рус-юзеров:
+          в РФ App Store Happ — другое приложение, чем глобальное. */}
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 mt-2">
+        <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color)] mb-1">
+          {t('instr_region_title' as TKey)}
+        </div>
+        <div className="text-[12.5px] text-[var(--tg-theme-hint-color)] leading-[1.5] whitespace-pre-line">
+          {t('instr_region_desc' as TKey)}
+        </div>
+      </div>
+
       {/* Pick-your-app explainer */}
       <div className="bg-[var(--tg-theme-section-bg-color)] border border-[var(--card-border)] rounded-2xl px-4 py-3 mt-2">
         <div className="text-[14px] font-semibold text-[var(--tg-theme-text-color)] mb-1.5">
           🧭 {t('instr_pick_title' as TKey)}
         </div>
-        <div className="text-[12.5px] text-[var(--tg-theme-hint-color)] leading-[1.5]">
+        <div className="text-[12.5px] text-[var(--tg-theme-hint-color)] leading-[1.5] whitespace-pre-line">
           {t('instr_pick_desc' as TKey)}
         </div>
       </div>

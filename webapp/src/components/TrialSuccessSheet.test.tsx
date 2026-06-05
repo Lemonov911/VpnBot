@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import TrialSuccessSheet from './TrialSuccessSheet'
+import { HAPP_LINKS } from '../data/happ'
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 // vi.mock factories хоистятся до объявлений — нужен vi.hoisted для переменных.
@@ -38,6 +39,7 @@ function renderSheet(props: { onClose?: () => void } = {}) {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+// Без LanguageProvider useT() отдаёт RU (дефолт LangCtx) — ассертим рус. строки.
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -46,7 +48,7 @@ beforeEach(() => {
 describe('TrialSuccessSheet — рендер', () => {
   it('показывает заголовок', () => {
     renderSheet()
-    expect(screen.getByText('Триал активирован!')).toBeInTheDocument()
+    expect(screen.getByText('🎉 Пробный период активирован!')).toBeInTheDocument()
   })
 
   it('рендерит все 4 кнопки скачивания', () => {
@@ -59,7 +61,7 @@ describe('TrialSuccessSheet — рендер', () => {
 
   it('рендерит кнопку конфигов', () => {
     renderSheet()
-    expect(screen.getByText('Мои конфиги')).toBeInTheDocument()
+    expect(screen.getByText('Открыть мои конфиги')).toBeInTheDocument()
   })
 
   it('рендерит кнопку «Разберусь позже»', () => {
@@ -85,9 +87,9 @@ describe('TrialSuccessSheet — закрытие', () => {
 })
 
 describe('TrialSuccessSheet — навигация в конфиги', () => {
-  it('клик «Мои конфиги» вызывает onClose и навигирует в /configs', async () => {
+  it('клик «Открыть мои конфиги» вызывает onClose и навигирует в /configs', async () => {
     const { onClose } = renderSheet()
-    await userEvent.click(screen.getByText('Мои конфиги'))
+    await userEvent.click(screen.getByText('Открыть мои конфиги'))
     expect(onClose).toHaveBeenCalledOnce()
     expect(mockNavigate).toHaveBeenCalledWith('/configs')
   })
@@ -95,8 +97,8 @@ describe('TrialSuccessSheet — навигация в конфиги', () => {
 
 describe('TrialSuccessSheet — ссылки на приложения', () => {
   const cases = [
-    { label: '🍎 Happ — iOS',          url: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215' },
-    { label: '🤖 Happ — Android',       url: 'https://play.google.com/store/apps/details?id=com.happproxy' },
+    { label: '🍎 Happ — iOS',          url: HAPP_LINKS.site },
+    { label: '🤖 Happ — Android',       url: HAPP_LINKS.android },
     { label: '🛡 AmneziaWG — iOS',      url: 'https://apps.apple.com/app/amneziawg/id6478942365' },
     { label: '🤖 AmneziaWG — Android',  url: 'https://play.google.com/store/apps/details?id=org.amnezia.awg' },
   ]

@@ -380,44 +380,56 @@ const T = {
     esim_faq_a8: 'Если eSIM не удалось оформить — Звёзды возвращаются автоматически. После успешной выдачи QR-кода возврат невозможен.',
 
     // Instructions
-    instr_title:         'Инструкции',
-    instr_sub:           'Как подключить VPN — 3 шага на любом устройстве',
-    instr_hero_title:    'Как это работает',
-    instr_step1:         'Скачай Happ',
-    instr_step1_sub:     'Из App Store или Google Play — это VPN-клиент',
-    instr_step2:         'Скопируй ссылку из бота',
-    instr_step2_sub:     '«Мои конфиги» → карточка «Ссылка для Happ» → «Копировать»',
-    instr_step3:         'Вставь в Happ и включи',
-    instr_step3_sub:     'Happ: «+» → «Из подписки» → переключатель ON',
-    instr_hero_amnezia_note: '💡 Если у тебя AmneziaWG-слот с QR / .conf-файлом — см. блок Amnezia VPN ниже.',
+    instr_title:         'Инструкция',
+    instr_sub:           'Как включить VPN — 3 простых шага',
+    instr_hero_title:    'Как включить VPN',
+    instr_step1:         'Установи приложение Happ',
+    instr_step1_sub:     'Бесплатное приложение для VPN. Для iPhone — две кнопки: выбери свою страну, это РАЗНЫЕ приложения.',
+    instr_step2:         'Скопируй свою ссылку',
+    instr_step2_sub:     'Внизу «VPN» → «Мои конфиги» → карточка «Ссылка для Happ» → кнопка «Копировать».',
+    instr_step3:         'Вставь ссылку в Happ и включи',
+    instr_step3_sub:     'Открой Happ → «+» → «Добавить подписку» → выбери страну → большой переключатель на «Вкл».',
+    instr_hero_amnezia_note: '💡 Мы прислали тебе QR-код или файл .conf? Тогда смотри блок «Amnezia VPN» ниже.',
+
+    // ⚠️ Region callout — главная причина «не могу установить» у рус-юзеров
+    instr_region_title:  '⚠️ Какую кнопку iPhone нажимать?',
+    instr_region_desc:   'В России и в других странах Happ — это ДВА РАЗНЫХ приложения в App Store.\n\n• Российский Apple ID → жми «iPhone — Россия» (приложение называется «Happ Proxy Utility Plus»).\n• Зарубежный Apple ID → жми «iPhone — другие страны».\n\nНа Android разницы нет. Если Google Play не открывается — скачай кнопкой «Android — файл».',
 
     // Pick-your-app explainer
-    instr_pick_title:    'Какое приложение выбрать',
-    instr_pick_desc:     'В 9 случаях из 10 нужен только **Happ** — он импортирует одну ссылку и переключается между нашими серверами автоматически.\n\n**Amnezia VPN** и **AmneziaWG** нужны если ты скачал AmneziaWG-конфиг (`.conf` или QR) — например для роутера или второго резервного канала.',
+    instr_pick_title:    'Какое приложение мне нужно?',
+    instr_pick_desc:     'Почти всем нужен только Happ — вставил одну ссылку, и все страны уже внутри.\n\nAmnezia VPN ставь ТОЛЬКО если мы сами прислали тебе QR-код или файл (например для роутера или запасного канала).',
 
     instr_apps_title:    'Приложения и шаги',
     instr_download_label:'Скачать',
-    instr_steps_label:   'Шаги',
+    instr_steps_label:   'Что делать',
 
-    // ── Happ — universal VLESS-subscription flow (одинаковый шаг для всех OS) ──
-    instr_app_happ_blurb:    'Основной клиент. Импортирует ссылку для Happ — все локации внутри.',
-    instr_happ_s1:           'Установи Happ из магазина приложений выше.',
-    instr_happ_s2:           'В Mini App открой «Мои конфиги» → нажми «Копировать» в карточке «Ссылка для Happ».',
-    instr_happ_s3:           'Открой Happ → «+» → «Добавить подписку» (или «Из подписки» / «Subscription»). Вставь ссылку из буфера.',
-    instr_happ_s4:           'Выбери локацию из списка → включи переключатель сверху. Иконка VPN появится в системной строке.',
+    // Download button labels (Happ split by region — см. data/happ.ts)
+    instr_dl_iphone_ru:     'iPhone — Россия',
+    instr_dl_iphone_global: 'iPhone — другие страны',
+    instr_dl_iphone:        'iPhone',
+    instr_dl_android:       'Android',
+    instr_dl_android_apk:   'Android — файл',
+    instr_dl_computer:      'Компьютер',
 
-    // ── Amnezia VPN / AmneziaWG — same import flow ──
-    instr_app_amnezia_blurb: 'Полный VPN-клиент с поддержкой AmneziaWG, WireGuard, OpenVPN.',
-    instr_app_awg_blurb:     'Лёгкий клиент только для протокола AmneziaWG — меньше размер, быстрее старт.',
-    instr_amnezia_s1:        'Установи приложение из магазина выше.',
-    instr_amnezia_s2:        'В Mini App «Мои конфиги» → нажми кнопку QR на нужном AmneziaWG-слоте (или ⤓ для скачивания .conf).',
-    instr_amnezia_s3:        'В приложении: «+» → «Сканировать QR-код» (или «Из файла»). Поднеси камеру к экрану с QR-кодом.',
-    instr_amnezia_s4:        'Жми «Подключить». На каждом устройстве — свой QR/файл (отдельный слот в Mini App).',
+    // ── Happ — основной клиент ──
+    instr_app_happ_blurb:    'Главное приложение. Почти всем нужно только оно. Одна ссылка — и все страны внутри.',
+    instr_happ_s1:           'Установи Happ кнопкой выше. На iPhone выбери свою страну: «iPhone — Россия» или «iPhone — другие страны» — это разные приложения.',
+    instr_happ_s2:           'Вернись в это приложение. Внизу открой «VPN» → «Мои конфиги». Найди карточку «Ссылка для Happ» и нажми кнопку «Копировать».',
+    instr_happ_s3:           'Открой Happ. Нажми «+» вверху → выбери «Добавить подписку» (бывает «Из подписки» или «Subscription»). Ссылка вставится сама. Если нет — задержи палец на поле и нажми «Вставить».',
+    instr_happ_s4:           'Выбери любую страну из списка (например Amsterdam) → передвинь большой переключатель вверху на «Вкл». Сверху телефона появится значок VPN — готово.',
 
-    instr_alt_title:  'Альтернативные клиенты',
-    instr_alt_desc:   'Для ссылки Happ подойдут также: Streisand (iOS), V2Box (Mac/iOS), Hiddify (Android/Win), NekoBox (Android). Импорт «из подписки» работает так же.',
-    instr_tv_title:   'Smart TV / Android TV',
-    instr_tv_desc:    'Технически работает через sideload Happ APK (или Amnezia VPN APK). Напиши в поддержку — пришлём пошаговую инструкцию под твою модель.',
+    // ── Amnezia VPN / AmneziaWG — только если прислали QR ──
+    instr_app_amnezia_blurb: 'Нужно ТОЛЬКО если мы прислали тебе QR-код или файл. Поддерживает AmneziaWG, WireGuard, OpenVPN.',
+    instr_app_awg_blurb:     'То же, что Amnezia VPN, но меньше и быстрее. Только если у тебя QR-код AmneziaWG.',
+    instr_amnezia_s1:        'Установи приложение кнопкой выше.',
+    instr_amnezia_s2:        'Вернись в это приложение → «VPN» → «Мои конфиги». На нужном слоте нажми кнопку с QR-кодом (или ⤓, чтобы скачать файл).',
+    instr_amnezia_s3:        'В приложении: «+» → «Сканировать QR-код» (или «Из файла»). Наведи камеру на QR-код на экране.',
+    instr_amnezia_s4:        'Нажми «Подключить». Для каждого устройства нужен свой QR-код (свой слот в приложении).',
+
+    instr_alt_title:  'Другие приложения',
+    instr_alt_desc:   'Ссылку из шага 2 можно вставить и в другие приложения: Streisand (iPhone), V2Box (Mac/iPhone), Hiddify (Android/Windows), NekoBox (Android). Делается так же — «Добавить подписку».',
+    instr_tv_title:   'Телевизор / Smart TV',
+    instr_tv_desc:    'Тоже можно, но чуть сложнее. Напиши в поддержку — пришлём пошаговую инструкцию под твой телевизор.',
 
     // Device names (used by other pages)
     device_ios:        'iPhone / iPad',
@@ -986,40 +998,52 @@ const T = {
 
     // Instructions
     instr_title:         'Setup Guide',
-    instr_sub:           'Set up VPN in 3 steps on any device',
-    instr_hero_title:    'How it works',
-    instr_step1:         'Get Happ',
-    instr_step1_sub:     'From App Store or Google Play — it\'s the VPN client',
-    instr_step2:         'Copy the link from the bot',
-    instr_step2_sub:     '«My configs» → «Happ subscription» card → «Copy»',
-    instr_step3:         'Paste into Happ and toggle on',
-    instr_step3_sub:     'Happ: «+» → «From subscription» → switch ON',
-    instr_hero_amnezia_note: '💡 Got an AmneziaWG slot with QR / .conf file? — see the Amnezia VPN block below.',
+    instr_sub:           'Turn on the VPN in 3 simple steps',
+    instr_hero_title:    'How to turn on the VPN',
+    instr_step1:         'Install the Happ app',
+    instr_step1_sub:     'Free VPN app. On iPhone there are two buttons — pick your country, they are DIFFERENT apps.',
+    instr_step2:         'Copy your link',
+    instr_step2_sub:     'Bottom «VPN» → «My configs» → «Happ subscription» card → «Copy».',
+    instr_step3:         'Paste into Happ and turn on',
+    instr_step3_sub:     'Open Happ → «+» → «Add subscription» → pick a country → big switch to ON.',
+    instr_hero_amnezia_note: '💡 Did we send you a QR code or a .conf file? Then see the «Amnezia VPN» block below.',
 
-    instr_pick_title:    'Which app to choose',
-    instr_pick_desc:     'In 9 cases out of 10 you only need **Happ** — it imports one subscription link and switches between our servers automatically.\n\n**Amnezia VPN** and **AmneziaWG** are only needed if you downloaded an AmneziaWG config (`.conf` or QR) — e.g. for a router or a backup channel.',
+    // ⚠️ Region callout
+    instr_region_title:  '⚠️ Which iPhone button to tap?',
+    instr_region_desc:   'In Russia and in other countries Happ is TWO DIFFERENT apps in the App Store.\n\n• Russian Apple ID → tap «iPhone — Russia» (the app is named «Happ Proxy Utility Plus»).\n• Other Apple ID → tap «iPhone — other countries».\n\nOn Android there is no difference. If Google Play won\'t open — use the «Android — file» button.',
+
+    instr_pick_title:    'Which app do I need?',
+    instr_pick_desc:     'Almost everyone needs only Happ — paste one link and all countries are already inside.\n\nInstall Amnezia VPN ONLY if we sent you a QR code or a file (e.g. for a router or a backup channel).',
 
     instr_apps_title:    'Apps and steps',
     instr_download_label:'Download',
-    instr_steps_label:   'Steps',
+    instr_steps_label:   'What to do',
 
-    instr_app_happ_blurb:    'Main client. Imports the Happ link — all locations inside.',
-    instr_happ_s1:           'Install Happ from the store above.',
-    instr_happ_s2:           'In the Mini App open «My configs» → tap «Copy» on the «Happ subscription» card.',
-    instr_happ_s3:           'Open Happ → «+» → «Add subscription» (also «From subscription» / «Subscription»). Paste the link from clipboard.',
-    instr_happ_s4:           'Pick a location from the list → toggle the switch on top. VPN icon appears in the system status bar.',
+    // Download button labels (Happ split by region — see data/happ.ts)
+    instr_dl_iphone_ru:     'iPhone — Russia',
+    instr_dl_iphone_global: 'iPhone — other countries',
+    instr_dl_iphone:        'iPhone',
+    instr_dl_android:       'Android',
+    instr_dl_android_apk:   'Android — file',
+    instr_dl_computer:      'Computer',
 
-    instr_app_amnezia_blurb: 'Full VPN client with AmneziaWG, WireGuard, OpenVPN support.',
-    instr_app_awg_blurb:     'Lightweight client for AmneziaWG only — smaller binary, faster start.',
-    instr_amnezia_s1:        'Install the app from the store above.',
-    instr_amnezia_s2:        'In the Mini App «My configs» → tap the QR button on the desired AmneziaWG slot (or ⤓ to download .conf).',
-    instr_amnezia_s3:        'In the app: «+» → «Scan QR» (or «From file»). Aim the camera at the QR code on your screen.',
-    instr_amnezia_s4:        'Tap «Connect». Each device gets its own QR/file (separate slot in the Mini App).',
+    instr_app_happ_blurb:    'The main app. Almost everyone needs only this. One link — all countries inside.',
+    instr_happ_s1:           'Install Happ with the button above. On iPhone pick your country: «iPhone — Russia» or «iPhone — other countries» — they are different apps.',
+    instr_happ_s2:           'Come back to this app. At the bottom open «VPN» → «My configs». Find the «Happ subscription» card and tap «Copy».',
+    instr_happ_s3:           'Open Happ. Tap «+» on top → choose «Add subscription» (may be «From subscription» / «Subscription»). The link pastes itself. If not — long-press the field and tap «Paste».',
+    instr_happ_s4:           'Pick any country from the list (e.g. Amsterdam) → move the big switch on top to ON. A VPN icon appears at the top of your phone — done.',
 
-    instr_alt_title:  'Alternative clients',
-    instr_alt_desc:   'For the Happ link you can also use: Streisand (iOS), V2Box (Mac/iOS), Hiddify (Android/Win), NekoBox (Android). «Import from subscription» works the same way.',
-    instr_tv_title:   'Smart TV / Android TV',
-    instr_tv_desc:    'Technically works via Happ APK sideload (or Amnezia VPN APK). Write to support — we will send a step-by-step guide for your model.',
+    instr_app_amnezia_blurb: 'Needed ONLY if we sent you a QR code or a file. Supports AmneziaWG, WireGuard, OpenVPN.',
+    instr_app_awg_blurb:     'Same as Amnezia VPN but smaller and faster. Only if you have an AmneziaWG QR code.',
+    instr_amnezia_s1:        'Install the app with the button above.',
+    instr_amnezia_s2:        'Come back to this app → «VPN» → «My configs». On the needed slot tap the QR button (or ⤓ to download the file).',
+    instr_amnezia_s3:        'In the app: «+» → «Scan QR» (or «From file»). Aim the camera at the QR code on the screen.',
+    instr_amnezia_s4:        'Tap «Connect». Each device needs its own QR code (its own slot in the app).',
+
+    instr_alt_title:  'Other apps',
+    instr_alt_desc:   'You can paste the link from step 2 into other apps too: Streisand (iPhone), V2Box (Mac/iPhone), Hiddify (Android/Windows), NekoBox (Android). It works the same way — «Add subscription».',
+    instr_tv_title:   'TV / Smart TV',
+    instr_tv_desc:    'Possible too, but a bit harder. Message support — we\'ll send a step-by-step guide for your TV model.',
 
     // Device names
     device_ios:        'iPhone / iPad',

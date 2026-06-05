@@ -9,6 +9,7 @@ import PaymentSheet, { PLANS, VISIBLE_PLANS, starsPlanKey, type Plan, type PayMe
 import PostPayOnboarding from '../components/PostPayOnboarding'
 import { useT } from '../i18n'
 import type { TKey } from '../i18n'
+import { HAPP_LINKS } from '../data/happ'
 // W3 #7: PLAN_ICONS / PLAN_TW / PLAN_NAME_KEY переехали в общий модуль,
 // раньше дублировались между Plans.tsx и VPN.tsx (drift почти случился 22.05).
 import { PLAN_ICONS, PLAN_TW, PLAN_NAME_KEY } from '../lib/plans'
@@ -499,12 +500,12 @@ export default function Plans() {
               путей. */}
           <div className="flex gap-2 w-full justify-center">
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://apps.apple.com/app/happ-proxy-utility/id6504287215') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(HAPP_LINKS.site) }}
               className="flex-1 py-2 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)] text-[12px] text-[var(--tg-theme-text-color)] flex items-center justify-center gap-1.5">
               <span className="text-[14px]">🍎</span> App Store
             </button>
             <button
-              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink('https://play.google.com/store/apps/details?id=com.happproxy') }}
+              onClick={() => { WebApp.HapticFeedback.impactOccurred('light'); WebApp.openLink(HAPP_LINKS.android) }}
               className="flex-1 py-2 px-3 rounded-[10px] border border-[var(--card-border)] bg-[var(--tg-theme-section-bg-color)] text-[12px] text-[var(--tg-theme-text-color)] flex items-center justify-center gap-1.5">
               <span className="text-[14px]">▶</span> Google Play
             </button>
