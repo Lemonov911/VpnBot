@@ -3711,8 +3711,10 @@ def _parse_expires_at_utc(raw: str | None) -> int:
 # → direct (мимо туннеля — чинит Ozon/банки/госуслуги под VPN); реклама → block;
 # всё остальное → proxy (GlobalProxy=true). geosite/geoip клиент тянет сам по
 # Geositeurl/Geoipurl.
-# TODO: self-host slim-geosite (только нужные категории) — runetfreedom-база ~65МБ
-# на клиента жирновата. Пока для старта ок.
+# Базы — slim-сборка (только category-ru, ru-available-only-inside,
+# category-ads-all, private + geoip ru/private): ~4МБ вместо ~85МБ полной
+# runetfreedom. Лежат в нашем public-репо geo/*.dat, пересобираются
+# `scripts/build_slim_geo.py`.
 def _build_happ_routing_deeplink() -> str:
     profile = {
         "Name": "MAX VPN — RU direct",
@@ -3726,8 +3728,8 @@ def _build_happ_routing_deeplink() -> str:
         "DomesticDNSType": "DoH",
         "DomesticDNSDomain": "https://77.88.8.8/dns-query",
         "DomesticDNSIP": "77.88.8.8",
-        "Geoipurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat",
-        "Geositeurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat",
+        "Geoipurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geoip.dat",
+        "Geositeurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geosite.dat",
         "RouteOrder": "block-proxy-direct",
         "DirectSites": ["geosite:private", "geosite:category-ru", "geosite:ru-available-only-inside"],
         "DirectIp": ["geoip:private", "geoip:ru"],
