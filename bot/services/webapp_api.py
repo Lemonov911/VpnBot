@@ -3729,8 +3729,11 @@ def _build_happ_routing_deeplink() -> str:
         "DomesticDNSType": "DoH",
         "DomesticDNSDomain": "https://77.88.8.8/dns-query",
         "DomesticDNSIP": "77.88.8.8",
-        "Geoipurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geoip.dat",
-        "Geositeurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geosite.dat",
+        # ?v= — cache-bust: URL стабильный, контент меняется. Бамп версии
+        # форсит клиента перекачать базу (иначе Happ берёт старую из кеша).
+        # Бампать при каждой пересборке geo/*.dat. v2: category-ads (не ads-all).
+        "Geoipurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geoip.dat?v=2",
+        "Geositeurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geosite.dat?v=2",
         "RouteOrder": "block-proxy-direct",
         "DirectSites": ["geosite:private", "geosite:category-ru", "geosite:ru-available-only-inside"],
         "DirectIp": ["geoip:private", "geoip:ru"],
