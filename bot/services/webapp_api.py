@@ -3704,6 +3704,67 @@ def _parse_expires_at_utc(raw: str | None) -> int:
     return 0
 
 
+# ── Happ split-routing (РФ напрямую) ──────────────────────────────────────────
+# Happ принимает строку `happ://routing/onadd/{base64(profile)}` прямо в ТЕЛЕ
+# подписки и применяет routing-профиль автоматически (happ.su/dev-docs/routing).
+# Профиль: РФ-домены/IP (geosite:category-ru + ru-available-only-inside, geoip:ru)
+# → direct (мимо туннеля — чинит Ozon/банки/госуслуги под VPN); реклама → block;
+# всё остальное → proxy (GlobalProxy=true). geosite/geoip клиент тянет сам по
+# Geositeurl/Geoipurl.
+# TODO: self-host slim-geosite (только нужные категории) — runetfreedom-база ~65МБ
+# на клиента жирновата. Пока для старта ок.
+def _build_happ_routing_deeplink() -> str:
+    profile = {
+        "Name": "MAX VPN — RU direct",
+        "GlobalProxy": "true",
+        "UseChunkFiles": "true",
+        "RemoteDns": "1.1.1.1",
+        "DomesticDns": "77.88.8.8",
+        "RemoteDNSType": "DoH",
+        "RemoteDNSDomain": "https://1.1.1.1/dns-query",
+        "RemoteDNSIP": "1.1.1.1",
+        "DomesticDNSType": "DoH",
+        "DomesticDNSDomain": "https://77.88.8.8/dns-query",
+        "DomesticDNSIP": "77.88.8.8",
+        "Geoipurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat",
+        "Geositeurl": "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geosite.dat",
+        "RouteOrder": "block-proxy-direct",
+        "DirectSites": ["geosite:private", "geosite:category-ru", "geosite:ru-available-only-inside"],
+        "DirectIp": ["geoip:private", "geoip:ru"],
+        "ProxySites": [],
+        "ProxyIp": [],
+        "BlockSites": ["geosite:category-ads-all"],
+        "BlockIp": [],
+        "DomainStrategy": "IPIfNonMatch",
+        "FakeDNS": "false",
+    }
+    pj = json.dumps(profile, separators=(",", ":"), ensure_ascii=False)
+    return "happ://routing/onadd/" + base64.b64encode(pj.encode("utf-8")).decode("ascii")
+
+
+# Строится один раз при импорте (профиль статичный).
+_HAPP_ROUTING_DEEPLINK = _build_happ_routing_deeplink()
+
+
+def _client_wants_routing(request: web.Request) -> bool:
+    """Подставлять ли happ://routing-строку в тело подписки.
+
+    Только Happ (по User-Agent: «Happ/x.y.z/...») — прочие клиенты
+    (Streisand/sing-box/V2Box) unknown-scheme строку могут не распарсить.
+    Kill-switch: env `SUB_ROUTING=0` (быстрый откат без revert). Ручной
+    override для теста: `?r=1` (force on, в т.ч. не-Happ), `?r=0` (force off).
+    """
+    if os.getenv("SUB_ROUTING", "1") != "1":
+        return False
+    r = request.query.get("r")
+    if r == "0":
+        return False
+    if r == "1":
+        return True
+    ua = (request.headers.get("User-Agent") or "").lower()
+    return "happ" in ua
+
+
 async def handle_user_subscription(request: web.Request) -> web.Response:
     """GET /sub/{token} — возвращает base64-encoded список vless URL клиента.
     Happ / Streisand / sing-box обновляют его в фоне, поэтому при throttle
@@ -3768,13 +3829,17 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     # фолбэчится на `configs.config_data`.
     urls = await _resolve_vless_urls(user["id"])
 
-    # Plain base64-encoded vless:// list. Universal формат поддерживаемый
-    # всеми VLESS-клиентами (Happ, Streisand, V2Box, sing-box).
-    # Smart routing был snatched: iOS архитектура не даёт реально обходить
-    # VPN-туннель для отдельных сайтов из стандартных клиентов (NetworkExt
-    # sandbox + WireGuardKit limitations). Full tunnel = universally
-    # работает. Для Сбер/Yandex юзер выключает VPN на 1 минуту.
+    # Base64-encoded список vless://. Для Happ-клиентов (по UA) префиксуем
+    # строкой happ://routing/onadd/{profile} — Happ сам применяет RU-direct
+    # split-routing (Ozon/банки/госуслуги мимо туннеля + блок рекламы), правила
+    # тянет по Geositeurl/Geoipurl (runetfreedom). Прочие клиенты (Streisand/
+    # sing-box/V2Box) получают чистый vless-список без happ://-строки.
+    # NB: раньше тут стоял комментарий «smart routing snatched» — это про
+    # WG/NetworkExtension путь; для Xray/Happ split работает (проверено на
+    # устройстве 2026-06-09). См. _build_happ_routing_deeplink выше.
     body_text = "\n".join(urls)
+    if urls and _client_wants_routing(request):
+        body_text = _HAPP_ROUTING_DEEPLINK + "\n" + body_text
     encoded = base64.b64encode(body_text.encode("utf-8")).decode("ascii")
 
     # Edge audit H1: если у юзера нет active/grace конфигов (post-grace expiry),
