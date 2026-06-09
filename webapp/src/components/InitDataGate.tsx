@@ -21,8 +21,12 @@ export function InitDataGate({ children }: { children: ReactNode }) {
           <div className="text-[13px] text-[var(--tg-theme-hint-color)] leading-snug mb-4">
             {t('plans_gated_sub')}
           </div>
+          {/* Хардкод, а НЕ VITE_BOT_USERNAME: видимый текст (plans_gated_sub),
+              футер и Status уже хардкодят @maxvpnesim_bot. Когда секрет
+              VITE_BOT_USERNAME сбивался на тестовый бот (testingvpnabot),
+              кнопка вела на чужой бот при правильной подписи — расхождение. */}
           <a
-            href={`https://t.me/${import.meta.env.VITE_BOT_USERNAME ?? 'maxvpnesim_bot'}`}
+            href="https://t.me/maxvpnesim_bot"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-block px-5 py-2.5 rounded-[12px] bg-gradient-to-br from-primary to-[#5856d6] text-white text-sm font-bold no-underline"
