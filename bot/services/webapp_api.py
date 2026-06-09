@@ -3711,9 +3711,10 @@ def _parse_expires_at_utc(raw: str | None) -> int:
 # → direct (мимо туннеля — чинит Ozon/банки/госуслуги под VPN); реклама → block;
 # всё остальное → proxy (GlobalProxy=true). geosite/geoip клиент тянет сам по
 # Geositeurl/Geoipurl.
-# Базы — slim-сборка (только category-ru, ru-available-only-inside,
-# category-ads-all, private + geoip ru/private): ~4МБ вместо ~85МБ полной
-# runetfreedom. Лежат в нашем public-репо geo/*.dat, пересобираются
+# Базы — slim-сборка (category-ru, ru-available-only-inside, category-ads
+# [НЕ ads-all — 151к доменов не влезают в iOS-лимит памяти туннеля ~50МБ],
+# private + geoip ru/private): geosite ~52КБ + geoip ~390КБ вместо ~85МБ
+# полной runetfreedom. Лежат в нашем public-репо geo/*.dat, пересобираются
 # `scripts/build_slim_geo.py`.
 def _build_happ_routing_deeplink() -> str:
     profile = {
@@ -3735,7 +3736,7 @@ def _build_happ_routing_deeplink() -> str:
         "DirectIp": ["geoip:private", "geoip:ru"],
         "ProxySites": [],
         "ProxyIp": [],
-        "BlockSites": ["geosite:category-ads-all"],
+        "BlockSites": ["geosite:category-ads"],
         "BlockIp": [],
         "DomainStrategy": "IPIfNonMatch",
         "FakeDNS": "false",

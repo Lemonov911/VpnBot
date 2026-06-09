@@ -25,7 +25,10 @@ RUNETFREEDOM = "https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rule
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEO_DIR = os.path.join(REPO_ROOT, "geo")
 
-GEOSITE_KEEP = {"CATEGORY-RU", "RU-AVAILABLE-ONLY-INSIDE", "CATEGORY-ADS-ALL", "PRIVATE"}
+# NB: category-ADS (836 доменов), НЕ category-ads-all (151320)! iOS лимитит
+# память VPN-туннеля ~50МБ — ads-all не влезает в матчер. category-ads режет
+# основные рекламные сети при копеечной памяти.
+GEOSITE_KEEP = {"CATEGORY-RU", "RU-AVAILABLE-ONLY-INSIDE", "CATEGORY-ADS", "PRIVATE"}
 GEOIP_KEEP = {"RU", "PRIVATE"}
 
 
