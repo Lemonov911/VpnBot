@@ -3707,18 +3707,18 @@ def _parse_expires_at_utc(raw: str | None) -> int:
 # ── Happ split-routing (РФ напрямую) ──────────────────────────────────────────
 # Happ принимает строку `happ://routing/onadd/{base64(profile)}` прямо в ТЕЛЕ
 # подписки и применяет routing-профиль автоматически (happ.su/dev-docs/routing).
-# Профиль: РФ-сайты (geosite РФ-категории) → direct (мимо туннеля — чинит Ozon/
-# банки/госуслуги под VPN); реклама (category-ads-all) → block; остальное →
-# proxy (GlobalProxy=true).
+# Профиль: ТОЛЬКО белый список РФ-сервисов (geosite РФ-категории) → direct (мимо
+# туннеля — чинит Ozon/банки/госуслуги под VPN); всё остальное → proxy
+# (GlobalProxy=true).
 #
-# 🔴 КЛЮЧЕВОЕ: НЕ задаём свой Geositeurl/Geoipurl — берём БАНДЛ Happ
-# (Loyalsoldier). Кастомный Geositeurl Happ грузит в heap расширения →
-# category-ads-all (151–166к доменов) пробивает iOS-лимит памяти туннеля (~50МБ)
-# → «Tunnel memory limit exceeded». Бандл грузится эффективно (mmap) — именно
-# так StealthSurf гоняет 166к-доменный ads-all на iOS без падений. Loyalsoldier
-# содержит и category-ads-all, и РФ-категории (ozon/сбер/госуслуги/тинькофф/вб/
-# ржд/авито — все покрыты, ~1900 доменов). DomainStrategy=AsIs → geoip не нужен.
-# (Наши geo/*.dat в репо больше не используются профилем — можно удалить.)
+# Блокировка рекламы — НЕ на клиенте, а на СЕРВЕРЕ (Xray routing
+# category-ads-all → blackhole). Причина: рекламный трафик и так идёт через VPN,
+# сервер его видит и режет. Это снимает 166к рекламных доменов с клиента →
+# больше нет iOS-лимита памяти туннеля (~50МБ). (РФ-сплит так нельзя — там надо
+# НЕ заходить на сервер, иначе иностранный IP; поэтому он остаётся на клиенте.)
+#
+# Geositeurl/Geoipurl НЕ задаём — РФ-категории берём из БАНДЛА Happ (Loyalsoldier,
+# mmap, свою базу не качаем). DomainStrategy=AsIs → geoip не нужен.
 def _build_happ_routing_deeplink() -> str:
     profile = {
         "Name": "MAX VPN — RU direct",
@@ -3750,7 +3750,9 @@ def _build_happ_routing_deeplink() -> str:
         "DirectIp": [],
         "ProxySites": [],
         "ProxyIp": [],
-        "BlockSites": ["geosite:category-ads-all"],
+        # Блок рекламы перенесён на сервер (Xray category-ads-all → blackhole) —
+        # см. коммент к функции. На клиенте пусто = нет 166к доменов в памяти.
+        "BlockSites": [],
         "BlockIp": [],
         "DomainStrategy": "AsIs",
         "FakeDNS": "false",
@@ -3848,9 +3850,9 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
 
     # Base64-encoded список vless://. Для Happ-клиентов (по UA) префиксуем
     # строкой happ://routing/onadd/{profile} — Happ сам применяет RU-direct
-    # split-routing (Ozon/банки/госуслуги мимо туннеля + блок рекламы) на базе
-    # своего бандла geosite (Loyalsoldier). Прочие клиенты (Streisand/
-    # sing-box/V2Box) получают чистый vless-список без happ://-строки.
+    # split-routing (Ozon/банки/госуслуги мимо туннеля) на базе своего бандла
+    # geosite (Loyalsoldier). Реклама режется на сервере, не в профиле. Прочие
+    # клиенты (Streisand/sing-box/V2Box) получают чистый vless-список.
     # NB: раньше тут стоял комментарий «smart routing snatched» — это про
     # WG/NetworkExtension путь; для Xray/Happ split работает (проверено на
     # устройстве 2026-06-09). См. _build_happ_routing_deeplink выше.
