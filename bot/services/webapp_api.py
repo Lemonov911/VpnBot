@@ -3707,15 +3707,18 @@ def _parse_expires_at_utc(raw: str | None) -> int:
 # ── Happ split-routing (РФ напрямую) ──────────────────────────────────────────
 # Happ принимает строку `happ://routing/onadd/{base64(profile)}` прямо в ТЕЛЕ
 # подписки и применяет routing-профиль автоматически (happ.su/dev-docs/routing).
-# Профиль: РФ-домены/IP (geosite:category-ru + ru-available-only-inside, geoip:ru)
-# → direct (мимо туннеля — чинит Ozon/банки/госуслуги под VPN); реклама → block;
-# всё остальное → proxy (GlobalProxy=true). geosite/geoip клиент тянет сам по
-# Geositeurl/Geoipurl.
-# Базы — slim-сборка (category-ru, ru-available-only-inside, category-ads
-# [НЕ ads-all — 151к доменов не влезают в iOS-лимит памяти туннеля ~50МБ],
-# private + geoip ru/private): geosite ~52КБ + geoip ~390КБ вместо ~85МБ
-# полной runetfreedom. Лежат в нашем public-репо geo/*.dat, пересобираются
-# `scripts/build_slim_geo.py`.
+# Профиль: РФ-сайты (geosite РФ-категории) → direct (мимо туннеля — чинит Ozon/
+# банки/госуслуги под VPN); реклама (category-ads-all) → block; остальное →
+# proxy (GlobalProxy=true).
+#
+# 🔴 КЛЮЧЕВОЕ: НЕ задаём свой Geositeurl/Geoipurl — берём БАНДЛ Happ
+# (Loyalsoldier). Кастомный Geositeurl Happ грузит в heap расширения →
+# category-ads-all (151–166к доменов) пробивает iOS-лимит памяти туннеля (~50МБ)
+# → «Tunnel memory limit exceeded». Бандл грузится эффективно (mmap) — именно
+# так StealthSurf гоняет 166к-доменный ads-all на iOS без падений. Loyalsoldier
+# содержит и category-ads-all, и РФ-категории (ozon/сбер/госуслуги/тинькофф/вб/
+# ржд/авито — все покрыты, ~1900 доменов). DomainStrategy=AsIs → geoip не нужен.
+# (Наши geo/*.dat в репо больше не используются профилем — можно удалить.)
 def _build_happ_routing_deeplink() -> str:
     profile = {
         "Name": "MAX VPN — RU direct",
@@ -3729,19 +3732,27 @@ def _build_happ_routing_deeplink() -> str:
         "DomesticDNSType": "DoH",
         "DomesticDNSDomain": "https://77.88.8.8/dns-query",
         "DomesticDNSIP": "77.88.8.8",
-        # ?v= — cache-bust: URL стабильный, контент меняется. Бамп версии
-        # форсит клиента перекачать базу (иначе Happ берёт старую из кеша).
-        # Бампать при каждой пересборке geo/*.dat. v2: category-ads (не ads-all).
-        "Geoipurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geoip.dat?v=2",
-        "Geositeurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geosite.dat?v=2",
+        # Geo*url НЕ задаём → Happ берёт свой бандл (Loyalsoldier), mmap, без
+        # heap-блоута. Это и спасает от iOS memory limit (см. коммент выше).
         "RouteOrder": "block-proxy-direct",
-        "DirectSites": ["geosite:private", "geosite:category-ru", "geosite:ru-available-only-inside"],
-        "DirectIp": ["geoip:private", "geoip:ru"],
+        "DirectSites": [
+            "geosite:private",
+            "geosite:category-ru",
+            "geosite:category-gov-ru",
+            "geosite:category-bank-ru",
+            "geosite:category-ecommerce-ru",
+            "geosite:category-retail-ru",
+            "geosite:category-media-ru",
+            "geosite:category-travel-ru",
+            "geosite:category-medicine-ru",
+            "geosite:category-entertainment-ru",
+        ],
+        "DirectIp": [],
         "ProxySites": [],
         "ProxyIp": [],
-        "BlockSites": ["geosite:category-ads"],
+        "BlockSites": ["geosite:category-ads-all"],
         "BlockIp": [],
-        "DomainStrategy": "IPIfNonMatch",
+        "DomainStrategy": "AsIs",
         "FakeDNS": "false",
     }
     pj = json.dumps(profile, separators=(",", ":"), ensure_ascii=False)
@@ -3837,8 +3848,8 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
 
     # Base64-encoded список vless://. Для Happ-клиентов (по UA) префиксуем
     # строкой happ://routing/onadd/{profile} — Happ сам применяет RU-direct
-    # split-routing (Ozon/банки/госуслуги мимо туннеля + блок рекламы), правила
-    # тянет по Geositeurl/Geoipurl (runetfreedom). Прочие клиенты (Streisand/
+    # split-routing (Ozon/банки/госуслуги мимо туннеля + блок рекламы) на базе
+    # своего бандла geosite (Loyalsoldier). Прочие клиенты (Streisand/
     # sing-box/V2Box) получают чистый vless-список без happ://-строки.
     # NB: раньше тут стоял комментарий «smart routing snatched» — это про
     # WG/NetworkExtension путь; для Xray/Happ split работает (проверено на
