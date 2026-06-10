@@ -62,5 +62,4 @@ scripts/*
 !scripts/backfill_vless_canonical.py
 !scripts/add_vless_server.py
 !scripts/recover_leaked_subs.py
-!scripts/build_slim_geo.py
 *.conf
