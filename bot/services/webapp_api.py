@@ -3717,8 +3717,12 @@ def _parse_expires_at_utc(raw: str | None) -> int:
 # больше нет iOS-лимита памяти туннеля (~50МБ). (РФ-сплит так нельзя — там надо
 # НЕ заходить на сервер, иначе иностранный IP; поэтому он остаётся на клиенте.)
 #
-# Geositeurl/Geoipurl НЕ задаём — РФ-категории берём из БАНДЛА Happ (Loyalsoldier,
-# mmap, свою базу не качаем). DomainStrategy=AsIs → geoip не нужен.
+# РФ-категории берём из НАШЕЙ slim-geosite (geo/geosite.dat в репо: category-ru +
+# ru-available-only-inside + private, ~28КБ), хостим на raw.githubusercontent,
+# ссылаемся через Geositeurl. ВАЖНО: встроенная база Happ МИНИМАЛЬНАЯ — в ней нет
+# наших категорий (даёт «geosite.dat missing section: …»), поэтому базу возим
+# свою (так делает и RoscomVPN). Реклама в slim НЕ кладём (category-ads-all 166к
+# пробивал iOS-лимит памяти ~50МБ) — она на сервере. DomainStrategy=AsIs, без geoip.
 def _build_happ_routing_deeplink() -> str:
     profile = {
         "Name": "MAX VPN — RU direct",
@@ -3732,20 +3736,14 @@ def _build_happ_routing_deeplink() -> str:
         "DomesticDNSType": "DoH",
         "DomesticDNSDomain": "https://77.88.8.8/dns-query",
         "DomesticDNSIP": "77.88.8.8",
-        # Geo*url НЕ задаём → Happ берёт свой бандл (Loyalsoldier), mmap, без
-        # heap-блоута. Это и спасает от iOS memory limit (см. коммент выше).
+        # Своя slim-geosite (только РФ-категории, ~28КБ). ?v= бампать при смене
+        # содержимого geo/geosite.dat (иначе Happ берёт старую из кеша).
+        "Geositeurl": "https://raw.githubusercontent.com/Lemonov911/VpnBot/main/geo/geosite.dat?v=3",
         "RouteOrder": "block-proxy-direct",
         "DirectSites": [
             "geosite:private",
             "geosite:category-ru",
-            "geosite:category-gov-ru",
-            "geosite:category-bank-ru",
-            "geosite:category-ecommerce-ru",
-            "geosite:category-retail-ru",
-            "geosite:category-media-ru",
-            "geosite:category-travel-ru",
-            "geosite:category-medicine-ru",
-            "geosite:category-entertainment-ru",
+            "geosite:ru-available-only-inside",
         ],
         "DirectIp": [],
         "ProxySites": [],
