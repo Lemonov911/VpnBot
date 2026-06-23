@@ -3782,6 +3782,52 @@ def _client_wants_routing(request: web.Request) -> bool:
     return "happ" in ua
 
 
+def _vless_url_to_xray_config(url: str) -> dict:
+    """vless://-URL → ПОЛНЫЙ Xray-конфиг с роутингом ВНУТРИ (как StealthSurf).
+
+    РФ-домены вшиты inline (RU_DIRECT, без geosite-категорий и без Geositeurl —
+    значит Happ НИЧЕГО не качает и не создаёт отдельный routing-профиль; запускает
+    конфиг 1:1). РФ → direct (мимо туннеля, чинит Ozon/банки/госуслуги под VPN),
+    остальное → proxy (proxy = первый outbound = дефолт). Реклама режется на
+    сервере, не здесь. Это устраняет всю хрупкость happ://routing-профиля.
+    """
+    import urllib.parse
+    from services.ru_direct_domains import RU_DIRECT
+    p = urllib.parse.urlparse(url)
+    q = {k: v[0] for k, v in urllib.parse.parse_qs(p.query).items()}
+    user = {"id": p.username, "encryption": q.get("encryption", "none")}
+    if q.get("flow"):
+        user["flow"] = q["flow"]
+    remarks = urllib.parse.unquote(p.fragment) if p.fragment else (p.hostname or "VPN")
+    return {
+        "dns": {"queryStrategy": "UseIPv4",
+                "servers": ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]},
+        "inbounds": [
+            {"tag": "socks-in", "listen": "127.0.0.1", "port": 10808, "protocol": "socks",
+             "settings": {"udp": True},
+             "sniffing": {"enabled": True, "destOverride": ["http", "tls"], "routeOnly": True}},
+            {"tag": "http-in", "listen": "127.0.0.1", "port": 10809, "protocol": "http"},
+        ],
+        "outbounds": [
+            {"tag": "proxy", "protocol": "vless",
+             "settings": {"vnext": [{"address": p.hostname, "port": p.port, "users": [user]}]},
+             "streamSettings": {"network": q.get("type", "tcp"), "security": q.get("security", "reality"),
+                                "realitySettings": {"serverName": q.get("sni", ""),
+                                                    "fingerprint": q.get("fp", "chrome"),
+                                                    "publicKey": q.get("pbk", ""),
+                                                    "shortId": q.get("sid", ""),
+                                                    "spiderX": q.get("spx", "/")}}},
+            {"tag": "direct", "protocol": "freedom"},
+            {"tag": "block", "protocol": "blackhole"},
+        ],
+        "remarks": remarks,
+        "routing": {"domainMatcher": "hybrid", "domainStrategy": "AsIs", "rules": [
+            {"type": "field", "domain": RU_DIRECT, "outboundTag": "direct"},
+            {"type": "field", "protocol": ["bittorrent"], "outboundTag": "direct"},
+        ]},
+    }
+
+
 async def handle_user_subscription(request: web.Request) -> web.Response:
     """GET /sub/{token} — возвращает base64-encoded список vless URL клиента.
     Happ / Streisand / sing-box обновляют его в фоне, поэтому при throttle
@@ -3854,6 +3900,30 @@ async def handle_user_subscription(request: web.Request) -> web.Response:
     # NB: раньше тут стоял комментарий «smart routing snatched» — это про
     # WG/NetworkExtension путь; для Xray/Happ split работает (проверено на
     # устройстве 2026-06-09). См. _build_happ_routing_deeplink выше.
+    # cfg=json (обкатка): отдать ПОЛНЫЙ Xray-конфиг(и) с роутингом ВНУТРИ
+    # (StealthSurf-style) — в Happ НЕТ отдельного routing-профиля, geosite не
+    # качается, «подключился и работает». Один сервер → объект, несколько →
+    # массив. Флаг на время теста; станет дефолтом для Happ после проверки.
+    _cfg = request.query.get("cfg", "")
+    if urls and _cfg.startswith("json"):
+        import json as _json
+        # ?cfg=json — все серверы (массив); ?cfg=json1 — только первый (объект),
+        # на случай если Happ не парсит массив из нескольких конфигов.
+        sel = urls[:1] if _cfg == "json1" else urls
+        configs = [_vless_url_to_xray_config(u) for u in sel]
+        body = configs[0] if len(configs) == 1 else configs
+        return web.Response(
+            text=_json.dumps(body, ensure_ascii=False),
+            headers={
+                "Content-Type":            "application/json; charset=utf-8",
+                "Cache-Control":           "no-cache, no-store, must-revalidate",
+                "Profile-Update-Interval": "12",
+                "Profile-Title":           _safe_header("MAX VPN"),
+                "Profile-Web-Page-Url":    "https://t.me/maxvpnesim_bot",
+                "Support-Url":             "https://t.me/maxvpnesim_bot",
+            },
+        )
+
     body_text = "\n".join(urls)
     if urls and _client_wants_routing(request):
         body_text = _HAPP_ROUTING_DEEPLINK + "\n" + body_text
